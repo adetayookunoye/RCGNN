@@ -12,7 +12,7 @@ def train_epoch(model, loader, optimizer, inv_weight=0.0, device="cpu"):
             batch[k] = batch[k].to(device)
         B = batch["X"].shape[0] if batch["X"].dim()>=3 else 1
         per_sample_As = {}
-        total_loss = 0.0
+        total_loss = None  # Start as None instead of 0.0
         total_L_rec = 0.0
         total_L_acy = 0.0
         # iterate samples to preserve current single-sample forward implementation
@@ -21,7 +21,11 @@ def train_epoch(model, loader, optimizer, inv_weight=0.0, device="cpu"):
             out = model.forward_batch(sample)
             e = int(sample["e"].item())
             per_sample_As.setdefault(e, []).append(out["A"])
-            total_loss += out["loss"]
+            # Accumulate loss as tensor to preserve computation graph
+            if total_loss is None:
+                total_loss = out["loss"]
+            else:
+                total_loss = total_loss + out["loss"]
             total_L_rec += float(out.get("L_rec", 0.0))
             total_L_acy += float(out.get("L_acy", 0.0))
         # invariance penalty per minibatch (variance across regime means in this minibatch)
@@ -33,9 +37,11 @@ def train_epoch(model, loader, optimizer, inv_weight=0.0, device="cpu"):
 
         # backward once per minibatch
         optimizer.zero_grad()
-        # total_loss may be a Python float if all sample losses were floats; ensure tensor
-        if not isinstance(total_loss, torch.Tensor):
-            total_loss = torch.tensor(total_loss, requires_grad=True, device=device)
+        # Ensure we have a valid loss tensor before backward
+        if total_loss is None or not isinstance(total_loss, torch.Tensor):
+            # This should not happen, but handle gracefully
+            print("[WARNING] Invalid loss tensor encountered, skipping batch")
+            continue
         total_loss.backward()
         # --- gradient-norm logging: record per-parameter grad L2 norms ---
         try:

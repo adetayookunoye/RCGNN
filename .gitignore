@@ -1,1 +1,6 @@
 data/interim/uci_air/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.class
