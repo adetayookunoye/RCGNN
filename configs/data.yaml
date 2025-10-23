@@ -1,0 +1,18 @@
+
+dataset: "synth"
+resample: "1H"
+window_len: 128
+window_stride: 64
+features: 10
+regime:
+  mode: "discovered"
+  min_windows: 10
+  changepoint:
+    method: "pelt"
+    penalty: "aic"
+split:
+  regime_train: 0.6
+  regime_val: 0.2
+  regime_test: 0.2
+paths:
+  root: "data"

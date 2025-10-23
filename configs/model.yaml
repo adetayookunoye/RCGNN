@@ -1,0 +1,53 @@
+
+imputer:
+  type: "transformer"  # transformer or simple
+  d_model: 256
+  n_heads: 8  # Changed to 8 heads for compatibility
+  n_layers: 3
+  dropout: 0.1
+  max_len: 1000  # maximum sequence length
+  local_patterns: true  # use dilated convs for local refinement
+  missingness:
+    enabled: true
+    hidden_dim: 64
+    n_layers: 2
+    loss_weights:
+      sparsity: 0.1
+      temporal_smooth: 0.05
+      cross_diverse: 0.1
+encoders:
+  z_s: { d_hidden: 64 }
+  z_n: { d_hidden: 64 }
+  z_b: { d_hidden: 32 }
+structure:
+  temp_start: 5.0
+  temp_end: 0.5
+  gnn_hidden: 64
+  sparsify:
+    method: "sparsemax"  # One of: topk, sparsemax, entmax, gumbel_topk
+    k: 3  # Used for topk and gumbel_topk methods
+mechanisms:
+  edge_fn: "conv1d"
+  node_mlp: [64, 32]
+recon:
+  noise: "gaussian_hetero"
+loss:
+  lambda_acy: 1.0
+  lambda_dis: 0.05
+  lambda_sparse: 0.01
+  lambda_mech: 1.0
+  
+  # Disentanglement settings
+  disentangle:
+    method: "mine"  # "mine" or "infonce"
+    hidden_dim: 64
+    lambda_mi: 0.1  # weight for MI estimation loss
+    temperature: 0.1  # for InfoNCE
+    ma_rate: 0.99  # moving average rate for MINE
+    
+  # Invariance settings
+  invariance:
+    lambda_inv: 0.5   # weight for structure variance
+    gamma_irm: 0.1    # IRM gradient penalty weight
+    n_envs: 4         # number of environments to track
+    shared_mean: true # use shared mean logits across envs
