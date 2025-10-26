@@ -1,0 +1,12 @@
+
+================================================================================
+🚀 FULL RC-GNN TRAINING + ANALYSIS PIPELINE
+================================================================================
+
+📊 Loading UCI Air Quality dataset...
+   Path: data/interim/uci_air
+Traceback (most recent call last):
+  File "/home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/run_full_pipeline.py", line 47, in <module>
+    train_ds = load_synth(root, "train", seed=tc["seed"])
+                                              ~~^^^^^^^^
+KeyError: 'seed'

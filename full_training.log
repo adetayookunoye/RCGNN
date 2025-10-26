@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/scripts/train_validate_visualize.py", line 28, in <module>
+    from src.dataio.loaders import load_synth
+ModuleNotFoundError: No module named 'src'

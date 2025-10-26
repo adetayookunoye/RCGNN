@@ -1,0 +1,13 @@
+dataset: "uci_air"
+resample: "1H"
+window_len: 24
+window_stride: 1
+features: 13
+regime:
+  mode: "provided"
+split:
+  regime_train: 0.6
+  regime_val: 0.2
+  regime_test: 0.2
+paths:
+  root: "data"

@@ -1,0 +1,35 @@
+{
+  "title": "RC-GNN Full Training Pipeline - UCI Air Quality",
+  "dataset": {
+    "name": "UCI Air Quality",
+    "n_samples": 8030,
+    "n_features": 13,
+    "train_samples": 6613,
+    "val_samples": 1417
+  },
+  "model": {
+    "type": "RCGNN",
+    "latent_dim": 16,
+    "hidden_dim": 32,
+    "sparsify_method": "topk"
+  },
+  "training": {
+    "epochs": 8,
+    "batch_size": 8,
+    "learning_rate": 0.001,
+    "device": "cpu",
+    "time_seconds": 65.13454294204712,
+    "original_script_run": false
+  },
+  "results": {
+    "best_shd": 18.0,
+    "adjacency_path": "artifacts/adjacency/A_mean.npy",
+    "checkpoint_path": "artifacts/checkpoints/rcgnn_best.pt",
+    "original_checkpoint_path": null
+  },
+  "outputs": [
+    "artifacts/checkpoints/rcgnn_best.pt",
+    "artifacts/adjacency/A_mean.npy",
+    "artifacts/training_metrics.json"
+  ]
+}

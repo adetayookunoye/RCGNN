@@ -1,0 +1,12 @@
+dataset: "synth_small"
+window_len: 100
+window_stride: 1
+features: 10
+regime:
+  mode: "provided"
+split:
+  regime_train: 0.6
+  regime_val: 0.2
+  regime_test: 0.2
+paths:
+  root: "data/interim/synth_small"

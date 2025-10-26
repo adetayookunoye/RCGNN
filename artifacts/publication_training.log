@@ -1,0 +1,46 @@
+================================================================================
+RC-GNN PUBLICATION-QUALITY TRAINING
+================================================================================
+
+📋 CONFIGURATION:
+  Epochs: 200, Patience: 30
+  Batch size: 8, Device: cpu
+  FIX 1: Temperature FIXED at 1.0 (no decay)
+  FIX 2: λ_recon=1000 (100× stronger)
+  FIX 2: λ_disen=1e-06 (10× weaker)
+  FIX 3: Training for 200 epochs (was 100)
+  FIX 4: Edge init noise std=0.1
+  FIX 5: Sparsify method: sigmoid (continuous)
+  FIX 6: LR restarts every 50 epochs
+  FIX 7: Filter evaluation sentinels: True
+
+📂 Loading data...
+  Data shape: (9448, 24, 13)
+  Variables (d): 13
+  Train samples: 7558
+  Val samples: 1890
+  True edges: 13/169 (7.7% density)
+
+🔧 Initializing model with FIX 4 (edge-specific noise)...
+  ✅ A_base initialized with noise (std=0.1)
+     Initial A_base: mean=0.0046, std=0.1026
+  ✅ Temperature FIXED at 1.0 (no annealing)
+  Model parameters: 5,094
+
+⚙️  Setting up optimizer with FIX 6 (LR warm restarts)...
+  ✅ Warm-up: 1e-04 → 5e-04 over 1 epoch(s)
+  ✅ Cosine restarts every 50 epochs
+
+🚀 Starting training...
+
+Traceback (most recent call last):
+  File "/home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/scripts/train_rcgnn_publication.py", line 253, in <module>
+    z_s, z_n, z_b = model.tri_encoder(X, M)
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/adetayo/anaconda3/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1511, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/adetayo/anaconda3/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1520, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: TriLatentEncoder.forward() takes 2 positional arguments but 3 were given

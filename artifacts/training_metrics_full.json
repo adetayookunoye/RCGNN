@@ -1,0 +1,8 @@
+{
+  "best_shd": 13.0,
+  "total_time": 336.6561233997345,
+  "epochs": 46,
+  "dataset_size": 6613,
+  "batch_size": 8,
+  "device": "cpu"
+}

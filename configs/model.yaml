@@ -1,0 +1,6 @@
+d: 13  # Data dimension (13 features in UCI Air)
+latent_dim: 16
+hidden_dim: 32
+n_envs: 1  # Single environment
+sparsify_method: "topk"  # topk, sparsemax, entmax, or gumbel_topk
+topk_ratio: 0.1  # Keep top 10% of edges

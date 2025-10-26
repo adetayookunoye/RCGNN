@@ -1,0 +1,108 @@
+/home/adetayo/anaconda3/lib/python3.12/site-packages/torch/optim/lr_scheduler.py:156: UserWarning: The epoch parameter in `scheduler.step()` was not necessary and is being deprecated where possible. Please use `scheduler.step()` to step the scheduler. During the deprecation, if epoch is different from None, the closed form is used instead of the new chainable form, where available. Please open an issue if you are unable to replicate your use case: https://github.com/pytorch/pytorch/issues/new/choose.
+  warnings.warn(EPOCH_DEPRECATION_WARNING, UserWarning)
+
+==========================================================================================
+🚀 FULL RC-GNN PRODUCTION TRAINING
+==========================================================================================
+Started at: 2025-10-25 23:22:27
+==========================================================================================
+
+📋 Loading configuration files...
+✅ Configuration loaded
+   - Training epochs: 100
+   - Batch size: 8
+   - LR range: 3e-05 → 5e-04
+   - Device: cpu
+
+📊 Loading UCI Air Quality dataset...
+   Path: data/interim/uci_air
+✅ Dataset loaded:
+   - Features: 13
+   - Train samples: 6613
+   - Val samples: 1417
+
+🏗️  Initializing RC-GNN model...
+✅ Model initialized on cpu
+   - Latent dim: 16
+   - Hidden dim: 32
+   - Sparsify method: topk
+✅ Optimizer initialized:
+   - Initial LR: 3e-05 (warmup start)
+   - Max LR: 5e-04 (reached after 3 epochs)
+   - Weight decay: 1e-05
+
+📋 Loading ground truth adjacency...
+✅ Ground truth loaded: 13 edges in DAG
+
+==========================================================================================
+[TRAINING] Starting full training loop
+==========================================================================================
+Epoch   1/100 | Loss: 1876474.2604 | Clip:100.0% LR=1.87e-04
+
+Epoch   2/100 | Loss: 17685.0555 (Recon:100.0% Sparse:0.0% Disen:0.0% Acyc:0.0%)
+  Val: F1=0.138 SHD=56.0 | Edges: tuned=74 @0.5=0 topk=15
+  Logits: mean=-0.0006 std=0.0133 %>0=47.4% | Clip:100.0% LR=3.43e-04 ⭐ BEST
+Epoch   3/100 | Loss: 3173.2891 | Clip:100.0% LR=5.00e-04
+
+Epoch   4/100 | Loss: 516.4554 (Recon:100.0% Sparse:0.0% Disen:0.0% Acyc:0.0%)
+  Val: F1=0.111 SHD=16.0 | Edges: tuned=5 @0.5=0 topk=15
+  Logits: mean=-0.0000 std=0.0000 %>0=3.2% | Clip:100.0% LR=5.00e-04 ⭐ BEST
+Epoch   5/100 | Loss: 238.4107 | Clip:100.0% LR=5.00e-04
+
+Epoch   6/100 | Loss: 156.6992 (Recon:100.0% Sparse:0.0% Disen:0.0% Acyc:0.0%)
+  Val: F1=0.000 SHD=13.0 | Edges: tuned=0 @0.5=0 topk=15
+  Logits: mean=-0.0000 std=0.0000 %>0=0.0% | Clip:100.0% LR=5.00e-04 ⭐ BEST
+Epoch   7/100 | Loss: 116.5966 | Clip:100.0% LR=5.00e-04
+Epoch   8/100 | Loss:  93.0431 | Val F1=0.000 SHD=13.0 | Edges: tuned=0 @0.5=0 topk=15 | Clip:100.0% LR=5.00e-04 | Patience:1/15
+Epoch   9/100 | Loss:  66.9115 | Clip:100.0% LR=5.00e-04
+Epoch  10/100 | Loss:  57.6662 | Val F1=0.000 SHD=13.0 | Edges: tuned=1 @0.5=0 topk=15 | Clip:100.0% LR=5.00e-04 | Patience:2/15
+Epoch  11/100 | Loss:  55.2846 | Clip:100.0% LR=5.00e-04
+Epoch  12/100 | Loss:  48.9622 | Val F1=0.000 SHD=13.0 | Edges: tuned=0 @0.5=0 topk=15 | Clip:100.0% LR=5.00e-04 | Patience:3/15
+Epoch  13/100 | Loss:  47.8637 | Clip:100.0% LR=5.00e-04
+Epoch  14/100 | Loss:  43.0463 | Val F1=0.000 SHD=13.0 | Edges: tuned=0 @0.5=0 topk=15 | Clip:100.0% LR=5.00e-04 | Patience:4/15
+Epoch  15/100 | Loss:  42.7121 | Clip:100.0% LR=5.00e-04
+Epoch  16/100 | Loss:  46.2751 | Val F1=0.000 SHD=13.0 | Edges: tuned=0 @0.5=0 topk=15 | Clip:100.0% LR=5.00e-04 | Patience:5/15
+Epoch  17/100 | Loss:  40.4835 | Clip:100.0% LR=5.00e-04
+Epoch  18/100 | Loss:  36.8715 | Val F1=0.000 SHD=13.0 | Edges: tuned=0 @0.5=0 topk=15 | Clip:100.0% LR=5.00e-04 | Patience:6/15
+Epoch  19/100 | Loss:  34.7263 | Clip:100.0% LR=5.00e-04
+Epoch  20/100 | Loss:  37.9625 | Val F1=0.000 SHD=13.0 | Edges: tuned=0 @0.5=0 topk=15 | Clip:100.0% LR=5.00e-04 | Patience:7/15
+Epoch  21/100 | Loss:  41.4952 | Clip:100.0% LR=5.00e-04
+Epoch  22/100 | Loss:  33.0909 | Val F1=0.118 SHD=14.0 | Edges: tuned=4 @0.5=0 topk=15 | Clip:100.0% LR=5.00e-04 | Patience:8/15
+Epoch  23/100 | Loss:  33.1646 | Clip:100.0% LR=5.00e-04
+Epoch  24/100 | Loss:  32.6298 | Val F1=0.000 SHD=13.0 | Edges: tuned=0 @0.5=0 topk=15 | Clip:100.0% LR=5.00e-04 | Patience:9/15
+Epoch  25/100 | Loss:  31.4372 | Clip:100.0% LR=5.00e-04
+Epoch  26/100 | Loss:  35.2748 | Val F1=0.000 SHD=14.0 | Edges: tuned=1 @0.5=0 topk=15 | Clip:100.0% LR=5.00e-04 | Patience:10/15
+Epoch  27/100 | Loss:  28.3190 | Clip:100.0% LR=5.00e-04
+Epoch  28/100 | Loss:  29.2205 | Val F1=0.000 SHD=15.0 | Edges: tuned=4 @0.5=0 topk=15 | Clip:100.0% LR=5.00e-04 | Patience:11/15
+Epoch  29/100 | Loss:  29.8852 | Clip:100.0% LR=5.00e-04
+Epoch  30/100 | Loss:  31.5474 | Val F1=0.000 SHD=14.0 | Edges: tuned=2 @0.5=0 topk=15 | Clip:100.0% LR=5.00e-04 | Patience:12/15
+Epoch  31/100 | Loss:  32.3329 | Clip:100.0% LR=5.00e-04
+Epoch  32/100 | Loss:  29.3058 | Val F1=0.000 SHD=13.0 | Edges: tuned=0 @0.5=0 topk=15 | Clip:100.0% LR=5.00e-04 | Patience:13/15
+Epoch  33/100 | Loss:  26.3980 | Clip:100.0% LR=5.00e-04
+Epoch  34/100 | Loss:  32.2220 | Val F1=0.000 SHD=13.0 | Edges: tuned=0 @0.5=0 topk=15 | Clip:100.0% LR=5.00e-04 | Patience:14/15
+Epoch  35/100 | Loss:  28.2663 | Clip:100.0% LR=5.00e-04
+Epoch  36/100 | Loss:  24.5278 | Val F1=0.000 SHD=14.0 | Edges: tuned=1 @0.5=0 topk=15 | Clip:100.0% LR=5.00e-04 | Patience:15/15
+
+⏹️  Early stopping triggered after 36 epochs (no improvement for 15 evals)
+
+==========================================================================================
+✅ TRAINING COMPLETE
+==========================================================================================
+Total training time: 4.21 minutes (252.5 seconds)
+Total epochs: 36/100
+Best validation SHD: 13.0
+Avg epoch time: 7.01 seconds
+
+📊 Training history saved to: artifacts/training_history_full.json
+✅ Metrics saved to: artifacts/training_metrics_full.json
+
+📁 Generated artifacts:
+   ✅ Model checkpoint: artifacts/checkpoints/rcgnn_best.pt (0.0 MB)
+   ✅ Adjacency matrix: artifacts/adjacency/A_mean.npy (sparsity: 100.00%)
+
+📝 Next steps:
+   1. Run threshold optimization: make analyze
+   2. Compare baselines: make baseline
+   3. View full results: make results
+
+✅ Full training pipeline ready!

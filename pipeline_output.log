@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "/home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/run_full_pipeline.py", line 23, in <module>
+    from src.dataio.loaders import load_synth
+ModuleNotFoundError: No module named 'src'
+
+================================================================================
+🚀 FULL RC-GNN TRAINING + ANALYSIS PIPELINE
+================================================================================
+Traceback (most recent call last):
+  File "/home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/run_full_pipeline.py", line 35, in <module>
+    with open("configs/model.yaml") as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'configs/model.yaml'

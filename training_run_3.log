@@ -1,0 +1,85 @@
+Traceback (most recent call last):
+  File "/home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/scripts/optimize_threshold.py", line 24, in <module>
+    import path_helper  # noqa: F401
+    ^^^^^^^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'path_helper'
+Traceback (most recent call last):
+  File "/home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/scripts/visualize_environment_structure.py", line 21, in <module>
+    import path_helper  # noqa: F401
+    ^^^^^^^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'path_helper'
+Traceback (most recent call last):
+  File "/home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/scripts/compare_baselines.py", line 23, in <module>
+    import path_helper  # noqa: F401
+    ^^^^^^^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'path_helper'
+
+================================================================================
+🚀 FULL RC-GNN TRAINING + ANALYSIS PIPELINE
+================================================================================
+
+📊 Loading UCI Air Quality dataset...
+   Path: data/interim/uci_air
+✅ Dataset: 13 features, 6613 train, 1417 val samples
+
+🏗️  Initializing RC-GNN model...
+✅ Model on cpu
+
+📋 Loading ground truth...
+✅ Ground truth: 13 edges
+
+================================================================================
+[STEP 1/5] TRAINING RC-GNN MODEL
+================================================================================
+Epoch 01/8 | Train Loss: 16767.1890 | F1: 0.0 | SHD: 18
+   ⭐ New best SHD: 18.0
+Epoch 02/8 | Train Loss: 70.0818 | F1: 0.08333333333333334 | SHD: 22
+Epoch 03/8 | Train Loss: 26.5341 | F1: 0.13793103448275862 | SHD: 25
+Epoch 04/8 | Train Loss: 19.4081 | F1: 0.06896551724137931 | SHD: 27
+Epoch 05/8 | Train Loss: 13.8481 | F1: 0.13793103448275862 | SHD: 25
+Epoch 06/8 | Train Loss: 11.6580 | F1: 0.24999999999999994 | SHD: 18
+Epoch 07/8 | Train Loss: 11.2693 | F1: 0.0 | SHD: 19
+Epoch 08/8 | Train Loss: 10.3163 | F1: 0.0 | SHD: 29
+
+✅ Training complete! Best SHD: 18
+   Time: 82.0s
+   Checkpoint: artifacts/checkpoints/rcgnn_best.pt
+   Adjacency: artifacts/adjacency/A_mean.npy
+
+================================================================================
+[STEP 2/5] OPTIMIZING BINARY THRESHOLD
+================================================================================
+✅ Threshold optimization complete!
+
+================================================================================
+[STEP 3/5] ANALYZING PER-ENVIRONMENT STRUCTURES
+================================================================================
+✅ Environment analysis complete!
+
+================================================================================
+[STEP 4/5] COMPARING AGAINST BASELINE METHODS
+================================================================================
+✅ Baseline comparison complete!
+
+================================================================================
+[STEP 5/5] GENERATING FINAL SUMMARY
+================================================================================
+
+📊 Summary saved to: artifacts/pipeline_summary.json
+
+================================================================================
+✅ FULL PIPELINE COMPLETE!
+================================================================================
+
+Generated outputs:
+  ✓ artifacts/checkpoints/rcgnn_best.pt (0.03 MB)
+  ✓ artifacts/adjacency/A_mean.npy (0.00 MB)
+  ✓ artifacts/training_metrics.json (0.00 MB)
+
+Total time: 82.0s
+
+Next steps:
+1. Review artifacts/pipeline_summary.json for results
+2. Check artifacts/training_metrics.json for detailed metrics
+3. View visualizations in artifacts/ directory
+4. Compare RC-GNN vs baselines

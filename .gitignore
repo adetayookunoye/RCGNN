@@ -1,0 +1,85 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# Data files (large datasets)
+data/raw/
+data/interim/*/
+!data/interim/.gitkeep
+
+# Model checkpoints and artifacts (can be large)
+artifacts/checkpoints/*.pt
+artifacts/checkpoints/*.pth
+artifacts/logs/*.log
+artifacts/adjacency/*.npy
+artifacts/validation*/
+artifacts/baseline_comparison/
+artifacts/results/
+
+# Keep directory structure
+!artifacts/checkpoints/.gitkeep
+!artifacts/logs/.gitkeep
+!artifacts/adjacency/.gitkeep
+!artifacts/validation/.gitkeep
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.bak
+*.cache
+
+# Environment
+.env
+.env.local
+
+# Coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/

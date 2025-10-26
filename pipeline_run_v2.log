@@ -1,0 +1,22 @@
+
+================================================================================
+🚀 FULL RC-GNN TRAINING + ANALYSIS PIPELINE
+================================================================================
+
+📊 Loading UCI Air Quality dataset...
+   Path: data/interim/uci_air
+✅ Dataset: 13 features, 6613 train, 1417 val samples
+
+🏗️  Initializing RC-GNN model...
+✅ Model on cpu
+Traceback (most recent call last):
+  File "/home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/run_full_pipeline.py", line 70, in <module>
+    opt = make_optimizer(
+          ^^^^^^^^^^^^^^^
+  File "/home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/src/training/optim.py", line 19, in make_optimizer
+    return torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/adetayo/anaconda3/lib/python3.12/site-packages/torch/optim/adam.py", line 38, in __init__
+    if not 0.0 <= weight_decay:
+           ^^^^^^^^^^^^^^^^^^^
+TypeError: '<=' not supported between instances of 'float' and 'str'

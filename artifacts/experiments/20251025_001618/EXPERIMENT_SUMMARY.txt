@@ -1,0 +1,71 @@
+================================================================================
+RC-GNN REPRODUCIBILITY PIPELINE - EXPERIMENT SUMMARY
+================================================================================
+
+Timestamp: 20251025_001618
+Experiment Directory: /home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/artifacts/experiments/20251025_001618
+
+================================================================================
+CONFIGURATION
+================================================================================
+
+Data Root: data/interim/uci_air
+Configs:
+  - Data: /home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/configs/data_uci.yaml
+  - Model: /home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/configs/model.yaml
+  - Train: /home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/configs/train.yaml
+
+================================================================================
+PIPELINE STEPS
+================================================================================
+
+[✅] Step 1: Environment Verification
+[✅] Step 2: Model Training
+[✅] Step 3: Visualization Generation
+[✅] Step 4: Threshold Optimization
+[✅] Step 5: Environment Structure Analysis
+[✅] Step 6: Baseline Comparison
+
+================================================================================
+OUTPUT STRUCTURE
+================================================================================
+
+/home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/artifacts/experiments/20251025_001618/
+├── logs/
+│   ├── 01_train.log
+│   ├── 02_visualize.log
+│   ├── 03_threshold_optimize.log
+│   ├── 04_environment_structure.log
+│   └── 05_baseline_comparison.log
+├── visualizations/
+│   ├── learned_adjacency_mean.png
+│   ├── learned_adjacency_heatmap.png
+│   ├── network_graph.png
+│   ├── validation_report.txt
+│   ├── threshold_analysis.png
+│   ├── threshold_pr_curve.png
+│   ├── threshold_report.txt
+│   ├── environment_comparison.png
+│   ├── environment_deltas.png
+│   ├── structure_variation.png
+│   ├── environment_report.txt
+│   ├── baseline_comparison.png
+│   ├── adjacency_methods_comparison.png
+│   └── baseline_comparison_report.txt
+├── checkpoints/
+│   └── rcgnn_best.pt
+└── adjacency/
+    ├── A_mean.npy
+    └── (environment-specific adjacencies if exported)
+
+================================================================================
+NEXT STEPS
+================================================================================
+
+1. Review visualizations in: /home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/artifacts/experiments/20251025_001618/visualizations/
+2. Check logs for any warnings: /home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/artifacts/experiments/20251025_001618/logs/
+3. Compare metrics across methods in: baseline_comparison_report.txt
+4. For further analysis, check individual script outputs
+5. For reproducibility, save this directory or re-run with same timestamp
+
+================================================================================
