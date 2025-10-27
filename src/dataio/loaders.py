@@ -62,7 +62,22 @@ def load_synth(root, split="train", seed=1337):
     
     root = Path(root)
     
-    # Load arrays
+    # Check if pre-split files exist (from synth_bench.py)
+    X_split_file = root / f"X_{split}.npy"
+    if X_split_file.exists():
+        # Use pre-split files
+        X = np.load(X_split_file)
+        M = np.load(root / f"M_{split}.npy")
+        e = np.load(root / f"e_{split}.npy")
+        S = np.load(root / f"S_{split}.npy")
+        
+        A_true = None
+        if (root / "A_true.npy").exists():
+            A_true = np.load(root / "A_true.npy")
+        
+        return SynthDataset(X, M, e, S, A_true)
+    
+    # Otherwise, load full arrays and split
     X = np.load(root / "X.npy")  # [N, T, d]
     M = np.load(root / "M.npy")  # [N, T, d]
     e = np.load(root / "e.npy")  # [N]

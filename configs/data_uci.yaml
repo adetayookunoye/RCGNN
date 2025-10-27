@@ -10,4 +10,4 @@ split:
   regime_val: 0.2
   regime_test: 0.2
 paths:
-  root: "data"
+  root: "data/interim/uci_air"

@@ -118,7 +118,7 @@ data-air: ## Download and process UCI Air Quality dataset
 	@echo "🌍 Downloading UCI Air Quality dataset..."
 	@mkdir -p $(UCI_AIR)
 	$(PYTHON) scripts/download_and_convert_uci_safe.py \
-		--output $(UCI_AIR)
+		--out $(UCI_AIR)
 	@echo "✅ UCI Air dataset prepared at $(UCI_AIR)"
 
 data-inspect: ## Inspect generated datasets
