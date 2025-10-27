@@ -4,3 +4,17 @@ hidden_dim: 32
 n_envs: 1  # Single environment
 sparsify_method: "topk"  # topk, sparsemax, entmax, or gumbel_topk
 topk_ratio: 0.1  # Keep top 10% of edges
+
+# Loss function configuration
+loss:
+  # Disentanglement settings
+  disentangle:
+    method: "correlation"  # correlation or mine
+    lambda_disen: 0.01
+  
+  # Invariance settings (structure-level cross-environment stability)
+  # NOTE: Only active with multiple environments - set lambda_inv to 0 for single-environment
+  invariance:
+    lambda_inv: 0.0   # weight for structure variance penalty (set to 0 to disable for single env)
+    gamma_irm: 0.1    # IRM gradient penalty weight
+    n_envs: 1         # number of environments to track (will be overridden by data)

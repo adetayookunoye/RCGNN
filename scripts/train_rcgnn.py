@@ -5,7 +5,8 @@ import path_helper  # noqa: F401  # adds project root to sys.path
 from torch.utils.data import DataLoader
 from src.dataio.loaders import load_synth
 from src.models.rcgnn import RCGNN
-from src.training.optim import make_optimizer
+from src.models.invariance import IRMStructureInvariance
+from src.training.optim import make_optimizer, disentanglement_loss
 from src.training.loop import train_epoch, eval_epoch
 import numpy as np
 import math
@@ -67,6 +68,15 @@ def main():
     )
     model.to(device)
 
+    # Initialize invariance loss module if lambda_inv > 0
+    lambda_inv = mc.get("loss", {}).get("invariance", {}).get("lambda_inv", 0.0)
+    n_envs = mc.get("loss", {}).get("invariance", {}).get("n_envs", 1)
+    invariance_loss_fn = None
+    if lambda_inv > 0:
+        invariance_loss_fn = IRMStructureInvariance(n_features=d, n_envs=n_envs, gamma=0.1)
+        invariance_loss_fn.to(device)
+        print(f"🔧 Initialized invariance loss with lambda_inv={lambda_inv}, n_envs={n_envs}")
+
     opt = make_optimizer(model, lr=tc["learning_rate"], weight_decay=tc["weight_decay"])
     
     # Load ground truth adjacency if available
@@ -108,6 +118,8 @@ def main():
             "target_sparsity": tc.get("target_sparsity", 0.1),
             "lambda_supervised": lam_sup,
             "A_true": A_true,
+            "lambda_inv": lambda_inv,
+            "invariance_loss_fn": invariance_loss_fn,
         }
         out = train_epoch(model, train_ld, opt, device=device, **loss_kwargs)
         ev = eval_epoch(model, val_ld, A_true=A_true, threshold=0.5, device=device)

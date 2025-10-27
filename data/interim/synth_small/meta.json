@@ -1,1 +1,30 @@
-{"d": 10, "T": 512, "regimes": 2, "Tw": 128, "Ts": 64}
+{
+  "graph_type": "er",
+  "d": 10,
+  "edges": 15,
+  "mechanism": "linear",
+  "n_envs": 3,
+  "T": 50,
+  "corruption_configs": [
+    {
+      "missing_type": "mcar",
+      "missing_rate": 0.2,
+      "noise_scale": 0.3,
+      "drift_magnitude": 0.0
+    },
+    {
+      "missing_type": "mcar",
+      "missing_rate": 0.2,
+      "noise_scale": 0.3,
+      "drift_magnitude": 0.0
+    },
+    {
+      "missing_type": "mcar",
+      "missing_rate": 0.2,
+      "noise_scale": 0.3,
+      "drift_magnitude": 0.0
+    }
+  ],
+  "seed": 42,
+  "created": "2025-10-26"
+}

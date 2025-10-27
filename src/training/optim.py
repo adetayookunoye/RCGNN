@@ -156,9 +156,11 @@ def compute_total_loss(
     lambda_disen: float = 0.01,
     target_sparsity: float = 0.1,
     lambda_supervised: float = 0.0,
+    lambda_inv: float = 0.0,
+    invariance_loss_fn = None,
 ):
     """
-    Compute total training loss.
+    Compute total training loss with optional invariance regularization.
     
     Args:
         output: Model forward output dictionary
@@ -166,6 +168,8 @@ def compute_total_loss(
         M: Missingness mask (optional)
         A_true: Ground truth adjacency (optional, for auxiliary loss)
         lambda_*: Loss weights
+        lambda_inv: Invariance loss weight
+        invariance_loss_fn: IRMStructureInvariance module (optional)
         
     Returns:
         Total scalar loss, dict of component losses
@@ -230,13 +234,53 @@ def compute_total_loss(
     else:
         l_sup = torch.tensor(0.0, device=X.device)
 
+    # Invariance loss (structure-level cross-environment stability)
+    l_inv = torch.tensor(0.0, device=X.device)
+    if (lambda_inv > 0) and (invariance_loss_fn is not None):
+        try:
+            # Extract environment indices from batch if available
+            # In most cases with single environment, this will be 0 or None
+            # Only compute if we have multiple environments
+            e = output.get("e", None)
+            
+            # Skip invariance if only single environment or batch has only one env  
+            if e is not None:
+                if isinstance(e, torch.Tensor):
+                    unique_envs = torch.unique(e)
+                else:
+                    unique_envs = torch.tensor([0, 1])  # dummy
+                    
+                if len(unique_envs) < 2:
+                    # Only one environment in batch, skip invariance loss
+                    losses["invariance"] = 0.0
+                else:
+                    # Multiple environments, compute invariance
+                    l_inv, inv_metrics = invariance_loss_fn(
+                        A=A_for_loss_clean,
+                        logits=output.get("A_logits", None),
+                        X=X,
+                        M=M if M is not None else torch.ones_like(X),
+                        e=e
+                    )
+                    losses["invariance"] = l_inv.item()
+                    losses["invariance_metrics"] = inv_metrics
+            else:
+                losses["invariance"] = 0.0
+        except Exception as ex:
+            print(f"[WARNING] Invariance loss computation failed: {ex}, skipping")
+            l_inv = torch.tensor(0.0, device=X.device)
+            losses["invariance"] = 0.0
+    else:
+        losses["invariance"] = 0.0
+
     # Total loss
     total = (
         lambda_recon * l_recon +
         lambda_sparse * l_sparse +
         lambda_acyclic * l_acyclic +
         lambda_disen * l_disen +
-        lambda_supervised * l_sup
+        lambda_supervised * l_sup +
+        lambda_inv * l_inv
     )
     
     return total, losses

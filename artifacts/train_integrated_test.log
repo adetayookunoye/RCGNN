@@ -1,0 +1,11 @@
+nohup: ignoring input
+📂 Loading data from: data/interim/uci_air
+✅ Data loaded: 6613 train, 1417 val samples
+✅ Ground truth adjacency loaded: (13, 13), offdiag_nnz=13
+Epoch 000 | loss 0.0841 | recon 0.0705 | acy 0.5492 | SHD 13.0 | λ_sup 0.000 | λ_acy 0.000
+  [DEBUG] SHD_naive(offdiag)=13
+✅ Saved best adjacency to artifacts/adjacency/A_mean.npy
+Epoch 001 | loss 0.0143 | recon 0.0032 | acy 0.3434 | SHD 13.0 | λ_sup 0.000 | λ_acy 0.000
+  [DEBUG] SHD_naive(offdiag)=13
+Epoch 002 | loss 0.0115 | recon 0.0013 | acy 0.2615 | SHD 13.0 | λ_sup 0.000 | λ_acy 0.001
+  [DEBUG] SHD_naive(offdiag)=13

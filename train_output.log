@@ -1,0 +1,38 @@
+🔬 Generating small synthetic dataset (linear)...
+python3 scripts/synth_bench.py \
+	--graph_type er \
+	--d 10 \
+	--edges 15 \
+	--mechanism linear \
+	--missing_type mcar \
+	--missing_rate 0.2 \
+	--noise_scale 0.3 \
+	--output data/interim/synth_small \
+	--seed 42
+python3: can't open file '/home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/scripts/train_air.py': [Errno 2] No such file or directory
+📂 Loading data from: data/interim/uci_air
+✅ Data loaded: 6613 train, 1417 val samples
+✅ Ground truth adjacency loaded: (13, 13)
+Epoch 000 | loss 16767.4357 | recon 16767.1667 | acy 0.7863 | SHD 0.0
+✅ Saved best adjacency to /home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/artifacts/adjacency/A_mean_air.npy
+Epoch 001 | loss 70.3273 | recon 70.0617 | acy 0.7820 | SHD 0.0
+Epoch 002 | loss 26.7786 | recon 26.5138 | acy 0.7800 | SHD 0.0
+Epoch 003 | loss 19.6523 | recon 19.3878 | acy 0.7793 | SHD 0.0
+Epoch 004 | loss 14.0919 | recon 13.8275 | acy 0.7789 | SHD 0.0
+Epoch 005 | loss 11.9012 | recon 11.6370 | acy 0.7783 | SHD 0.0
+Epoch 006 | loss 11.5117 | recon 11.2477 | acy 0.7780 | SHD 0.0
+Epoch 007 | loss 10.5587 | recon 10.2946 | acy 0.7780 | SHD 0.0
+Epoch 008 | loss 10.9318 | recon 10.6679 | acy 0.7778 | SHD 0.0
+Epoch 009 | loss 10.2717 | recon 10.0080 | acy 0.7773 | SHD 0.0
+Epoch 010 | loss 9.8748 | recon 9.6111 | acy 0.7773 | SHD 0.0
+Epoch 011 | loss 9.4798 | recon 9.2163 | acy 0.7763 | SHD 0.0
+Epoch 012 | loss 10.6172 | recon 10.3535 | acy 0.7775 | SHD 0.0
+Epoch 013 | loss 9.2352 | recon 8.9718 | acy 0.7761 | SHD 0.0
+Epoch 014 | loss 9.3450 | recon 9.0815 | acy 0.7773 | SHD 0.0
+Epoch 015 | loss 8.0459 | recon 7.7826 | acy 0.7765 | SHD 0.0
+Epoch 016 | loss 9.8905 | recon 9.6273 | acy 0.7760 | SHD 0.0
+Epoch 017 | loss 8.2122 | recon 7.9488 | acy 0.7767 | SHD 0.0
+Epoch 018 | loss 8.1993 | recon 7.9363 | acy 0.7757 | SHD 0.0
+Epoch 019 | loss 8.8323 | recon 8.5692 | acy 0.7758 | SHD 0.0
+Best SHD: 0.0
+Running: /home/adetayo/anaconda3/bin/python3 /home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/scripts/train_rcgnn.py /home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/configs/data_uci.yaml /home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/configs/model.yaml /home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/configs/train.yaml --adj-output /home/adetayo/Documents/CSCI Forms/Adetayo Research/Robust Causal Graph Neural Networks under Compound Sensor Corruptions/rcgnn/artifacts/adjacency/A_mean_air.npy --epochs 20

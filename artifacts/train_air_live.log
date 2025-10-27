@@ -1,0 +1,206 @@
+📂 Loading data from: data/interim/uci_air
+✅ Data loaded: 6613 train, 1417 val samples
+✅ Ground truth adjacency loaded: (13, 13), offdiag_nnz=13
+Epoch 000 | loss 0.0841 | recon 0.0705 | acy 0.5492 | SHD 13.0 | λ_sup 0.000 | λ_acy 0.000
+  [DEBUG] SHD_naive(offdiag)=13
+✅ Saved best adjacency to artifacts/adjacency/A_mean_air.npy
+Epoch 001 | loss 0.0166 | recon 0.0032 | acy 0.2295 | SHD 0.0 | λ_sup 0.007 | λ_acy 0.000
+  [DEBUG] SHD_naive(offdiag)=0
+✅ Saved best adjacency to artifacts/adjacency/A_mean_air.npy
+Epoch 002 | loss 0.0165 | recon 0.0013 | acy 0.0939 | SHD 0.0 | λ_sup 0.029 | λ_acy 0.001
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 003 | loss 0.0179 | recon 0.0009 | acy 0.0449 | SHD 0.0 | λ_sup 0.062 | λ_acy 0.003
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 004 | loss 0.0197 | recon 0.0008 | acy 0.0263 | SHD 0.0 | λ_sup 0.104 | λ_acy 0.005
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 005 | loss 0.0220 | recon 0.0007 | acy 0.0180 | SHD 0.0 | λ_sup 0.150 | λ_acy 0.007
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 006 | loss 0.0243 | recon 0.0006 | acy 0.0137 | SHD 0.0 | λ_sup 0.196 | λ_acy 0.010
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 007 | loss 0.0264 | recon 0.0005 | acy 0.0112 | SHD 0.0 | λ_sup 0.238 | λ_acy 0.014
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 008 | loss 0.0281 | recon 0.0005 | acy 0.0097 | SHD 0.0 | λ_sup 0.271 | λ_acy 0.017
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 009 | loss 0.0291 | recon 0.0004 | acy 0.0089 | SHD 0.0 | λ_sup 0.293 | λ_acy 0.021
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 010 | loss 0.0294 | recon 0.0004 | acy 0.0084 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.025
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 011 | loss 0.0292 | recon 0.0004 | acy 0.0081 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.029
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 012 | loss 0.0291 | recon 0.0004 | acy 0.0078 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.033
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 013 | loss 0.0291 | recon 0.0004 | acy 0.0076 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.036
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 014 | loss 0.0289 | recon 0.0003 | acy 0.0074 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.040
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 015 | loss 0.0287 | recon 0.0003 | acy 0.0073 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.043
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 016 | loss 0.0287 | recon 0.0003 | acy 0.0071 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.045
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 017 | loss 0.0286 | recon 0.0003 | acy 0.0070 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.047
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 018 | loss 0.0286 | recon 0.0003 | acy 0.0070 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.049
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 019 | loss 0.0284 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 020 | loss 0.0284 | recon 0.0003 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 021 | loss 0.0283 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 022 | loss 0.0283 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 023 | loss 0.0282 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 024 | loss 0.0283 | recon 0.0003 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 025 | loss 0.0281 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 026 | loss 0.0281 | recon 0.0003 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 027 | loss 0.0280 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 028 | loss 0.0280 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 029 | loss 0.0279 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 030 | loss 0.0279 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 031 | loss 0.0278 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 032 | loss 0.0279 | recon 0.0003 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 033 | loss 0.0277 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 034 | loss 0.0278 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 035 | loss 0.0277 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 036 | loss 0.0277 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 037 | loss 0.0277 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 038 | loss 0.0277 | recon 0.0003 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 039 | loss 0.0276 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 040 | loss 0.0276 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 041 | loss 0.0275 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 042 | loss 0.0275 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 043 | loss 0.0275 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 044 | loss 0.0275 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 045 | loss 0.0275 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 046 | loss 0.0274 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 047 | loss 0.0274 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 048 | loss 0.0274 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 049 | loss 0.0274 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 050 | loss 0.0273 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 051 | loss 0.0273 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 052 | loss 0.0273 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 053 | loss 0.0273 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 054 | loss 0.0273 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 055 | loss 0.0273 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 056 | loss 0.0272 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 057 | loss 0.0272 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 058 | loss 0.0272 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 059 | loss 0.0272 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 060 | loss 0.0272 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 061 | loss 0.0272 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 062 | loss 0.0271 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 063 | loss 0.0272 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 064 | loss 0.0270 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 065 | loss 0.0271 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 066 | loss 0.0271 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 067 | loss 0.0270 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 068 | loss 0.0270 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 069 | loss 0.0271 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 070 | loss 0.0270 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 071 | loss 0.0270 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 072 | loss 0.0270 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 073 | loss 0.0270 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 074 | loss 0.0270 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 075 | loss 0.0270 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 076 | loss 0.0269 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 077 | loss 0.0269 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 078 | loss 0.0269 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 079 | loss 0.0269 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 080 | loss 0.0270 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 081 | loss 0.0269 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 082 | loss 0.0269 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 083 | loss 0.0269 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 084 | loss 0.0269 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 085 | loss 0.0269 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 086 | loss 0.0268 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 087 | loss 0.0269 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 088 | loss 0.0268 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 089 | loss 0.0268 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 090 | loss 0.0268 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 091 | loss 0.0268 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 092 | loss 0.0268 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 093 | loss 0.0268 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 094 | loss 0.0268 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 095 | loss 0.0267 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 096 | loss 0.0268 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 097 | loss 0.0267 | recon 0.0001 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 098 | loss 0.0267 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Epoch 099 | loss 0.0267 | recon 0.0002 | acy 0.0069 | SHD 0.0 | λ_sup 0.300 | λ_acy 0.050
+  [DEBUG] SHD_naive(offdiag)=0
+Best SHD: 0.0
