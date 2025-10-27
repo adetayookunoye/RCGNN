@@ -158,6 +158,15 @@ train-air: data-air ## Train RC-GNN on UCI Air Quality dataset
 		--adj-output $(ADJ_AIR)
 	@echo "✅ Training complete! Adjacency at $(ADJ_AIR)"
 
+train-air-live: data-air ## Train UCI Air with live log streaming (tee)
+	@echo "📺 Live training (logs streaming to terminal and saved to artifacts/train_air_live.log)"
+	@mkdir -p $(ARTIFACTS)/checkpoints $(ARTIFACTS)/adjacency
+	$(PYTHON) -u scripts/train_rcgnn.py \
+		$(CONFIGS)/data_uci.yaml \
+		$(CONFIGS)/model.yaml \
+		$(CONFIGS)/train.yaml \
+		--adj-output $(ADJ_AIR) 2>&1 | tee $(ARTIFACTS)/train_air_live.log
+
 train-all: train-synth train-air ## Train on both datasets
 
 train-quick: ## Quick training (5 epochs, for testing)

@@ -11,3 +11,4 @@ split:
   regime_test: 0.2
 paths:
   root: "data/interim/uci_air"
+normalize: true

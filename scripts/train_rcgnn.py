@@ -8,6 +8,7 @@ from src.models.rcgnn import RCGNN
 from src.training.optim import make_optimizer
 from src.training.loop import train_epoch, eval_epoch
 import numpy as np
+import math
 
 def main():
     parser = argparse.ArgumentParser()
@@ -27,11 +28,24 @@ def main():
     if args.epochs is not None:
         tc["epochs"] = int(args.epochs)
 
-    root = dc["paths"]["root"]  # Already contains full path like "data/interim/synth_small"
+    root = dc["paths"]["root"]  # Already contains full path like "data/interim/synth_small" or dataset dir
     print(f"📂 Loading data from: {root}")
+
+    # Optional normalization for real datasets (e.g., UCI Air)
+    normalize = dc.get("normalize", False)
     
     train_ds = load_synth(root, "train", seed=tc["seed"])
     val_ds   = load_synth(root, "val", seed=tc["seed"]+1)
+
+    # Apply simple per-feature standardization using train stats
+    if normalize:
+        with torch.no_grad():
+            # Compute mean/std over N and T for each feature d
+            Xt = train_ds.X  # [N,T,d]
+            mean = Xt.mean(dim=(0,1), keepdim=True)
+            std = Xt.std(dim=(0,1), keepdim=True).clamp_min(1e-6)
+            train_ds.X.sub_(mean).div_(std)
+            val_ds.X.sub_(mean).div_(std)
     
     print(f"✅ Data loaded: {len(train_ds)} train, {len(val_ds)} val samples")
 
@@ -60,20 +74,39 @@ def main():
     A_true = None
     if A_true_path.exists():
         A_true = np.load(A_true_path)
-        print(f"✅ Ground truth adjacency loaded: {A_true.shape}")
+        # Sanity check: off-diagonal nonzeros
+        mask_no_diag = np.ones_like(A_true, dtype=bool)
+        np.fill_diagonal(mask_no_diag, False)
+        offdiag_nnz = int((A_true[mask_no_diag] != 0).sum())
+        print(f"✅ Ground truth adjacency loaded: {A_true.shape}, offdiag_nnz={offdiag_nnz}")
     else:
         print("⚠️  No ground truth adjacency (A_true.npy) - SHD will not be computed")
     
     best_shd = 1e9
 
+    # Schedules for supervised/acyclic weights
+    def cos_ramp(t, T):
+        x = max(0.0, min(1.0, t / max(1, T)))
+        return 0.5 * (1.0 - math.cos(math.pi * x))
+
+    T_sup_on = int(tc.get("supervised_warmup_epochs", 10))
+    T_acy_on = int(tc.get("acyclic_warmup_epochs", 20))
+
+    base_lambda_sup = float(tc.get("lambda_supervised", 0.0))
+    base_lambda_acy = float(tc.get("lambda_acyclic", 0.1))
+
     for ep in range(tc["epochs"]):
+        # Dynamic weights (warm-up then ramp up)
+        lam_sup = base_lambda_sup * cos_ramp(ep, T_sup_on)
+        lam_acy = base_lambda_acy * cos_ramp(ep, T_acy_on)
+
         loss_kwargs = {
             "lambda_recon": tc.get("lambda_recon", 1.0),
             "lambda_sparse": tc.get("lambda_sparse", 0.01),
-            "lambda_acyclic": tc.get("lambda_acyclic", 0.1),
+            "lambda_acyclic": lam_acy,
             "lambda_disen": tc.get("lambda_disen", 0.01),
             "target_sparsity": tc.get("target_sparsity", 0.1),
-            "lambda_supervised": tc.get("lambda_supervised", 0.0),
+            "lambda_supervised": lam_sup,
             "A_true": A_true,
         }
         out = train_epoch(model, train_ld, opt, device=device, **loss_kwargs)
@@ -82,7 +115,18 @@ def main():
         # Print epoch summary
         shd_str = f"{ev.get('shd', float('inf')):.1f}" if ev.get('shd') is not None else 'N/A'
         print(f"Epoch {ep:03d} | loss {out['loss']:.4f} | recon {out.get('recon', 0):.4f} | "
-              f"acy {out.get('acyclic', 0):.4f} | SHD {shd_str}")
+              f"acy {out.get('acyclic', 0):.4f} | SHD {shd_str} | λ_sup {lam_sup:.3f} | λ_acy {lam_acy:.3f}")
+
+        # Naive SHD debug on off-diagonal to catch metric wiring issues
+        if A_true is not None and 'A_mean' in ev:
+            thr_use = ev.get('best_thr', 0.5) if 'best_thr' in ev else 0.5
+            A_pred_bin = (ev['A_mean'] >= thr_use).astype(int)
+            if A_pred_bin.shape == A_true.shape:
+                off = np.ones_like(A_true, dtype=bool)
+                np.fill_diagonal(off, False)
+                A_true_b = (A_true > 0).astype(int)
+                shd_naive = int((A_true_b[off] ^ A_pred_bin[off]).sum())
+                print(f"  [DEBUG] SHD_naive(offdiag)={shd_naive}")
         
         if ev.get("shd", 1e9) < best_shd:
             best_shd = ev["shd"]
