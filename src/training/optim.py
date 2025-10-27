@@ -1,6 +1,7 @@
 """Optimization utilities for RC-GNN."""
 
 import torch
+import torch.nn.functional as F
 from typing import Dict, List
 
 
@@ -154,6 +155,7 @@ def compute_total_loss(
     lambda_acyclic: float = 0.1,
     lambda_disen: float = 0.01,
     target_sparsity: float = 0.1,
+    lambda_supervised: float = 0.0,
 ):
     """
     Compute total training loss.
@@ -200,12 +202,41 @@ def compute_total_loss(
     l_disen = disentanglement_loss(output["z_s"], output["z_n"], output["z_b"])
     losses["disen"] = l_disen.item()
     
+    # Optional supervised edge loss if ground truth provided
+    if (A_true is not None) and (lambda_supervised > 0):
+        # Prepare target and predictions
+        if isinstance(A_true, torch.Tensor):
+            A_t = A_true.to(A_for_loss_clean.device).float()
+        else:
+            A_t = torch.tensor(A_true, device=A_for_loss_clean.device, dtype=torch.float32)
+        # Zero diagonal
+        A_t = A_t.clone()
+        A_t.fill_diagonal_(0.0)
+
+        # Prefer logits if they are available for numerical stability
+        if "A_logits" in output:
+            A_logits = output["A_logits"]
+            if len(A_logits.shape) == 3:
+                A_logits = A_logits.mean(dim=0)
+            # Zero diagonal to match masking
+            A_logits = A_logits.clone()
+            A_logits.fill_diagonal_(0.0)
+            l_sup = F.binary_cross_entropy_with_logits(A_logits, A_t)
+        else:
+            # Fall back to soft probabilities
+            A_prob = A_mean  # already mean over batch if needed
+            l_sup = F.binary_cross_entropy(A_prob, A_t)
+        losses["supervised"] = l_sup.item()
+    else:
+        l_sup = torch.tensor(0.0, device=X.device)
+
     # Total loss
     total = (
         lambda_recon * l_recon +
         lambda_sparse * l_sparse +
         lambda_acyclic * l_acyclic +
-        lambda_disen * l_disen
+        lambda_disen * l_disen +
+        lambda_supervised * l_sup
     )
     
     return total, losses

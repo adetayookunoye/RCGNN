@@ -73,6 +73,8 @@ def main():
             "lambda_acyclic": tc.get("lambda_acyclic", 0.1),
             "lambda_disen": tc.get("lambda_disen", 0.01),
             "target_sparsity": tc.get("target_sparsity", 0.1),
+            "lambda_supervised": tc.get("lambda_supervised", 0.0),
+            "A_true": A_true,
         }
         out = train_epoch(model, train_ld, opt, device=device, **loss_kwargs)
         ev = eval_epoch(model, val_ld, A_true=A_true, threshold=0.5, device=device)
