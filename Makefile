@@ -144,7 +144,8 @@ train-synth: data-synth-small ## Train RC-GNN on synthetic data
 	$(PYTHON) scripts/train_rcgnn.py \
 		$(CONFIGS)/data.yaml \
 		$(CONFIGS)/model.yaml \
-		$(CONFIGS)/train.yaml
+		$(CONFIGS)/train.yaml \
+		--adj-output $(ADJ_SYNTH)
 	@echo "✅ Training complete! Adjacency at $(ADJ_SYNTH)"
 
 train-air: data-air ## Train RC-GNN on UCI Air Quality dataset
@@ -153,8 +154,8 @@ train-air: data-air ## Train RC-GNN on UCI Air Quality dataset
 	$(PYTHON) scripts/train_rcgnn.py \
 		$(CONFIGS)/data_uci.yaml \
 		$(CONFIGS)/model.yaml \
-		$(CONFIGS)/train.yaml
-	@cp $(ARTIFACTS)/adjacency/A_mean.npy $(ADJ_AIR) 2>/dev/null || true
+		$(CONFIGS)/train.yaml \
+		--adj-output $(ADJ_AIR)
 	@echo "✅ Training complete! Adjacency at $(ADJ_AIR)"
 
 train-all: train-synth train-air ## Train on both datasets

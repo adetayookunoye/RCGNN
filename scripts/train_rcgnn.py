@@ -14,6 +14,8 @@ def main():
     parser.add_argument("data_cfg")
     parser.add_argument("model_cfg")
     parser.add_argument("train_cfg")
+    parser.add_argument("--adj-output", default="artifacts/adjacency/A_mean.npy", 
+                        help="Path to save learned adjacency matrix")
     args = parser.parse_args()
 
     with open(args.data_cfg) as f: dc = yaml.safe_load(f)
@@ -79,8 +81,11 @@ def main():
             best_shd = ev["shd"]
             os.makedirs("artifacts/checkpoints", exist_ok=True)
             torch.save(model.state_dict(), "artifacts/checkpoints/rcgnn_best.pt")
-            os.makedirs("artifacts/adjacency", exist_ok=True)
-            np.save("artifacts/adjacency/A_mean.npy", ev["A_mean"])
+            # Save adjacency to configured path
+            adj_path = Path(args.adj_output)
+            adj_path.parent.mkdir(parents=True, exist_ok=True)
+            np.save(adj_path, ev["A_mean"])
+            print(f"✅ Saved best adjacency to {adj_path}")
     print("Best SHD:", best_shd)
 
 if __name__ == "__main__":
