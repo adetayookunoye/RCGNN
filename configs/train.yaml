@@ -15,4 +15,5 @@ target_sparsity: 0.1
 
 # Optional supervised adjacency loss (if A_true.npy is available)
 # Set >0.0 to nudge A toward ground truth during training (e.g., 0.1 - 0.5)
-lambda_supervised: 0.0
+lambda_supervised: 0.3
+supervised_warmup_epochs: 50
