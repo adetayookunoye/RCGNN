@@ -16,11 +16,16 @@ def main():
     parser.add_argument("train_cfg")
     parser.add_argument("--adj-output", default="artifacts/adjacency/A_mean.npy", 
                         help="Path to save learned adjacency matrix")
+    parser.add_argument("--epochs", type=int, default=None,
+                        help="Override number of epochs (takes precedence over train config)")
     args = parser.parse_args()
 
     with open(args.data_cfg) as f: dc = yaml.safe_load(f)
     with open(args.model_cfg) as f: mc = yaml.safe_load(f)
     with open(args.train_cfg) as f: tc = yaml.safe_load(f)
+    # Optional override from CLI
+    if args.epochs is not None:
+        tc["epochs"] = int(args.epochs)
 
     root = dc["paths"]["root"]  # Already contains full path like "data/interim/synth_small"
     print(f"📂 Loading data from: {root}")

@@ -202,8 +202,10 @@ def eval_epoch(model, eval_loader, A_true=None, device="cpu", threshold=0.5):
     if len(all_A_soft) > 0:
         A_soft_avg = torch.stack(all_A_soft).mean(dim=0).cpu().numpy()
         np.fill_diagonal(A_soft_avg, 0.0)  # Zero diagonal (no self-loops)
-        # Convert soft probs to logits for threshold tuning
-        A_logits_avg = np.log(A_soft_avg / (1 - A_soft_avg + 1e-8))
+        # Convert soft probs to logits for threshold tuning safely
+        # Guard against 0/1 by clipping to avoid log(0) and Inf/NaN spam
+        probs = np.clip(A_soft_avg, 1e-6, 1 - 1e-6)
+        A_logits_avg = np.log(probs / (1 - probs))
     elif len(all_A_logits) > 0:
         A_logits_avg = torch.stack(all_A_logits).mean(dim=0).cpu().numpy()
     else:
