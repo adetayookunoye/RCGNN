@@ -76,8 +76,9 @@ class StructureLearner(nn.Module):
             env_idx: Environment indices [B] (optional)
             
         Returns:
-            A: Learned adjacency matrix
-            A_logits: Raw logits before sparsification
+            A: Sparsified adjacency (for metrics/logging)
+            A_logits: Raw logits before any activation
+            A_soft: Soft probabilities sigmoid(logits/tau) (for loss computation)
         """
         B, T, latent_dim = z_s.shape
         
@@ -90,15 +91,18 @@ class StructureLearner(nn.Module):
                 mask = (env_idx == env).float()
                 A_logits = A_logits + self.A_deltas[env].unsqueeze(0) * mask.view(B, 1, 1)
         
-        # Sparsify based on method
+        # CRITICAL: Always compute soft probabilities for gradient flow
+        A_soft = torch.sigmoid(A_logits / self.temperature)
+        
+        # Sparsify based on method (only for metrics/logging, not used in loss)
         if self.sparsify_method == "topk":
             A = self._sparsify_topk(A_logits)
         elif self.sparsify_method == "sparsemax":
             A = self._sparsify_sparsemax(A_logits)
         else:
-            A = torch.sigmoid(A_logits / self.temperature)
+            A = A_soft  # Use soft probabilities if no sparsification
         
-        return A, A_logits
+        return A, A_logits, A_soft
     
     def _sparsify_topk(self, A_logits):
         """Keep top-k elements."""
@@ -116,10 +120,11 @@ class StructureLearner(nn.Module):
         """Use sparsemax-like approximation."""
         return torch.relu(torch.sigmoid(A_logits / self.temperature) - 0.5) * 2
     
-    def step_temperature(self, epoch, total_epochs, final_temp=0.1):
-        """Anneal temperature during training."""
-        progress = epoch / total_epochs
-        temp = 1.0 * (1 - progress) + final_temp * progress
+    def step_temperature(self, epoch, total_epochs, start_temp=1.5, final_temp=0.5):
+        """Anneal temperature during training (clamped to min 0.01 for gradient flow)."""
+        progress = min(1.0, epoch / max(1, total_epochs))
+        temp = start_temp * (1 - progress) + final_temp * progress
+        temp = max(0.01, temp)  # CRITICAL: Never allow tau=0, kills gradients
         self.temperature.copy_(torch.tensor(temp, device=self.temperature.device))
 
 
@@ -183,7 +188,7 @@ class RCGNN(nn.Module):
         z_s, z_n, z_b = self.tri_encoder(X)
         
         # Learn structure
-        A, A_logits = self.structure_learner(z_s, e)
+        A, A_logits, A_soft = self.structure_learner(z_s, e)
         
         # Decode
         z_combined = torch.cat([z_s, z_n, z_b], dim=-1)  # [B, T, latent_dim*3]
@@ -199,6 +204,7 @@ class RCGNN(nn.Module):
             "X_recon": X_recon,
             "A": A,
             "A_logits": A_logits,
+            "A_soft": A_soft,  # CRITICAL: Add soft probs for loss computation
             "z_s": z_s,
             "z_n": z_n,
             "z_b": z_b,

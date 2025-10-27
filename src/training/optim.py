@@ -174,12 +174,26 @@ def compute_total_loss(
     l_recon = reconstruction_loss(output["X_recon"], X, M)
     losses["recon"] = l_recon.item()
     
-    # Sparsity loss
-    l_sparse = sparsity_loss(output["A"], target_sparsity)
+    # CRITICAL: Use A_soft (differentiable sigmoid probs) for all losses, not sparsified A
+    # This enables gradient flow to structure learner
+    A_for_loss = output.get("A_soft", output["A"])
+    
+    # Zero diagonal before any loss computation (no self-loops)
+    if len(A_for_loss.shape) == 3:
+        A_for_loss_clean = A_for_loss.clone()
+        for i in range(A_for_loss.shape[0]):
+            A_for_loss_clean[i].fill_diagonal_(0.0)
+    else:
+        A_for_loss_clean = A_for_loss.clone()
+        A_for_loss_clean.fill_diagonal_(0.0)
+    
+    # Sparsity loss (on soft probs)
+    l_sparse = sparsity_loss(A_for_loss_clean, target_sparsity)
     losses["sparse"] = l_sparse.item()
     
-    # Acyclicity loss
-    l_acyclic = acyclicity_loss(output["A"].mean(dim=0) if len(output["A"].shape) == 3 else output["A"])
+    # Acyclicity loss (on soft probs with zero diagonal)
+    A_mean = A_for_loss_clean.mean(dim=0) if len(A_for_loss_clean.shape) == 3 else A_for_loss_clean
+    l_acyclic = acyclicity_loss(A_mean)
     losses["acyclic"] = l_acyclic.item()
     
     # Disentanglement loss

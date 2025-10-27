@@ -150,6 +150,7 @@ def eval_epoch(model, eval_loader, A_true=None, device="cpu", threshold=0.5):
     
     all_A_pred = []
     all_A_logits = []
+    all_A_soft = []  # CRITICAL: Collect soft probabilities for metrics
     total_recon_loss = 0.0
     n_batches = 0
     
@@ -172,6 +173,13 @@ def eval_epoch(model, eval_loader, A_true=None, device="cpu", threshold=0.5):
                 A_pred = A_pred.mean(dim=0)
             all_A_pred.append(A_pred)
             
+            # Store soft probabilities (CRITICAL for proper metrics)
+            if "A_soft" in output:
+                A_soft = output["A_soft"].detach()
+                if len(A_soft.shape) == 3:
+                    A_soft = A_soft.mean(dim=0)
+                all_A_soft.append(A_soft)
+            
             # Store logits if available
             if "A_logits" in output:
                 A_logits = output["A_logits"].detach()
@@ -187,14 +195,19 @@ def eval_epoch(model, eval_loader, A_true=None, device="cpu", threshold=0.5):
             total_recon_loss += recon_loss.item()
             n_batches += 1
     
-    # Average predictions
+        # Average predictions
     A_pred_avg = torch.stack(all_A_pred).mean(dim=0).cpu().numpy()
     
-    # Use logits if available, else use soft probabilities
-    if len(all_A_logits) > 0:
+    # CRITICAL: Use A_soft (differentiable probs) for metrics if available
+    if len(all_A_soft) > 0:
+        A_soft_avg = torch.stack(all_A_soft).mean(dim=0).cpu().numpy()
+        np.fill_diagonal(A_soft_avg, 0.0)  # Zero diagonal (no self-loops)
+        # Convert soft probs to logits for threshold tuning
+        A_logits_avg = np.log(A_soft_avg / (1 - A_soft_avg + 1e-8))
+    elif len(all_A_logits) > 0:
         A_logits_avg = torch.stack(all_A_logits).mean(dim=0).cpu().numpy()
     else:
-        # Convert soft probs back to logits (inverse sigmoid)
+        # Fallback: convert sparsified predictions back to logits
         A_logits_avg = np.log(A_pred_avg / (1 - A_pred_avg + 1e-8))
     
     avg_recon_loss = total_recon_loss / n_batches
@@ -249,7 +262,7 @@ def eval_epoch(model, eval_loader, A_true=None, device="cpu", threshold=0.5):
     
     metrics = {
         "recon_loss": avg_recon_loss,
-        "A_mean": A_logits_avg,  # Save logits
+        "A_mean": A_soft_avg if len(all_A_soft) > 0 else A_logits_avg,  # Save soft probs (or logits fallback)
         "A_bin": A_bin,
         "threshold_used": float(best_thr),
     }
