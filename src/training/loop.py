@@ -5,6 +5,7 @@ import torch.nn as nn
 import numpy as np
 from typing import Dict, Tuple, Optional
 from sklearn.metrics import precision_recall_fscore_support, roc_auc_score
+from src.training.metrics import adjacency_variance, edge_set_jaccard, policy_consistency
 
 
 def binary_adjacency(A, threshold=0.5):
@@ -438,3 +439,166 @@ def train_model(
             print(f"Saved best checkpoint to {checkpoint_path}")
     
     return history, best_checkpoint
+
+
+def eval_epoch_multi_env(model, eval_loader, A_true=None, device="cpu", threshold=0.5, policy_edges=None):
+    """
+    Evaluation with stability metrics support for multi-environment settings.
+    
+    Extends eval_epoch to:
+    - Collect adjacency matrices per environment
+    - Compute cross-environment stability metrics
+    - Support policy-relevant pathway consistency checking
+    
+    Args:
+        model: RC-GNN model
+        eval_loader: Validation DataLoader
+        A_true: Ground truth adjacency [d, d]
+        device: Device to evaluate on
+        threshold: Threshold for binarizing adjacency
+        policy_edges: List of tuples (i, j) for policy-relevant edges
+        
+    Returns:
+        dict with standard + stability metrics
+    """
+    model.eval()
+    
+    all_A_by_env = {}  # Dict: env_id -> list of adjacency matrices
+    all_outputs = []
+    total_recon_loss = 0.0
+    n_batches = 0
+    
+    with torch.no_grad():
+        for batch in eval_loader:
+            X = batch["X"].to(device)
+            M = batch.get("M", None)
+            if M is not None:
+                M = M.to(device)
+            e = batch.get("e", None)
+            if e is not None:
+                e = e.to(device)
+            
+            # Forward pass
+            output = model(X, M, e)
+            all_outputs.append(output)
+            
+            # Extract and organize by environment
+            A_pred = output["A"].detach()
+            if len(A_pred.shape) == 3:
+                A_pred_mean = A_pred.mean(dim=0)
+            else:
+                A_pred_mean = A_pred
+            
+            # If we have per-environment adjacencies, track them
+            if e is not None:
+                unique_envs = torch.unique(e).cpu().numpy()
+                for env_id in unique_envs:
+                    if env_id not in all_A_by_env:
+                        all_A_by_env[env_id] = []
+                    all_A_by_env[env_id].append(A_pred_mean.cpu().numpy())
+            else:
+                # Single environment
+                if 0 not in all_A_by_env:
+                    all_A_by_env[0] = []
+                all_A_by_env[0].append(A_pred_mean.cpu().numpy())
+            
+            # Reconstruction loss
+            if M is not None:
+                recon_loss = ((output["X_recon"] - X) ** 2 * M).mean()
+            else:
+                recon_loss = ((output["X_recon"] - X) ** 2).mean()
+            total_recon_loss += recon_loss.item()
+            n_batches += 1
+    
+    # Average adjacencies per environment
+    A_by_env_avg = {}
+    for env_id, A_list in all_A_by_env.items():
+        if A_list:
+            A_by_env_avg[env_id] = np.stack(A_list).mean(axis=0)
+            np.fill_diagonal(A_by_env_avg[env_id], 0.0)
+    
+    avg_recon_loss = total_recon_loss / max(1, n_batches)
+    
+    # First, compute standard metrics using aggregated adjacency
+    if A_by_env_avg:
+        A_pred_aggregated = np.stack(list(A_by_env_avg.values())).mean(axis=0)
+    else:
+        # Fallback: aggregate from outputs
+        A_preds = [o["A"].detach().mean(dim=0).cpu().numpy() if len(o["A"].detach().shape) == 3 else o["A"].detach().cpu().numpy() for o in all_outputs]
+        A_pred_aggregated = np.stack(A_preds).mean(axis=0) if A_preds else np.zeros((10, 10))
+    
+    np.fill_diagonal(A_pred_aggregated, 0.0)
+    
+    # Binarize
+    A_bin = (A_pred_aggregated > threshold).astype(np.int32)
+    
+    # Standard metrics
+    metrics = {
+        "recon_loss": float(avg_recon_loss),
+        "A_mean": A_pred_aggregated,
+        "A_mean_max": float(A_pred_aggregated.max()),
+        "A_mean_std": float(A_pred_aggregated.std()),
+    }
+    
+    if A_true is not None:
+        A_true_np = A_true.cpu().numpy() if isinstance(A_true, torch.Tensor) else A_true
+        np.fill_diagonal(A_true_np, 0.0)
+        
+        # Flatten for metrics
+        y_true = (A_true_np > 0.5).astype(int).reshape(-1)
+        y_pred = A_bin.reshape(-1)
+        y_probs = A_pred_aggregated.reshape(-1)
+        
+        # Threshold tuning on F1
+        best_f1 = 0.0
+        best_thr = 0.5
+        for thr in np.linspace(0.1, 0.9, 20):
+            y_pred_thr = (A_pred_aggregated > thr).astype(int).reshape(-1)
+            try:
+                _, _, f1_thr, _ = precision_recall_fscore_support(y_true, y_pred_thr, average="binary", zero_division=0)
+                if f1_thr > best_f1:
+                    best_f1 = f1_thr
+                    best_thr = thr
+            except:
+                pass
+        
+        # Metrics at best threshold
+        A_bin_best = (A_pred_aggregated > best_thr).astype(np.int32)
+        y_pred_best = A_bin_best.reshape(-1)
+        
+        try:
+            p, r, f1, _ = precision_recall_fscore_support(y_true, y_pred_best, average="binary", zero_division=0)
+            metrics["precision"] = float(p)
+            metrics["recall"] = float(r)
+            metrics["f1"] = float(f1)
+        except:
+            metrics["precision"] = 0.0
+            metrics["recall"] = 0.0
+            metrics["f1"] = 0.0
+        
+        # AUC
+        try:
+            metrics["auc"] = float(roc_auc_score(y_true, y_probs))
+        except:
+            metrics["auc"] = 0.0
+        
+        # SHD
+        try:
+            shd = int(np.sum(np.abs(A_bin_best - (A_true_np > 0.5).astype(int))))
+            metrics["shd"] = float(shd)
+        except:
+            metrics["shd"] = 1e9
+    
+    # ✅ STABILITY METRICS (Multi-Environment)
+    if len(A_by_env_avg) > 1:
+        # Cross-environment metrics
+        metrics["adjacency_variance"] = float(adjacency_variance(A_by_env_avg))
+        metrics["edge_set_jaccard"] = float(edge_set_jaccard(A_by_env_avg, threshold=threshold))
+        
+        if policy_edges:
+            policy_metrics = policy_consistency(A_by_env_avg, policy_edges, threshold=threshold)
+            metrics["policy_consistency"] = float(policy_metrics['consistency'])
+            metrics["policy_presence"] = float(policy_metrics['presence'])
+            metrics["policy_variance"] = float(policy_metrics['variance'])
+    
+    return metrics
