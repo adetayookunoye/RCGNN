@@ -1,0 +1,12 @@
+dataset: "synth_corrupted"
+window_len: 100
+window_stride: 1
+features: 15
+regime:
+  mode: "provided"
+split:
+  regime_train: 0.8
+  regime_val: 0.2
+  regime_test: 0.0
+paths:
+  root: "data/interim/synth_corrupted_h1_easy"
