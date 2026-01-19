@@ -34,6 +34,12 @@ class IRMStructureInvariance(nn.Module):
             risk: Per-environment risk
             grad_penalty: IRM gradient penalty
         """
+        # CRITICAL FIX: During evaluation (torch.no_grad()), we cannot compute
+        # gradients for the IRM penalty. Return zeros in that case.
+        if not torch.is_grad_enabled():
+            zeros = torch.zeros(self.n_envs, device=A.device, dtype=A.dtype)
+            return zeros, torch.tensor(0.0, device=A.device, dtype=A.dtype)
+        
         if A.dim() == 2:
             A = A.unsqueeze(0)
             logits = logits.unsqueeze(0) if logits is not None else None
@@ -81,9 +87,10 @@ class IRMStructureInvariance(nn.Module):
             # them (logits.grad will be populated after total_loss.backward()).
             try:
                 grad_logits = torch.autograd.grad(risk, logits_e, create_graph=True)[0]
-                # reduce to a scalar per-environment to keep memory modest
-                grad_scalar = grad_logits.abs().mean()
-                grads.append(grad_scalar)
+                # Keep edge-level gradients for proper variance computation
+                # Average over batch dimension, keep [d, d] structure
+                grad_edges = grad_logits.mean(dim=0)  # [d, d]
+                grads.append(grad_edges.flatten())  # [d*d]
             except RuntimeError:
                 # Fallback to the original scale-based finite-diff style when
                 # logits are not differentiable for some reason.
@@ -92,16 +99,17 @@ class IRMStructureInvariance(nn.Module):
                 err_s = ((preds_s - targets) ** 2) * mask
                 risk_s = err_s.mean()
                 grad = torch.autograd.grad(risk_s, [scale], create_graph=True)[0]
-                grads.append(grad)
+                grads.append(grad.expand(self.n_features * self.n_features))
 
             risks[env_idx] = risk
 
         if grads:
-            grads_tensor = torch.stack(grads).view(len(grads), -1)
+            grads_tensor = torch.stack(grads)  # [n_envs, d*d]
             if grads_tensor.shape[0] > 1:
-                grad_penalty = torch.var(
-                    grads_tensor, dim=0, unbiased=False
-                ).mean() * self.gamma
+                # Variance across environments for each edge
+                edge_var = torch.var(grads_tensor, dim=0, unbiased=False)  # [d*d]
+                # Mean variance across all edges, scaled by gamma
+                grad_penalty = edge_var.mean() * self.gamma
             else:
                 grad_penalty = torch.zeros((), device=A.device, dtype=A.dtype)
         else:

@@ -5,29 +5,35 @@ import torch.nn.functional as F
 class Recon(nn.Module):
     """MNAR-aware reconstruction with uncertainty estimation.
     
-    Predicts both mean and uncertainty of reconstructions, taking into account:
-    1. Signal reconstruction uncertainty
-    2. Bias uncertainty
-    3. MNAR-dependent uncertainty scaling
+    Predicts both mean and variance of reconstructions, taking into account:
+    1. Signal reconstruction variance (scaled by MNAR)
+    2. Bias variance (independent of missingness)
+    3. MNAR-dependent variance scaling for data uncertainty
+    
+    Key design:
+    - Variance (σ²) is clamped to avoid numerical issues
+    - MNAR scaling applied to signal variance only, then bias variance is added
+    - NLL loss normalized by count of observed entries
     """
-    def __init__(self, d, hidden_dim=32):
+    def __init__(self, d, hidden_dim=32, min_var=1e-6, max_mnar_scale=10.0):
         super().__init__()
         self.d = d
+        self.min_var = min_var
+        self.max_mnar_scale = max_mnar_scale
         
         # Signal reconstruction parameters (multiplicative + additive)
         self.signal_head = nn.Linear(hidden_dim, 2*d)
         
-        # Base uncertainty estimation
-        self.base_unc = nn.Sequential(
+        # Base signal variance (data-driven uncertainty)
+        self.base_var = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, d),
             nn.Softplus()
         )
         
-        # MNAR-aware uncertainty scaling: produce a positive baseline from ZB
-        # (hidden_dim -> d). The final conditioning with M_probs is done in
-        # forward to ensure higher missingness increases uncertainty.
+        # MNAR-aware variance scaling: produces positive factor to multiply base_var
+        # with higher missingness → higher data uncertainty
         self.mnar_scale = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
@@ -35,14 +41,14 @@ class Recon(nn.Module):
             nn.Softplus()
         )
         
-        # Bias uncertainty
-        self.bias_unc = nn.Sequential(
+        # Bias variance (independent of missingness)
+        self.bias_var = nn.Sequential(
             nn.Linear(hidden_dim, d),
             nn.Softplus()
         )
 
     def forward(self, S_hat, ZB, M_probs=None):
-        """Forward pass with MNAR-aware uncertainty.
+        """Forward pass with MNAR-aware variance estimation.
         
         Args:
             S_hat: Signal reconstruction [B,T,d] or [T,d]
@@ -51,8 +57,8 @@ class Recon(nn.Module):
             
         Returns:
             X_mu: Reconstructed mean [B,T,d] or [T,d]
-            unc: Total uncertainty [B,T,d] or [T,d]
-            components: Dict of uncertainty components
+            var: Total variance (σ²) [B,T,d] or [T,d]
+            components: Dict of variance components for diagnostics
         """
         if S_hat.dim() == 2:
             S_hat = S_hat.unsqueeze(0)  # Add batch dim
@@ -62,97 +68,137 @@ class Recon(nn.Module):
                 
         B, T, d = S_hat.shape
         
-        # Ensure ZB is [B, hidden] -> flatten extra dims if present
+        # Sanity check on feature dimension
+        assert S_hat.size(-1) == self.d, \
+            f"S_hat feature dim {S_hat.size(-1)} != expected {self.d}"
+        
+        # Ensure ZB is [B, hidden] -> collapse intermediate/time dims if present
         if ZB.dim() > 2:
-            # collapse intermediate/time dims by averaging
+            # Collapse intermediate/time dims by averaging
             ZB = ZB.mean(dim=1)
             
-        # 1. Signal reconstruction
-        params = self.signal_head(ZB)  # [B,2d]
-        mult = params[:,:d]
-        add = params[:,d:]
+        # =====================================================================
+        # 1. Signal reconstruction (mean)
+        # =====================================================================
+        params = self.signal_head(ZB)  # [B, 2d]
+        mult = params[:, :d]  # Multiplicative factor
+        add = params[:, d:]    # Additive offset
         
-        # Small multiplicative adjustment
+        # Small multiplicative adjustment: 1 ± 0.1
         mult = 1.0 + 0.1 * torch.tanh(mult)
         
-        # Ensure proper broadcasting
-        mult = mult.unsqueeze(1)  # [B,1,d]
-        add = add.unsqueeze(1)   # [B,1,d]
+        # Broadcast for time dimension
+        mult = mult.unsqueeze(1)  # [B, 1, d]
+        add = add.unsqueeze(1)    # [B, 1, d]
         
         X_mu = mult * S_hat + add
         
-        # 2. Base uncertainty from signal and bias
-        base_unc = self.base_unc(ZB)  # [B,d]
-        base_unc = base_unc.unsqueeze(1).expand(-1,T,-1)
+        # =====================================================================
+        # 2. Base signal variance (before MNAR scaling)
+        # =====================================================================
+        base_var = self.base_var(ZB)  # [B, d] >= 0 (via Softplus)
+        base_var = base_var.clamp_min(self.min_var)  # Hard floor
+        base_var = base_var.unsqueeze(1).expand(-1, T, -1)  # [B, T, d]
         
-        # Bias-specific uncertainty
-        bias_unc = self.bias_unc(ZB)  # [B,d]
-        bias_unc = bias_unc.unsqueeze(1).expand(-1,T,-1)
+        # =====================================================================
+        # 3. Bias variance (independent of missingness)
+        # =====================================================================
+        bias_var = self.bias_var(ZB)  # [B, d] >= 0
+        bias_var = bias_var.clamp_min(self.min_var)  # Hard floor
+        bias_var = bias_var.unsqueeze(1).expand(-1, T, -1)  # [B, T, d]
         
-        # 3. MNAR-aware uncertainty scaling
-        total_unc = base_unc + bias_unc
+        # =====================================================================
+        # 4. Total variance = (base_var × MNAR_scale) + bias_var
+        # =====================================================================
+        total_var = base_var  # Start with base signal variance
         
+        mnar_scale = None
         if M_probs is not None:
-            # Condition uncertainty on missingness probabilities. Ensure
-            # the scaling factor is >= 1 so total_unc >= base_unc.
-            hidden = ZB.unsqueeze(1).expand(-1, T, -1)  # [B,T,hidden]
-            # Compute a learned positive baseline scale from ZB only, then
-            # amplify it by (1 + M_probs) so that higher missingness increases
-            # uncertainty. To avoid flaky comparisons when tests compare
-            # against a fixed high missingness level (e.g. 0.9), clamp the
-            # effective missingness used for scaling to a sensible maximum.
-            # This guarantees that a uniform high_miss tensor (0.9) will
-            # produce at least as large a scale as arbitrary M_probs.
-            mnar_base = self.mnar_scale(hidden)  # [B,T,d], positive via Softplus
-            M_eff = torch.clamp(M_probs, max=0.9)
-            mnar_scale = 1.0 + mnar_base * (1.0 + M_eff)
-            total_unc = total_unc * mnar_scale
+            # MNAR scaling applied ONLY to base signal variance
+            hidden = ZB.unsqueeze(1).expand(-1, T, -1)  # [B, T, hidden_dim]
+            mnar_base = self.mnar_scale(hidden)  # [B, T, d] >= 0
             
-        # Collect uncertainty components
+            # Clamp missingness for test robustness: keep M_eff <= 0.9
+            # so that uniform high_miss tensors don't explode
+            M_eff = torch.clamp(M_probs, max=0.9)
+            
+            # Multiplicative scale factor: >= 1 even when M_eff=0
+            mnar_scale = 1.0 + mnar_base * (1.0 + M_eff)  # [B, T, d]
+            
+            # Cap the scale to avoid variance explosions
+            mnar_scale = torch.clamp(mnar_scale, max=self.max_mnar_scale)
+            
+            # Apply MNAR scaling to base variance
+            total_var = total_var * mnar_scale
+        
+        # Add bias variance (independent term)
+        total_var = total_var + bias_var
+        
+        # Ensure final variance is above floor
+        total_var = total_var.clamp_min(self.min_var)
+        
+        # Collect components for diagnostics/logging
         components = {
-            'base_unc': base_unc,
-            'bias_unc': bias_unc,
-            'mnar_scale': mnar_scale if M_probs is not None else None
+            'base_var': base_var,
+            'bias_var': bias_var,
+            'mnar_scale': mnar_scale,
+            'total_var': total_var
         }
         
+        # Remove batch dim if input was unbatched
         if B == 1:
             X_mu = X_mu.squeeze(0)
-            total_unc = total_unc.squeeze(0)
+            total_var = total_var.squeeze(0)
             components = {k: (v.squeeze(0) if v is not None else None) 
-                        for k,v in components.items()}
+                        for k, v in components.items()}
             
-        return X_mu, total_unc, components
+        return X_mu, total_var, components
         
-    def nll_loss(self, X_true, X_mu, unc, M=None, reduction='mean'):
-        """Negative log likelihood loss with optional masking.
+    def nll_loss(self, X_true, X_mu, var, M=None, reduction='mean', eps=1e-6):
+        """Gaussian negative log likelihood loss with optional masking.
         
         Args:
             X_true: Ground truth values [B,T,d] or [T,d]
             X_mu: Predicted means [B,T,d] or [T,d]
-            unc: Predicted uncertainties [B,T,d] or [T,d]
-            M: Optional boolean mask [B,T,d] or [T,d]
-            reduction: 'none', 'mean' or 'sum'
+            var: Predicted variances (σ²) [B,T,d] or [T,d]
+            M: Optional boolean mask [B,T,d] or [T,d] (1=observed, 0=missing)
+            reduction: 'none', 'mean', or 'sum'
+            eps: Epsilon for numerical stability
             
         Returns:
-            loss: NLL loss accounting for heteroscedastic uncertainty
+            loss: NLL loss accounting for heteroscedastic variance
+                 If M is provided, normalized by count of observed entries
         """
         if X_true.dim() == 2:
             X_true = X_true.unsqueeze(0)
             X_mu = X_mu.unsqueeze(0)
-            unc = unc.unsqueeze(0)
+            var = var.unsqueeze(0)
             if M is not None:
                 M = M.unsqueeze(0)
-                
-        # Gaussian NLL
-        loss = 0.5 * (torch.log(2 * torch.pi * unc) + \
-                      (X_true - X_mu)**2 / unc)
         
+        # Clamp variance to avoid log(0) and division-by-zero
+        var_safe = var.clamp_min(eps)
+        
+        # Gaussian NLL: 0.5 * (log(2π*σ²) + (x-μ)²/σ²)
+        nll = 0.5 * (torch.log(2 * torch.pi * var_safe) + 
+                     (X_true - X_mu)**2 / var_safe)
+        
+        # Apply mask if provided
         if M is not None:
-            loss = loss * M.float()
+            nll = nll * M.float()
             
-        if reduction == 'none':
-            return loss
-        elif reduction == 'mean':
-            return loss.mean()
-        else:  # sum
-            return loss.sum()
+            if reduction == 'none':
+                return nll
+            elif reduction == 'mean':
+                # Normalize by count of observed entries, not total size
+                count = M.float().sum().clamp_min(1.0)
+                return nll.sum() / count
+            else:  # sum
+                return nll.sum()
+        else:
+            if reduction == 'none':
+                return nll
+            elif reduction == 'mean':
+                return nll.mean()
+            else:  # sum
+                return nll.sum()
