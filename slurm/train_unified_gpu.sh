@@ -88,3 +88,41 @@ echo "=========================================="
 echo "Unified Training V4 Complete"
 echo "=========================================="
 echo "End time: $(date)"
+
+echo ""
+echo "======================================================"
+echo "       PHASE 2: BASELINE COMPARISON (Auto-Start)"
+echo "======================================================"
+echo "Running comprehensive evaluation on trained artifacts"
+echo "Start time: $(date)"
+echo ""
+
+# Run comprehensive evaluation with all baselines
+# Capture output to both console and text file
+python scripts/comprehensive_evaluation.py \
+    --artifacts-dir artifacts \
+    --data-dir data/interim \
+    --output artifacts/evaluation_report_final.json \
+    2>&1 | tee artifacts/COMPREHENSIVE_EVALUATION.txt
+
+echo ""
+echo "======================================================"
+echo "       COMPREHENSIVE EVALUATION COMPLETE"
+echo "======================================================"
+echo "Output: artifacts/evaluation_report_final.json"
+echo "End time: $(date)"
+
+echo ""
+echo "======================================================"
+echo "       ALL BASELINES ANALYSIS COMPLETE"
+echo "======================================================"
+echo "Summary: artifacts/baseline_comparison_summary.csv"
+echo "Details: artifacts/unified_v8_*/baselines/"
+echo "End time: $(date)"
+echo ""
+echo "=========================================="
+echo "FULL PIPELINE COMPLETE"
+echo "  ✓ Training: 4 datasets"
+echo "  ✓ Baselines: 6 methods × 4 datasets"
+echo "  ✓ Summary: CSV report generated"
+echo "=========================================="

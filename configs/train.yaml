@@ -11,6 +11,7 @@ lambda_recon: 1.0
 lambda_sparse: 0.005
 lambda_acyclic: 0.05
 lambda_disen: 0.01
+lambda_inv_mask: 1e-3  # V8.18: MNAR mask-invariance penalty
 target_sparsity: 0.1
 
 # Optional supervised adjacency loss (if A_true.npy is available)
