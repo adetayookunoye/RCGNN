@@ -2538,6 +2538,11 @@ def train(
     best_skel_overall = (0.0, 0)   # Best Skeleton-F1 ever seen
     best_score_overall = (-float("inf"), 0)  # Best composite score ever
     
+    # V8.14: Early excellence tracking (allow save during DISC if model is good)
+    # Track consecutive epochs where model meets high quality thresholds
+    consecutive_excellent_epochs = 0
+    excellence_threshold_epochs = 5  # Must maintain excellence for N epochs
+    
     # V8.10: Track transpose wins (convention mismatch detection)
     transpose_wins_count = 0
     transpose_total_count = 0
@@ -2924,11 +2929,28 @@ def train(
             stage1_end = int(cfg["stage1_end"] * cfg["epochs"])
             past_disc = epoch > stage1_end  # Must be in PRUNE or REFINE
             
-            # STRICT GUARD: Budget window + some edge differentiation
-            # Lowered threshold from 0.2 to 0.1 - sparsification pushes max down
+            # V8.14: Check if model is demonstrably excellent
+            # High quality: TopK-F1 ≥ 0.9, Skel-F1 ≥ 0.95, in budget window
+            topk_f1 = val_metrics.get("topk_f1", 0.0)
+            skel_f1 = val_metrics.get("skeleton_f1", 0.0)
+            is_excellent = (topk_f1 >= 0.9 and skel_f1 >= 0.95 and 
+                           min_sum <= edge_sum <= max_sum)
+            
+            # Track consecutive excellent epochs
+            if is_excellent:
+                consecutive_excellent_epochs += 1
+            else:
+                consecutive_excellent_epochs = 0
+            
+            # Early excellence: maintained high quality for N epochs
+            early_excellence = consecutive_excellent_epochs >= excellence_threshold_epochs
+            
+            # FLEXIBLE GUARD: Allow checkpoint if EITHER:
+            # 1. Past DISC phase (original strict guard), OR
+            # 2. Model demonstrates sustained excellence (prevents "solved but can't save")
             in_budget_window = (min_sum <= edge_sum <= max_sum)
             has_confident = (max_edge > 0.1)  # At least one edge > 0.1
-            graph_valid = past_disc and in_budget_window and has_confident
+            graph_valid = (past_disc or early_excellence) and in_budget_window and has_confident
             
             # ================================================================
             # NOTE: We no longer track "correlation ref" during DISC phase
@@ -2941,8 +2963,13 @@ def train(
             if not sweep_mode and epoch % 10 == 0:
                 guard_status = "✓" if graph_valid else "✗"
                 reason = []
-                if not past_disc:
-                    reason.append(f"DISC phase")
+                if not past_disc and not early_excellence:
+                    if consecutive_excellent_epochs > 0:
+                        reason.append(f"DISC phase, excellent {consecutive_excellent_epochs}/{excellence_threshold_epochs}")
+                    else:
+                        reason.append(f"DISC phase")
+                elif early_excellence and not past_disc:
+                    reason.append(f"✨ EARLY EXCELLENCE (F1={topk_f1:.2f}, sustained {consecutive_excellent_epochs} epochs)")
                 if not in_budget_window:
                     reason.append(f"budget [{min_sum:.1f},{max_sum:.1f}]")
                 if not has_confident:
@@ -3160,7 +3187,8 @@ def train(
             print("-" * 70)
             K = cfg.get("target_edges", 13)
             tol = 0.5
-            print(f"Guard: past DISC & edge_sum ∈ [{K*(1-tol):.1f}, {K*(1+tol):.1f}] & @0.2>0")
+            print(f"Guard: (past DISC OR excellent ≥5 epochs) & sum ∈ [{K*(1-tol):.1f},{K*(1+tol):.1f}] & max>0.1")
+            print(f"  Excellence = TopK-F1≥0.9 & Skel-F1≥0.95 & in budget window")
             print("-" * 70)
             print("PARETO CHECKPOINTS (GUARDED - saved to disk):")
             print(f"  🏆 best_topk_sparse (guarded):  TopK-F1={best_topk_sparse[0]:.4f} @ epoch {best_topk_sparse[1]}")

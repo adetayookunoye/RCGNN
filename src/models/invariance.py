@@ -75,7 +75,11 @@ class IRMStructureInvariance(nn.Module):
             support = torch.sigmoid(logits_e)
             effective_adj = A_e * support
 
-            preds = torch.matmul(X_e[:, :-1], effective_adj.transpose(-2, -1))
+            # CRITICAL FIX: Remove transpose to match causal convention
+            # A[i,j]=1 means i→j (i causes j)
+            # For prediction: X_next[j] = sum_i A[i,j] * X_prev[i]
+            # This is X_prev @ A (not X_prev @ A.T)
+            preds = torch.matmul(X_e[:, :-1], effective_adj)
             targets = X_e[:, 1:]
 
             mask = M_e[:, 1:].to(preds.dtype)
@@ -95,7 +99,8 @@ class IRMStructureInvariance(nn.Module):
                 # Fallback to the original scale-based finite-diff style when
                 # logits are not differentiable for some reason.
                 scale = torch.ones(1, device=A.device, requires_grad=True)
-                preds_s = torch.matmul(X_e[:, :-1], effective_adj.transpose(-2, -1) * scale)
+                # CRITICAL FIX: Remove transpose to match causal convention
+                preds_s = torch.matmul(X_e[:, :-1], effective_adj * scale)
                 err_s = ((preds_s - targets) ** 2) * mask
                 risk_s = err_s.mean()
                 grad = torch.autograd.grad(risk_s, [scale], create_graph=True)[0]

@@ -1,0 +1,50 @@
+epochs: 200
+batch_size: 8
+learning_rate: 0.001
+weight_decay: 1e-5
+device: "cpu"
+seed: 1337
+verbose: true
+
+# ============================================================================
+# CRITICAL FIX: Empty Graph Collapse
+# ============================================================================
+# These settings prevent the model from collapsing to A≈0
+
+# Loss weights - WARM-UP STRATEGY
+# (1) Start with NO acyclicity/sparsity for warm-up
+# (2) Ramp up acyclicity gradually after warm-up
+# (3) Keep sparsity tiny until edges form
+lambda_recon: 1.0
+lambda_sparse: 0.0           # CRITICAL: Start at 0, ramp to 1e-6 after warm-up
+lambda_acyclic: 0.0          # CRITICAL: Start at 0, ramp to 0.05 after warm-up
+lambda_disen: 0.01
+target_sparsity: 0.1
+
+# WARM-UP SCHEDULE (NEW)
+# Delay acyclicity/sparsity constraints for N epochs to allow edges to form
+acy_warmup_epochs: 40        # Keep λ_acy=0 for first 40 epochs
+acy_ramp_epochs: 20          # Ramp λ_acy from 0 to lambda_acyclic over 20 epochs
+acy_max: 0.05                # Maximum acyclicity weight (reduced from 0.1)
+
+sparse_warmup_epochs: 50     # Keep λ_sparse=0 for first 50 epochs  
+sparse_ramp_epochs: 20       # Ramp λ_sparse from 0 to target over 20 epochs
+sparse_max: 1e-5             # Maximum sparsity weight (very small)
+
+# MASK RATIO (CRITICAL FIX #1)
+# Force model to use the graph by masking observations
+# High mask ratio means nodes NEED their neighbors to reconstruct
+mask_ratio: 0.7              # Mask 70% of observations (INCREASED from implicit ~0.1)
+mask_strategy: "random"      # random, temporal, or structured
+
+# SUPERVISED WARM-START (CRITICAL FIX #4)
+# Briefly use ground truth adjacency to kick out of empty-graph basin
+lambda_supervised: 0.01      # Use ground truth A for first N epochs
+sup_warmup_epochs: 10        # Only supervise for first 10 epochs, then turn off
+lambda_supervised_max: 0.01  # Max supervision weight
+
+# EDGE GRADIENT MONITORING (NEW)
+# Log edge statistics each epoch to detect collapse early
+log_edge_stats: true         # Log %edges, ||A||_1, grad_norm(A)
+log_interval: 5              # Print stats every N epochs
+

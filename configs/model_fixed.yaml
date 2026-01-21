@@ -1,0 +1,69 @@
+d: 15  # Will be overridden by data
+latent_dim: 16
+hidden_dim: 32
+n_envs: 1  # Single environment
+
+# ============================================================================
+# CRITICAL FIX: Edge Parameterization to Prevent Empty Graph Collapse
+# ============================================================================
+
+# Edge learning configuration
+edge:
+  # CRITICAL FIX #3A: Initialize logits to favor edges initially
+  # logit(0.18) ≈ -1.5, so ~18% of edges start "on"
+  init_logit: -1.5                    # Initialize to p≈0.18 (not all negative)
+  
+  # CRITICAL FIX #3B: Temperature annealing for Concrete distribution
+  # High temperature early (more sampling variance) → Low temp later (sharp decisions)
+  concrete_temp_start: 2.0            # Start with τ=2.0 (soft sampling)
+  concrete_temp_end: 0.5              # End with τ=0.5 (sharp decisions)
+  concrete_temp_decay: 0.99           # Decay rate per epoch
+  
+  # CRITICAL FIX #3C: Lower threshold for edge selection
+  # Use 0.2 instead of 0.5 so more edges pass threshold early
+  threshold: 0.2                      # Lower threshold = easier to activate edges
+  
+  # Use straight-through estimator for better gradients to A
+  use_straight_through: true          # Enable STE for gradient flow
+  
+  # No self-loops during learning (force message passing through neighbors)
+  allow_self_loops: false
+
+# Sparsification strategy
+sparsify:
+  method: "topk"                      # topk, sparsemax, entmax, or gumbel_topk
+  topk_ratio: 0.15                    # Keep top 15% of edges (up from 0.1)
+
+# Loss function configuration
+loss:
+  # Disentanglement settings
+  disentangle:
+    method: "correlation"              # correlation or mine
+    lambda_disen: 0.01
+  
+  # Invariance settings
+  invariance:
+    lambda_inv: 0.0                   # Disabled for single-env training
+    gamma_irm: 0.1
+    n_envs: 1
+
+# ============================================================================
+# DECODER CONFIGURATION (Force Use of Graph)
+# ============================================================================
+# Ensure decoder CANNOT bypass the graph to reconstruct X
+
+decoder:
+  # CRITICAL: No direct X→Ŷ skip connections
+  # All information must flow through A (adjacency matrix)
+  use_residual: false                 # Disable residual/skip from X to output
+  use_input_projection: false         # Don't directly project input to output
+  
+  # Use message passing: Ŷ = MLP(AX) not MLP(X)
+  # This forces the model to use A for reconstruction
+  message_passing: true               # Use graph-based message passing
+  message_passing_layers: 2           # 2-layer message passing
+  
+  # Decoder sees only MASKED observations
+  # With mask_ratio=0.7, nodes are mostly missing → need neighbors
+  use_masked_input: true              # Operate on masked X (not full X)
+

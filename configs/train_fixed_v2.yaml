@@ -1,0 +1,88 @@
+epochs: 200
+batch_size: 8
+learning_rate: 0.001
+weight_decay: 1e-5
+device: "cpu"
+seed: 1337
+verbose: true
+
+# ============================================================================
+# CRITICAL FIX v2: Empty Graph Collapse (with Acyclicity Safeguard)
+# ============================================================================
+# Previous version failed: λ_acy turned on too early (epoch 40) and destroyed
+# all learned edges by epoch 45. New schedule is gentler and later.
+
+# Loss weights
+lambda_recon: 1.0
+lambda_sparse: 0.0           # Start at 0, ramp later
+lambda_acyclic: 0.0          # Start at 0, ramp VERY late
+lambda_disen: 0.01
+target_sparsity: 0.1
+
+# ============================================================================
+# WARM-UP SCHEDULE v2 (SAFER)
+# ============================================================================
+# Key changes:
+# 1. Supervised loss: epochs 0-10 (turn OFF after, not ramping all the way)
+# 2. Acyclic loss: MUCH later start (epoch 60), gentler strength (0.01)
+# 3. Sparsity: also delayed, gentler ramp
+#
+# Rationale: Let supervised learning cement edges before ANY regularizer.
+# Then apply very gentle acyclicity to avoid triggering empty-graph basin.
+
+# Supervised warm-start (epochs 0-10 only)
+lambda_supervised: 0.01         # Active for first 10 epochs
+sup_warmup_epochs: 10           # Ramp over 10 epochs, then OFF
+lambda_supervised_max: 0.01
+
+# Acyclic loss (DELAYED & GENTLE)
+acy_warmup_epochs: 60           # Keep λ_acy=0 for first 60 epochs (vs 40 before)
+acy_ramp_epochs: 30             # Gentler ramp: 30 epochs (vs 20 before)
+acy_max: 0.01                   # REDUCED: 0.01 instead of 0.05 (5x weaker!)
+                                # Reasoning: 0.05 triggered empty-graph collapse
+                                #            0.01 is strong enough to prevent cycles
+                                #            but weak enough to not erase edges
+
+# Sparsity loss (also delayed)
+sparse_warmup_epochs: 60        # Keep λ_sparse=0 for first 60 epochs
+sparse_ramp_epochs: 30          # Gentler ramp: 30 epochs
+sparse_max: 1e-5                # Keep same (very small)
+
+# ============================================================================
+# Data & Decoder Configuration
+# ============================================================================
+mask_ratio: 0.7                 # Force model to use graph
+mask_strategy: "random"
+
+# Decoder config to prevent bypass path
+use_residual: false
+use_input_projection: false
+message_passing: true
+message_passing_layers: 2
+use_masked_input: true
+
+# ============================================================================
+# Logging & Debugging
+# ============================================================================
+log_edge_stats: true
+log_interval: 5
+
+# ============================================================================
+# CRITICAL NOTE
+# ============================================================================
+# The schedule is now MUCH more conservative:
+#
+# Epochs 0-10:   λ_sup ↑ 0→0.01 | λ_acy=0    | λ_sparse=0
+#                (supervised warmup: lock in edges)
+#
+# Epochs 10-60:  λ_sup=0         | λ_acy=0    | λ_sparse=0  
+#                (let edges solidify, no pressure)
+#
+# Epochs 60-90:  λ_sup=0         | λ_acy ↑ 0→0.01 | λ_sparse ↑ 0→1e-5
+#                (gentle acyclicity + sparsity after edges are SOLID)
+#
+# Epochs 90+:    λ_sup=0         | λ_acy=0.01 | λ_sparse=1e-5
+#                (maintain: accurate structure, acyclic, sparse)
+#
+# Previous v1 schedule was too aggressive and triggered acyclicity-collapse.
+# This v2 schedule should maintain SHD=0 throughout.

@@ -468,6 +468,74 @@ python scripts/synth_corruption_benchmark.py --benchmark h1_easy --seed 42
 python scripts/synth_corruption_benchmark.py --list
 ```
 
+### UCI Air Quality Corruption Variants
+
+The UCI Air Quality dataset (13 variables, 13 true causal edges) with various corruption profiles for robustness testing:
+
+#### Recommended Datasets (by Causal Signal Strength)
+
+| Dataset | Missing% | Envs | Signal Gap | CorrF1 | TP/13 | Rating |
+|---------|----------|------|------------|--------|-------|--------|
+| **compound_mnar_bias** | 25.3% | 1 | 0.1533 | 0.2222 | 3 | ⭐⭐⭐ BEST |
+| **compound_full** | 25.0% | 3 | 0.0614 | 0.3704 | 5 | ⭐⭐ GOOD |
+| **extreme** | 40.0% | 5 | 0.0140 | 0.3704 | 5 | ⭐ WEAK |
+| **mcar_40** | 40.0% | 1 | 0.0052 | 0.1538 | 2 | ⭐ WEAK |
+
+**Key Metrics:**
+- **Signal Gap**: True edge correlation minus spurious edge correlation (higher = more identifiable)
+- **CorrF1**: Correlation-based baseline F1 (upper bound for correlation methods)
+- **TP/13**: True positives in top-13 edges by correlation
+
+#### All Available Corruption Variants
+
+| Category | Dataset | Corruption Type | Missing% | Regimes |
+|----------|---------|-----------------|----------|---------|
+| **Compound** | compound_mnar_bias | MNAR + bias | 25.3% | 1 |
+| | compound_full | noise + MNAR + bias | 25.0% | 3 |
+| | compound_mnar_noise | MNAR + noise | 25% | 1 |
+| | compound_mnar_noise_bias | All corruptions | 25% | 2 |
+| **Missing** | mcar_20 | MCAR | 20% | 2 |
+| | mcar_30 | MCAR | 30% | 2 |
+| | mcar_40 | MCAR | 40% | 1 |
+| | mnar_threshold | MNAR (threshold) | 26.2% | 1 |
+| | mnar_self | MNAR (self-masking) | 25% | 1 |
+| | mnar_structural | MNAR (structural) | 25% | 1 |
+| **Multi-Env** | regimes_3 | Clean + variance | 0% | 3 |
+| | regimes_5 | Clean + variance | 0% | 5 |
+| | extreme | All corruptions | 40% | 5 |
+| **Noise** | noise_0.1 | Gaussian σ=0.1 | 0% | 1 |
+| | noise_0.3 | Gaussian σ=0.3 | 0% | 1 |
+| | noise_0.5 | Gaussian σ=0.5 | 0% | 1 |
+| **Bias** | bias_additive | Additive drift | 0% | 1 |
+| | bias_multiplicative | Scale drift | 0% | 1 |
+| **Severity** | mild | Low corruption | ~10% | 1 |
+| | moderate | Medium corruption | 20% | 2 |
+| | severe | High corruption | 30% | 3 |
+| **Baseline** | clean | No corruption | 0% | 1 |
+| | clean_full | No corruption | 0% | 1 |
+
+#### Dataset Selection Guide
+
+1. **Best causal identifiability**: Use `compound_mnar_bias` (highest signal gap)
+2. **Multi-environment invariance**: Use `compound_full` (3 envs) or `extreme` (5 envs)
+3. **40% missing data robustness**: Use `extreme` or `mcar_40`
+4. **Baseline comparisons**: Use `clean` for oracle performance
+
+```bash
+# Train on recommended dataset
+python scripts/train_rcgnn_unified.py \
+    --data_dir data/interim/uci_air_c/compound_mnar_bias \
+    --output_dir artifacts/unified_compound_mnar_bias
+
+# Train on all key datasets (multi-job)
+DATASETS=("compound_mnar_bias" "compound_full" "extreme" "mcar_40")
+for ds in "${DATASETS[@]}"; do
+    python scripts/train_rcgnn_unified.py \
+        --data_dir data/interim/uci_air_c/${ds} \
+        --output_dir artifacts/unified_${ds}
+done
+```
+
 ### Data Format
 
 Each benchmark directory contains:

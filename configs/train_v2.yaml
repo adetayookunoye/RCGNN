@@ -1,0 +1,49 @@
+# RC-GNN v2 Configuration
+# Training configuration for UCI Air Quality dataset
+
+# Data settings
+data:
+  name: uci_air
+  path: data/interim/uci_air
+  normalize: true  # Z-score normalization
+  val_split: 0.2
+  
+# Model architecture
+model:
+  latent_dim: 32
+  hidden_dim: 64
+  n_encoder_layers: 2
+  n_decoder_layers: 2
+  graph_method: direct  # direct, attention, bilinear
+  
+# Loss weights
+loss:
+  lambda_recon: 1.0
+  lambda_disentangle: 0.1
+  gamma_acyclic: 1.0
+  lambda_sparse: 0.01
+  lambda_inv: 0.1
+
+# Training settings
+train:
+  epochs: 100
+  batch_size: 64
+  lr: 0.001
+  weight_decay: 1e-5
+  grad_clip: 1.0
+  log_interval: 50
+  
+# Scheduler
+scheduler:
+  type: cosine
+  eta_min_ratio: 0.01
+  
+# Device
+device: cpu
+seed: 42
+
+# Output paths
+output:
+  checkpoint_dir: artifacts/checkpoints
+  adjacency_dir: artifacts/adjacency
+  log_dir: artifacts

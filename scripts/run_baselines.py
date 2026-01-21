@@ -10,7 +10,7 @@ def main():
     parser.add_argument("--config", required=True)
     args = parser.parse_args()
     with open(args.config) as f: dc = yaml.safe_load(f)
-    root = os.path.join(dc["paths"]["root"], "interim", "synth_small")
+    root = dc["paths"]["root"]
     X = np.load(os.path.join(root, "X.npy"))  # [N,T,d]
     A_true = np.load(os.path.join(root, "A_true.npy"))
     if args.method=="notears_lite":

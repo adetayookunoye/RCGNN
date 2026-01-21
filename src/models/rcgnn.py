@@ -262,6 +262,62 @@ class CausalGraphLearner(nn.Module):
     
     def set_temperature(self, temp: float):
         self.current_temp.fill_(temp)
+    
+    def increment_step(self):
+        """Hook for temperature annealing schedules. Override in subclass if needed."""
+        pass
+    
+    def topk_project(self, k: int, use_logits: bool = True) -> torch.Tensor:
+        """
+        Hard Top-K projection: return binary mask with exactly K edges.
+        
+        This is the KEY FIX for "soft dense" problem:
+        - During PRUNE/REFINE, project A to exactly K edges
+        - Forces model to commit to specific edges
+        - Prevents all edges clustering in 0.2-0.3 band
+        
+        IMPORTANT: Project based on LOGITS W magnitude, not A.
+        Projecting A directly is unstable because τ changes A's scale.
+        Using |W| ensures consistent edge ranking across temperatures.
+        
+        Args:
+            k: Number of edges to keep (typically target_edges)
+            use_logits: If True (recommended), rank by W magnitude. If False, rank by A.
+            
+        Returns:
+            A_proj: [d, d] binary adjacency with exactly K edges (excluding diagonal)
+        """
+        device = self.W_adj.device
+        diag_mask = torch.eye(self.d, device=device)
+        
+        if use_logits:
+            # BEST PRACTICE: Rank edges by logit magnitude (stable across temperatures)
+            W_masked = self.W_adj * (1 - diag_mask)  # Zero diagonal
+            flat = W_masked.flatten()  # Use raw logits, not sigmoid(W)
+        else:
+            # Fallback: rank by A (less stable as τ changes)
+            tau = self.current_temp
+            logits = self.W_adj / tau
+            A = torch.sigmoid(logits)
+            A = A * (1 - diag_mask)
+            flat = A.flatten()
+        
+        k = min(k, flat.numel())
+        
+        if k <= 0:
+            return torch.zeros(self.d, self.d, device=device)
+        
+        _, topk_idx = torch.topk(flat, k)
+        
+        # Create binary mask
+        mask = torch.zeros_like(flat)
+        mask[topk_idx] = 1.0
+        
+        return mask.reshape(self.d, self.d)
+    
+    def get_logits(self) -> torch.Tensor:
+        """Get raw logits W_adj for sparsity penalty on logits (not A)."""
+        return self.W_adj
 
 
 # =============================================================================
@@ -658,7 +714,6 @@ class RCGNN(nn.Module):
             hidden_dim=hidden_dim,
             min_sigma=0.01,
             min_nu=2.1,
-            max_mnar_scale=5.0,
             corrupt_dropout=0.5,
         )
     
@@ -786,6 +841,7 @@ class RCGNN(nn.Module):
         total_epochs: int = 50,
         compute_causal_prior: bool = True,
         compute_necessity: bool = False,  # Expensive, do every N epochs
+        loss_weights: Optional[Dict[str, float]] = None,  # Override scheduled weights
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
         Compute total loss with MNAR handling and GUARDRAILS.
@@ -798,6 +854,10 @@ class RCGNN(nn.Module):
         
         Joint objective:
             log p(X_obs, M) = log p(X_obs | z) + log p(M | X*, e)
+        
+        Args:
+            loss_weights: Optional dict with keys like 'lambda_sparse', 'lambda_acyclic', etc.
+                         If provided, these override the internal scheduling.
         """
         device = X.device
         
@@ -878,17 +938,62 @@ class RCGNN(nn.Module):
         h_A_raw = notears_acyclicity(A_for_acy, normalize=False)
         L_acyclic = notears_acyclicity(A_for_acy, normalize=True)
         
-        # Lambda scheduling for acyclicity
-        lambda_acy_used = self.get_lambda_acyclic(epoch, total_epochs)
+        # Lambda scheduling for acyclicity (use override if provided)
+        if loss_weights and "lambda_acyclic" in loss_weights:
+            lambda_acy_used = loss_weights["lambda_acyclic"]
+        else:
+            lambda_acy_used = self.get_lambda_acyclic(epoch, total_epochs)
         
-        # 5. Sparsity
-        L_sparse = A_for_acy.abs().sum() / (self.d * self.d)
-        lambda_sparse_used = self.get_lambda_sparse(epoch, total_epochs)
+        # =====================================================================
+        # CRITICAL FIX: Sparsity on LOGITS (W), not adjacency (A)
+        # This pushes logits strongly negative for non-edges, so sigmoid(A)
+        # actually collapses toward 0. Without this, shrinking A can still 
+        # leave all entries in the 0.2-0.3 band.
+        # =====================================================================
+        W_logits = self.graph_learner.get_logits()
+        # Zero diagonal for logits too
+        W_logits_masked = W_logits * (1 - torch.eye(self.d, device=device))
         
-        # 6. Budget
+        # L1 on logits - this pushes non-edges to large negative values
+        L_sparse_logits = W_logits_masked.abs().sum() / (self.d * (self.d - 1))
+        
+        # Keep old L_sparse for monitoring (but use logit version in loss)
+        L_sparse_A = A_for_acy.abs().sum() / (self.d * self.d)
+        L_sparse = L_sparse_logits  # Use logit-based sparsity
+        
+        if loss_weights and "lambda_sparse" in loss_weights:
+            lambda_sparse_used = loss_weights["lambda_sparse"]
+        else:
+            lambda_sparse_used = self.get_lambda_sparse(epoch, total_epochs)
+        
+        # =====================================================================
+        # CRITICAL FIX: Binarization penalty A*(1-A)
+        # Encourages adjacency values to be near 0 or 1, not in gray zone
+        # Max penalty at A=0.5, zero penalty at A=0 or A=1
+        # =====================================================================
+        L_binary = (A_for_acy * (1 - A_for_acy)).sum() / (self.d * (self.d - 1))
+        lambda_binary = loss_weights.get("lambda_binary", 0.1) if loss_weights else 0.1
+        
+        # 6. Budget (Fix D: Asymmetric penalty - penalize under-shooting more)
         edge_sum = A_for_acy.sum()
-        L_budget = (edge_sum - self.target_edges) ** 2
-        lambda_budget_used = self.get_lambda_budget(epoch, total_epochs)
+        if edge_sum < self.target_edges:
+            # Below target: stronger penalty to prevent collapse
+            L_budget = 2.0 * (self.target_edges - edge_sum) ** 2
+        else:
+            # Above target: normal penalty
+            L_budget = (edge_sum - self.target_edges) ** 2
+        if loss_weights and "lambda_budget" in loss_weights:
+            lambda_budget_used = loss_weights["lambda_budget"]
+        else:
+            lambda_budget_used = self.get_lambda_budget(epoch, total_epochs)
+        
+        # Get other lambda values from overrides or defaults
+        lambda_recon = loss_weights.get("lambda_recon", self.lambda_recon) if loss_weights else self.lambda_recon
+        lambda_miss = loss_weights.get("lambda_miss", self.lambda_miss) if loss_weights else self.lambda_miss
+        lambda_hsic = loss_weights.get("lambda_hsic", self.lambda_hsic) if loss_weights else self.lambda_hsic
+        lambda_inv = loss_weights.get("lambda_inv", self.lambda_inv) if loss_weights else self.lambda_inv
+        lambda_causal = loss_weights.get("lambda_causal", self.lambda_causal) if loss_weights else self.lambda_causal
+        lambda_var_penalty = loss_weights.get("lambda_var_penalty", self.lambda_var_penalty) if loss_weights else self.lambda_var_penalty
         
         # 7. Structure-level invariance
         if regime is not None and self.n_regimes > 1:
@@ -921,17 +1026,18 @@ class RCGNN(nn.Module):
                 compute_necessity=compute_necessity,
             )
         
-        # Total loss with GUARDRAIL 2: variance penalty
+        # Total loss with GUARDRAIL 2: variance penalty + binarization
         loss = (
-            self.lambda_recon * L_recon
-            + self.lambda_miss * L_miss
-            + self.lambda_hsic * L_hsic
+            lambda_recon * L_recon
+            + lambda_miss * L_miss
+            + lambda_hsic * L_hsic
             + lambda_acy_used * L_acyclic
             + lambda_sparse_used * L_sparse
             + lambda_budget_used * L_budget
-            + self.lambda_inv * L_inv
-            + self.lambda_causal * L_causal
-            + self.lambda_var_penalty * L_var_penalty  # GUARDRAIL 2
+            + lambda_inv * L_inv
+            + lambda_causal * L_causal
+            + lambda_var_penalty * L_var_penalty  # GUARDRAIL 2
+            + lambda_binary * L_binary  # Binarization penalty for edge confidence
         )
         
         # Metrics with full guardrail tracking
@@ -944,13 +1050,21 @@ class RCGNN(nn.Module):
             "h_A_raw": h_A_raw.item(),
             "lambda_acy_used": lambda_acy_used,
             "L_sparse": L_sparse.item(),
+            "L_sparse_A": L_sparse_A.item(),  # Sparsity on adjacency (for monitoring)
+            "L_sparse_logits": L_sparse_logits.item(),  # Sparsity on logits (used in loss)
+            "L_binary": L_binary.item(),  # Binarization penalty
             "lambda_sparse_used": lambda_sparse_used,
+            "lambda_binary": lambda_binary,
             "L_budget": L_budget.item(),
             "lambda_bud_used": lambda_budget_used,
             "edge_sum": edge_sum.item(),
             "target_edges": self.target_edges,
             "A_mean": A_for_acy.mean().item(),
             "A_max": A_for_acy.max().item(),
+            "A_min": A_for_acy[A_for_acy > 0].min().item() if (A_for_acy > 0).any() else 0.0,  # Min non-zero
+            "W_logits_mean": W_logits_masked.mean().item(),  # Logits stats
+            "W_logits_min": W_logits_masked.min().item(),
+            "W_logits_max": W_logits_masked.max().item(),
             "temperature": self.graph_learner.get_temperature(),
             "L_inv": L_inv.item() if isinstance(L_inv, torch.Tensor) else L_inv,
             "L_causal": L_causal.item() if isinstance(L_causal, torch.Tensor) else L_causal,
