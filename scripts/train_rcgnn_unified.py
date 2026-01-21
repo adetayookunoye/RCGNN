@@ -394,6 +394,7 @@ def get_temperature(
     total_epochs: int,
     config: Dict,
     direction_stable: bool = True,  # NEW: Is model learning correct direction?
+    peakiness: Dict = None,  # V8.17: Peakiness metrics from previous epoch
 ) -> float:
     """
     Get temperature with annealing schedule.
@@ -401,8 +402,9 @@ def get_temperature(
     High temp early → soft edges (exploration)
     Low temp late → sharp edges (exploitation)
     
-    CALIBRATION FIX: Don't go below temp_floor until direction is stable.
-    This prevents adjacency collapse before we're confident in edge set.
+    V8.17: Data-adaptive temperature based on peakiness.
+    If distribution is flat (gap~0, margins tiny), DECREASE temp faster to sharpen.
+    This helps datasets with weaker identifiability.
     """
     init_temp = config.get("temperature_init", 2.0)
     final_temp = config.get("temperature_final", 0.5)
@@ -421,9 +423,30 @@ def get_temperature(
         start_epoch, end_epoch
     )
     
+    # V8.17: PEAKINESS-ADAPTIVE TEMPERATURE
+    # If distribution is flat, decrease temperature faster to sharpen selection
+    if peakiness is not None:
+        gap = peakiness.get("gap", 0.1)
+        avg_margin = peakiness.get("avg_margin", 0.2)
+        edges_90pct = peakiness.get("edges_90pct", 13)
+        K = config.get("target_edges", 13)
+        
+        # Detect flatness: gap < 0.01 OR avg_margin < 0.10 OR edges@90% > 5*K
+        is_flat = (gap < 0.01) or (avg_margin < 0.10) or (edges_90pct > 5 * K)
+        
+        if is_flat:
+            # SHARPEN: decrease temp by 5% each epoch until reaching 0.6
+            temp_sharpen_min = config.get("temp_sharpen_min", 0.6)
+            sharpened_temp = max(raw_temp * 0.95, temp_sharpen_min)
+            # Use the lower of scheduled and sharpened
+            raw_temp = min(raw_temp, sharpened_temp)
+    
     # CALIBRATION: Don't go too low if direction is unstable
+    # But V8.17: flatness overrides this - we need to sharpen first
     if not direction_stable and raw_temp < temp_floor_unstable:
-        return temp_floor_unstable
+        # Only apply floor if distribution is already peaked
+        if peakiness is None or peakiness.get("gap", 0) >= 0.02:
+            return temp_floor_unstable
     
     return raw_temp
 
@@ -434,6 +457,7 @@ def get_loss_weights(
     config: Dict,
     edge_sum: float = None,  # NEW: Current edge sum for collapse detection
     frozen_lambda_budget: float = None,  # V8.16: Frozen budget after early_excellence
+    peakiness: Dict = None,  # V8.17: Peakiness metrics from previous epoch
 ) -> Dict[str, float]:
     """
     Get all loss weights with proper scheduling.
@@ -442,6 +466,10 @@ def get_loss_weights(
     
     V8.16: If frozen_lambda_budget is provided, cap λb at that value.
     This prevents unbounded growth after model has converged.
+    
+    V8.17: PEAKINESS-AWARE SCHEDULING
+    - Don't ramp λs/λb until distribution is peaked (gap >= 0.02, margin >= 0.15)
+    - This prevents sparsity pressure from fighting peak formation
     
     CALIBRATION FIXES:
     1. Cap λs at collapse threshold (when edge_sum < min_edge_sum)
@@ -464,9 +492,24 @@ def get_loss_weights(
     refine_start = prune_end
     
     # ===========================================================================
+    # V8.17: PEAKINESS GATING
+    # Don't ramp λs/λb until distribution is peaked
+    # This prevents sparsity pressure from fighting peak formation
+    # ===========================================================================
+    gap_threshold = config.get("peakiness_gap_threshold", 0.02)
+    margin_threshold = config.get("peakiness_margin_threshold", 0.15)
+    
+    peakiness_achieved = True  # Default: assume peaked (conservative)
+    if peakiness is not None:
+        gap = peakiness.get("gap", 0.1)
+        avg_margin = peakiness.get("avg_margin", 0.2)
+        peakiness_achieved = (gap >= gap_threshold) and (avg_margin >= margin_threshold)
+    
+    # ===========================================================================
     # CALIBRATION FIX: λs schedule with REFINE reduction
     # - Discovery → PRUNE: ramp λs from init to final
     # - REFINE: reduce λs to prevent collapse (multiply by refine_sparse_factor)
+    # V8.17: Gate λs ramp on peakiness (don't fight peak formation)
     # ===========================================================================
     sparse_refine_factor = config.get("sparse_refine_factor", 0.5)  # Reduce to 50% in REFINE
     min_edge_sum_for_sparse = config.get("min_edge_sum_for_sparse", 5.0)  # Collapse threshold
@@ -477,6 +520,9 @@ def get_loss_weights(
             epoch, total_epochs, sparse_init, sparse_final, 
             start_epoch=1, end_epoch=prune_end
         )
+        # V8.17: If distribution is flat, keep λs tiny to allow peak formation
+        if not peakiness_achieved:
+            base_sparse = min(base_sparse, sparse_init * 10)  # Cap at 10x init
     else:
         # REFINE: reduce λs to prevent over-pruning
         base_sparse = sparse_final * sparse_refine_factor
@@ -514,7 +560,12 @@ def get_loss_weights(
     # V8.9: Budget floor to maintain direction pressure after sparsification
     budget_floor = config.get("lambda_budget_floor", 0.05)
     
-    if use_topk_proj and epoch >= topk_proj_start * total_epochs:
+    # V8.17: Don't ramp λb until peakiness achieved - prevents punishing flat distributions
+    if not peakiness_achieved:
+        # Keep λb at init (don't ramp yet)
+        weights["lambda_budget"] = budget_init
+        weights["peakiness_gated"] = True
+    elif use_topk_proj and epoch >= topk_proj_start * total_epochs:
         # FIX A: Only reduce budget if edge_sum >= target, but never below floor
         # If below target, keep budget active to push UP
         if current_edge_sum >= target_edges:
@@ -523,6 +574,7 @@ def get_loss_weights(
         else:
             # Below target: use full budget pressure to prevent collapse
             weights["lambda_budget"] = budget_final
+        weights["peakiness_gated"] = False
     else:
         # Before projection: use budget to guide toward target
         proj_start_epoch = int(topk_proj_start * total_epochs) if use_topk_proj else prune_end
@@ -530,6 +582,7 @@ def get_loss_weights(
             epoch, total_epochs, budget_init, budget_final,
             start_epoch=budget_start, end_epoch=proj_start_epoch
         )
+        weights["peakiness_gated"] = False
     
     # V8.16: Cap budget at frozen value if provided (after early_excellence)
     if frozen_lambda_budget is not None:
@@ -2016,6 +2069,8 @@ def train_epoch(
     W_frozen: Optional[torch.Tensor] = None,  # V8.11: Frozen W for skeleton restoration
     direction_tau: float = 0.5,     # V8.11: τ for direction learning (lower = sharper)
     lambda_direction_boost: float = 2.0,  # V8.11: Boost direction loss when frozen
+    frozen_lambda_budget: float = None,  # V8.16: Frozen budget after early_excellence
+    peakiness: Dict = None,  # V8.17: Peakiness metrics from previous epoch
 ) -> Tuple[Dict[str, float], Optional[Dict[int, float]]]:
     """Train one epoch with all bells and whistles."""
     model.train()
@@ -2023,23 +2078,31 @@ def train_epoch(
     
     # CRITICAL FIX: Update temperature with direction-based floor
     # V8.11: Use fixed direction_tau when skeleton is frozen
+    # V8.17: Pass peakiness for data-adaptive temperature
     if skeleton_frozen:
         temperature = direction_tau
     else:
-        temperature = get_temperature(epoch, total_epochs, config, direction_stable=direction_stable)
+        temperature = get_temperature(
+            epoch, total_epochs, config, 
+            direction_stable=direction_stable,
+            peakiness=peakiness,  # V8.17: Data-adaptive
+        )
     base_model.graph_learner.set_temperature(temperature)
     
     # Get loss weights with collapse protection
     # V8.16: Pass frozen_lambda_budget to cap λb after convergence
+    # V8.17: Pass peakiness to gate λs/λb ramp
     loss_weights = get_loss_weights(
         epoch, total_epochs, config, 
         edge_sum=prev_edge_sum,
         frozen_lambda_budget=frozen_lambda_budget,
+        peakiness=peakiness,  # V8.17: Data-adaptive
     )
     
     # V8.16: Track λb for logging (so we can see when it's frozen)
     lambda_budget_used = loss_weights.get("lambda_budget", 0)
     lambda_budget_is_frozen = loss_weights.get("lambda_budget_frozen", False)
+    peakiness_gated = loss_weights.get("peakiness_gated", False)  # V8.17
     
     total_loss = 0.0
     metrics_sum = {}
@@ -2321,6 +2384,7 @@ def train_epoch(
     avg_metrics["lambda_bud_frozen"] = lambda_budget_is_frozen
     avg_metrics["lambda_sparse_used"] = loss_weights.get("lambda_sparse", 0)
     avg_metrics["temperature"] = temperature
+    avg_metrics["peakiness_gated"] = peakiness_gated  # V8.17
     
     # Update DRO weights
     if dro_weights is not None and regime_losses:
@@ -2681,6 +2745,10 @@ def train(
     frozen_lambda_budget = None  # Will be set when early_excellence triggers
     lambda_budget_was_frozen_at_epoch = None  # For logging
     
+    # V8.17: Peakiness tracking for data-adaptive scheduling
+    # Track gap, margin, edges_90pct from previous epoch to guide temp/lambda
+    prev_peakiness = None  # Will be computed at end of each epoch
+    
     # V8.10: Track transpose wins (convention mismatch detection)
     transpose_wins_count = 0
     transpose_total_count = 0
@@ -2743,6 +2811,7 @@ def train(
             direction_tau=direction_tau,        # V8.11: τ for direction
             lambda_direction_boost=lambda_direction_boost,  # V8.11: Boost factor
             frozen_lambda_budget=frozen_lambda_budget,  # V8.16: Cap λb after convergence
+            peakiness=prev_peakiness,  # V8.17: Data-adaptive scheduling
         )
         
         scheduler.step()
@@ -2915,6 +2984,22 @@ def train(
                 # ===============================================================
                 direction_stable = (topk_f1 >= topk_f1_T) or (topk_f1_T == 0)
                 prev_edge_sum = edge_sum  # Track for collapse detection
+                
+                # ===============================================================
+                # V8.17: Update peakiness metrics for next epoch
+                # Used by data-adaptive temperature and λs/λb scheduling
+                # ===============================================================
+                prev_peakiness = {
+                    "gap": gap,
+                    "avg_margin": val_metrics.get("avg_margin", 0.2),
+                    "edges_90pct": edges_90pct,
+                    "topk_mean": topk_mean,
+                    "A_mean": A_mean,
+                }
+                
+                # V8.17: Log peakiness gating status
+                if train_metrics.get("peakiness_gated", False):
+                    print(f"         | 🌡️ PEAKINESS WARMUP (gap={gap:.3f} <0.02 or margin<0.15): τ↓, λs/λb frozen")
                 
                 if direction_stable:
                     print(f"         | 🔒 Direction STABLE (τ floor released)")
