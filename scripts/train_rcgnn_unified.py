@@ -2988,7 +2988,17 @@ def train(
             else:
                 if not sweep_mode:
                     print(f"         | ✓ Stage 1 HEALTHY: edges@0.5={health['edges@0.5']} ≤ {3*cfg['target_edges']}")
-                    print(f"         |    edges@{0.2:.1f}={health['edges@0.2']}, edges@{0.3:.1f}={health['edges@0.3']}")
+                    # V8.16: Check tail mass for interpretability
+                    # Fat tail = many medium-confidence edges that hurt threshold-based eval
+                    K = cfg['target_edges']
+                    tail_budget = 5 * K  # Allow up to 5x target at 0.2 threshold
+                    edges_02 = health['edges@0.2']
+                    edges_03 = health['edges@0.3']
+                    if edges_02 > tail_budget:
+                        print(f"         |    ⚠️ FAT TAIL: edges@0.2={edges_02} > {tail_budget} (interpretability risk)")
+                        print(f"         |    Consider: V8.15 suppression to push non-TopK edges down")
+                    else:
+                        print(f"         |    edges@0.2={edges_02}, edges@0.3={edges_03} (tail OK)")
         
         # Track TopK stability during PRUNE
         stage2_start = int(cfg["stage1_end"] * cfg["epochs"])
@@ -3000,7 +3010,13 @@ def train(
             
             if not sweep_mode:
                 stable_icon = "✓" if health["topk_stable"] else "⚠️"
+                # V8.16: Include tail mass in periodic check
+                K = cfg['target_edges']
+                tail_ratio = health['edges@0.2'] / max(health['edges@0.5'], 1)
+                tail_status = "✓" if tail_ratio <= 5 else "⚠️"
                 print(f"         | {stable_icon} TopK Jaccard={health['topk_jaccard']:.3f}, edges@0.5={health['edges@0.5']}, edge_sum={health['edge_sum']:.1f}")
+                if tail_ratio > 3:
+                    print(f"         |    {tail_status} Tail: @0.2={health['edges@0.2']} (@0.2/@0.5={tail_ratio:.1f}x)")
         
         # Stage 3 = Stage D (Direction) - LR reduction and skeleton freeze
         stage3_start = int(cfg["stage2_end"] * cfg["epochs"])
