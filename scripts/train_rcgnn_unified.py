@@ -221,6 +221,13 @@ DEFAULT_CONFIG = {
     # 5. Budget floor (maintain asymmetry pressure after sparsification)
     "lambda_budget_floor": 0.05,      # Minimum budget λ after projection
     
+    # V8.15: Non-TopK Suppression (clean up fat tail of medium-confidence edges)
+    # Problem: Perfect TopK-F1 but 146 edges @ 0.2 vs 13 @ 0.5 hurts interpretability
+    "use_nontopk_suppression": True,  # Push non-TopK edges toward zero
+    "nontopk_suppression_start": 0.2, # Start at 20% of training
+    "lambda_nontopk_suppression": 0.5,# Weight for suppression loss
+    "nontopk_margin": 0.1,            # Desired margin between TopK and rest
+    
     # V8.12: Convention handling is now ALWAYS applied via to_causal_convention()
     # Model outputs: A[i,j] = "j depends on i" (SEM/dependency convention)
     # Evaluation/saving: A[i,j] = "i causes j" (standard causal convention)
@@ -1000,6 +1007,74 @@ def compute_exclusivity_loss(A: torch.Tensor) -> torch.Tensor:
     return L_excl
 
 
+def compute_nontopk_suppression_loss(
+    A: torch.Tensor,
+    k: int,
+    margin: float = 0.1,
+) -> Tuple[torch.Tensor, Dict[str, float]]:
+    """
+    V8.15: Non-TopK Suppression Loss - push non-TopK edges toward zero.
+    
+    Problem: Model achieves perfect TopK-F1 but has fat tail of medium-confidence
+    edges (e.g., 146 edges at threshold 0.2 vs 13 at 0.5). This hurts:
+    - Threshold-based evaluation
+    - Interpretability (noisy adjacency matrix)
+    - Calibration (edge weights don't reflect true confidence)
+    
+    Solution: Explicitly penalize non-TopK edges to push them down.
+    
+    Two components:
+    1. L_tail: L1 penalty on non-TopK edges (push toward 0)
+    2. L_margin: Margin loss between K-th and (K+1)-th edge (increase separation)
+    
+    Args:
+        A: Adjacency matrix [d, d]
+        k: Number of top edges to keep
+        margin: Minimum desired gap between TopK and non-TopK
+        
+    Returns:
+        Total loss and metrics dict
+    """
+    # Flatten and get top-K vs rest
+    A_flat = A.flatten()
+    n_edges = A_flat.numel()
+    
+    if k >= n_edges:
+        return torch.tensor(0.0, device=A.device), {"L_tail": 0.0, "L_margin": 0.0}
+    
+    # Get top-K indices and values
+    topk_vals, topk_indices = torch.topk(A_flat, k)
+    
+    # Create mask for non-TopK edges
+    mask = torch.ones_like(A_flat)
+    mask[topk_indices] = 0.0
+    
+    # 1. L_tail: L1 penalty on non-TopK edges
+    # Goal: push these toward 0
+    nontopk_vals = A_flat * mask
+    L_tail = nontopk_vals.sum() / (n_edges - k)  # Mean over non-TopK
+    
+    # 2. L_margin: Margin between K-th and (K+1)-th edge
+    # Goal: increase separation between TopK and rest
+    kth_edge = topk_vals[-1]  # Smallest of top K
+    
+    # Get max of non-TopK edges
+    nontopk_max = (A_flat * mask).max()
+    
+    # Hinge loss: penalize if gap < margin
+    L_margin = F.relu(nontopk_max - kth_edge + margin)
+    
+    metrics = {
+        "L_tail": L_tail.item(),
+        "L_margin": L_margin.item(),
+        "topk_min": kth_edge.item(),
+        "nontopk_max": nontopk_max.item(),
+        "topk_gap": (kth_edge - nontopk_max).item(),
+    }
+    
+    return L_tail + L_margin, metrics
+
+
 # =============================================================================
 # V8.11: Antisymmetric Direction Parameterization
 # =============================================================================
@@ -1374,6 +1449,38 @@ def compute_edge_discovery_losses(
         A_max = torch.maximum(A_pred, A_pred.T)
         symmetry_ratio = (A_min / (A_max + 1e-8)).mean()
         metrics["symmetry_ratio"] = symmetry_ratio.item()  # 1.0 = fully symmetric (bad)
+    
+    # =========================================================================
+    # 5. NON-TOPK SUPPRESSION (V8.15: push non-TopK edges toward zero)
+    # Problem: Perfect TopK-F1 but fat tail of medium-confidence edges
+    #          (e.g., 146 @ 0.2 vs 13 @ 0.5) hurts interpretability
+    # Solution: Explicitly penalize non-TopK edges
+    # =========================================================================
+    if config.get("use_nontopk_suppression", True):
+        # Ramp up suppression over training (don't suppress early - need exploration)
+        suppression_start = config.get("nontopk_suppression_start", 0.2)  # Start at 20%
+        lambda_suppress = config.get("lambda_nontopk_suppression", 0.5)
+        suppress_margin = config.get("nontopk_margin", 0.1)
+        target_edges = config.get("target_edges", 13)
+        
+        if epoch >= suppression_start * total_epochs:
+            # Ramp from 0 to full over next 30% of training
+            ramp_end = suppression_start + 0.3
+            if epoch < ramp_end * total_epochs:
+                ramp_factor = (epoch / total_epochs - suppression_start) / 0.3
+            else:
+                ramp_factor = 1.0
+            
+            L_suppress, suppress_metrics = compute_nontopk_suppression_loss(
+                A_pred, k=target_edges, margin=suppress_margin
+            )
+            
+            losses["L_nontopk"] = lambda_suppress * ramp_factor * L_suppress
+            metrics["L_nontopk"] = L_suppress.item()
+            metrics["topk_gap"] = suppress_metrics["topk_gap"]
+            metrics["nontopk_max"] = suppress_metrics["nontopk_max"]
+        else:
+            metrics["L_nontopk"] = 0.0
     
     return losses, metrics
 
@@ -2711,6 +2818,15 @@ def train(
                 # ===============================================================
                 print(f"         | 📐 TopK edges K={K}: TP={topk_tp}")
                 print(f"         | 📊 Edges: thr={thr:.3f} gap={gap:.3f} | @90%={edges_90pct} @110%={edges_110pct} @2x={edges_2x} | sum={edge_sum:.1f}")
+                
+                # V8.15: Show TopK gap (separation between TopK and non-TopK edges)
+                topk_gap = train_metrics.get("topk_gap", None)
+                nontopk_max = train_metrics.get("nontopk_max", None)
+                L_nontopk = train_metrics.get("L_nontopk", 0)
+                if topk_gap is not None:
+                    gap_status = "✓" if topk_gap > 0.1 else ("~" if topk_gap > 0 else "⚠️")
+                    print(f"         | 🧹 TopK gap: {topk_gap:.3f} [{gap_status}] | non-TopK max={nontopk_max:.3f} | L_suppress={L_nontopk:.4f}")
+                
                 print(f"         | 📈 A stats: max={A_max:.3f} mean={A_mean:.4f} topk_mean={topk_mean:.3f}")
                 
                 # ===============================================================
