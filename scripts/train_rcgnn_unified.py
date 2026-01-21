@@ -433,11 +433,15 @@ def get_loss_weights(
     total_epochs: int, 
     config: Dict,
     edge_sum: float = None,  # NEW: Current edge sum for collapse detection
+    frozen_lambda_budget: float = None,  # V8.16: Frozen budget after early_excellence
 ) -> Dict[str, float]:
     """
     Get all loss weights with proper scheduling.
     
     Key insight: Sparsity/budget should ramp gradually, not cliff.
+    
+    V8.16: If frozen_lambda_budget is provided, cap λb at that value.
+    This prevents unbounded growth after model has converged.
     
     CALIBRATION FIXES:
     1. Cap λs at collapse threshold (when edge_sum < min_edge_sum)
@@ -526,6 +530,13 @@ def get_loss_weights(
             epoch, total_epochs, budget_init, budget_final,
             start_epoch=budget_start, end_epoch=proj_start_epoch
         )
+    
+    # V8.16: Cap budget at frozen value if provided (after early_excellence)
+    if frozen_lambda_budget is not None:
+        weights["lambda_budget"] = min(weights["lambda_budget"], frozen_lambda_budget)
+        weights["lambda_budget_frozen"] = True
+    else:
+        weights["lambda_budget_frozen"] = False
     
     # Ramped binarization penalty (from binary_start_epoch)
     # Encourages A values to be near 0 or 1, not in gray zone
@@ -2019,7 +2030,16 @@ def train_epoch(
     base_model.graph_learner.set_temperature(temperature)
     
     # Get loss weights with collapse protection
-    loss_weights = get_loss_weights(epoch, total_epochs, config, edge_sum=prev_edge_sum)
+    # V8.16: Pass frozen_lambda_budget to cap λb after convergence
+    loss_weights = get_loss_weights(
+        epoch, total_epochs, config, 
+        edge_sum=prev_edge_sum,
+        frozen_lambda_budget=frozen_lambda_budget,
+    )
+    
+    # V8.16: Track λb for logging (so we can see when it's frozen)
+    lambda_budget_used = loss_weights.get("lambda_budget", 0)
+    lambda_budget_is_frozen = loss_weights.get("lambda_budget_frozen", False)
     
     total_loss = 0.0
     metrics_sum = {}
@@ -2295,6 +2315,12 @@ def train_epoch(
     # Average metrics
     avg_metrics = {k: v / n_batches for k, v in metrics_sum.items()}
     avg_metrics["loss"] = total_loss / n_batches
+    
+    # V8.16: Add lambda values to metrics for logging
+    avg_metrics["lambda_bud_used"] = lambda_budget_used
+    avg_metrics["lambda_bud_frozen"] = lambda_budget_is_frozen
+    avg_metrics["lambda_sparse_used"] = loss_weights.get("lambda_sparse", 0)
+    avg_metrics["temperature"] = temperature
     
     # Update DRO weights
     if dro_weights is not None and regime_losses:
@@ -2650,6 +2676,11 @@ def train(
     consecutive_excellent_epochs = 0
     excellence_threshold_epochs = 5  # Must maintain excellence for N epochs
     
+    # V8.16: Freeze λb after early_excellence to prevent unbounded loss growth
+    # Once model has converged (TopK-F1=1.0 sustained), no need to keep ramping budget
+    frozen_lambda_budget = None  # Will be set when early_excellence triggers
+    lambda_budget_was_frozen_at_epoch = None  # For logging
+    
     # V8.10: Track transpose wins (convention mismatch detection)
     transpose_wins_count = 0
     transpose_total_count = 0
@@ -2711,6 +2742,7 @@ def train(
             W_frozen=W_frozen,                  # V8.11: Frozen W for restoration
             direction_tau=direction_tau,        # V8.11: τ for direction
             lambda_direction_boost=lambda_direction_boost,  # V8.11: Boost factor
+            frozen_lambda_budget=frozen_lambda_budget,  # V8.16: Cap λb after convergence
         )
         
         scheduler.step()
@@ -2806,10 +2838,13 @@ def train(
                 # TopK TP count (for primary line)
                 topk_tp = val_metrics.get("topk_tp", 0)
                 
+                # V8.16: Show frozen state for λb
+                lambda_frozen_indicator = "🧊" if train_metrics.get("lambda_bud_frozen", False) else ""
+                
                 print(f"[{stage}] Epoch {epoch:3d}/{cfg['epochs']} | "
                       f"loss={train_metrics['loss']:.4f} | "
                       f"L_recon={train_metrics.get('L_recon', 0):.4f} | "
-                      f"τ={temp:.2f} λs={lam_sparse:.1e} λb={lam_budget:.2f} | "
+                      f"τ={temp:.2f} λs={lam_sparse:.1e} λb={lam_budget:.2f}{lambda_frozen_indicator} | "
                       f"TopK-F1={topk_f1:.4f} TP={topk_tp}/{K} | "
                       f"{t_elapsed:.1f}s")
                 
@@ -3060,6 +3095,16 @@ def train(
             
             # Early excellence: maintained high quality for N epochs
             early_excellence = consecutive_excellent_epochs >= excellence_threshold_epochs
+            
+            # V8.16: Freeze λb once early_excellence is achieved
+            # This prevents unbounded loss growth after model has converged
+            if early_excellence and frozen_lambda_budget is None:
+                # Get current λb value and freeze it
+                current_lambda_b = train_metrics.get("lambda_bud_used", 0.5)
+                frozen_lambda_budget = current_lambda_b
+                lambda_budget_was_frozen_at_epoch = epoch
+                if not sweep_mode:
+                    print(f"         | 🧊 V8.16: λb FROZEN at {frozen_lambda_budget:.3f} (epoch {epoch}, TopK-F1={topk_f1:.4f})")
             
             # FLEXIBLE GUARD: Allow checkpoint if EITHER:
             # 1. Past DISC phase (original strict guard), OR
