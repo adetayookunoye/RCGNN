@@ -23,6 +23,7 @@
 - [Troubleshooting](#troubleshooting)
 - [Project Structure](#project-structure)
 - [Development History](#development-history)
+- [Comprehensive Evaluation & Calibration Protocol](#comprehensive-evaluation--calibration-protocol)
 - [Citation](#citation)
 - [License](#license)
 
