@@ -1,0 +1,5 @@
+Artifact,RC-GNN_edges,True_edges,Correlation_edges,Correlation_agree,Correlation_shd,NOTears-lite_edges,NOTears-lite_agree,NOTears-lite_shd,NOTears-Linear_edges,NOTears-Linear_agree,NOTears-Linear_shd,Granger_edges,Granger_agree,Granger_shd,PCMCI+_edges,PCMCI+_agree,PCMCI+_shd,DAG-GNN_edges,DAG-GNN_agree,DAG-GNN_shd
+unified_v8_compound_full,25,13,42,0.456,39,18,0.538,25,17,0.544,24,156,0.467,143,0,0.609,13,2,0.598,15
+unified_v8_compound_mnar_bias,46,13,120,0.763,109,18,0.195,21,43,0.331,40,156,0.964,143,1,0.118,12,1,0.118,14
+unified_v8_extreme,73,13,14,0.178,17,18,0.213,23,2,0.166,15,156,0.923,143,0,0.154,13,3,0.172,16
+unified_v8_mcar_40,48,13,120,0.781,113,18,0.213,25,45,0.349,44,156,0.970,143,1,0.112,14,0,0.107,13
