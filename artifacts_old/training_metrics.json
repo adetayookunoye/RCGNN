@@ -1,7 +1,0 @@
-{
-  "best_shd": 18.0,
-  "training_time": 65.13454294204712,
-  "epochs": 8,
-  "dataset": "uci_air",
-  "n_samples": 8030
-}
