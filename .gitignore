@@ -83,3 +83,19 @@ coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
+
+# Directories to exclude from version control
+paper/
+artifacts_old/
+artifacts_previous/
+artifacts_using/
+docs/
+reports/
+logs/
+
+# Large artifact files
+artifacts/unified_v8*/
+artifacts/*.log
+artifacts/*.png
+artifacts/*.csv
+artifacts/*.txt

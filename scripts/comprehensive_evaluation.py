@@ -40,8 +40,16 @@ import numpy as np
 import pandas as pd
 import torch
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 from pathlib import Path
 from collections import defaultdict
+
+try:
+    import networkx as nx
+    HAS_NETWORKX = True
+except ImportError:
+    HAS_NETWORKX = False
+    print("⚠️  networkx not installed, graph network plots disabled")
 
 import path_helper  # noqa: F401
 
@@ -54,17 +62,25 @@ from src.training.baselines import (
 # 1. GROUND TRUTH METRICS
 # ============================================================================
 
-def compute_shd(A_pred, A_true):
+# Default threshold for binarizing adjacency matrices
+# 0.5 is optimal based on calibration (sigmoid decision boundary)
+DEFAULT_THRESHOLD = 0.5
+
+def compute_shd(A_pred, A_true, threshold=None):
     """Structural Hamming Distance (lower is better)."""
-    A_pred_bin = (A_pred > 0.1).astype(float)
+    if threshold is None:
+        threshold = DEFAULT_THRESHOLD
+    A_pred_bin = (A_pred > threshold).astype(float)
     A_true_bin = (A_true > 0.1).astype(float)
     np.fill_diagonal(A_pred_bin, 0)
     np.fill_diagonal(A_true_bin, 0)
     return int(np.sum(np.abs(A_pred_bin - A_true_bin)))
 
-def compute_skeleton_f1(A_pred, A_true):
+def compute_skeleton_f1(A_pred, A_true, threshold=None):
     """Skeleton F1 (undirected edges, ignoring direction)."""
-    A_pred_bin = ((A_pred + A_pred.T) > 0.1).astype(float)
+    if threshold is None:
+        threshold = DEFAULT_THRESHOLD
+    A_pred_bin = ((A_pred + A_pred.T) > threshold).astype(float)
     A_true_bin = ((A_true + A_true.T) > 0.1).astype(float)
     np.fill_diagonal(A_pred_bin, 0)
     np.fill_diagonal(A_true_bin, 0)
@@ -78,9 +94,11 @@ def compute_skeleton_f1(A_pred, A_true):
     f1 = 2 * precision * recall / (precision + recall + 1e-10)
     return float(f1), float(precision), float(recall)
 
-def compute_directed_f1(A_pred, A_true):
+def compute_directed_f1(A_pred, A_true, threshold=None):
     """Directed F1 (including edge direction)."""
-    A_pred_bin = (A_pred > 0.1).astype(float)
+    if threshold is None:
+        threshold = DEFAULT_THRESHOLD
+    A_pred_bin = (A_pred > threshold).astype(float)
     A_true_bin = (A_true > 0.1).astype(float)
     np.fill_diagonal(A_pred_bin, 0)
     np.fill_diagonal(A_true_bin, 0)
@@ -552,6 +570,158 @@ def plot_sensitivity_curve(sensitivity_dict, corruption_name, output_file=None):
         plt.savefig(output_file, dpi=150, bbox_inches='tight')
     plt.close()
 
+
+def plot_recovered_graph(A_pred, A_true, corruption_name, output_dir, 
+                         node_names=None, top_k=13):
+    """
+    Plot the recovered causal graph as both heatmap and network diagram.
+    
+    Args:
+        A_pred: Predicted adjacency matrix (already sparse or will be sparsified)
+        A_true: Ground truth adjacency matrix
+        corruption_name: Name of corruption for title/filename
+        output_dir: Directory to save plots
+        node_names: List of node names (optional)
+        top_k: Number of top edges to show in network (default: 13 = ground truth edges)
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    d = A_pred.shape[0]
+    if node_names is None:
+        node_names = [f'X{i}' for i in range(d)]
+    
+    # Check if already sparse (has ~top_k edges) or needs sparsification
+    current_edges = int(np.sum(np.abs(A_pred) > 0.01))
+    if current_edges > top_k * 2:  # Dense matrix, needs sparsification
+        A_sparse = select_topk_edges(A_pred.copy(), top_k)
+    else:
+        A_sparse = A_pred.copy()  # Already sparse
+    
+    actual_edges = int(np.sum(np.abs(A_sparse) > 0.01))
+    
+    # -------------------------------------------------------------------------
+    # 1. HEATMAP COMPARISON (Predicted vs Ground Truth)
+    # -------------------------------------------------------------------------
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    
+    # Ground truth
+    gt_edges = int(np.sum(A_true > 0.1))
+    im0 = axes[0].imshow(A_true, cmap='Blues', vmin=0, vmax=1)
+    axes[0].set_title(f'Ground Truth ({gt_edges} edges)', fontsize=12, fontweight='bold')
+    axes[0].set_xlabel('Effect')
+    axes[0].set_ylabel('Cause')
+    axes[0].set_xticks(range(d))
+    axes[0].set_yticks(range(d))
+    axes[0].set_xticklabels(node_names, rotation=45, ha='right', fontsize=7)
+    axes[0].set_yticklabels(node_names, fontsize=7)
+    plt.colorbar(im0, ax=axes[0], shrink=0.8)
+    
+    # Predicted (sparse)
+    im1 = axes[1].imshow(A_sparse, cmap='Oranges', vmin=0, vmax=np.max(A_sparse) + 0.01)
+    axes[1].set_title(f'RC-GNN Predicted ({actual_edges} edges)', fontsize=12, fontweight='bold')
+    axes[1].set_xlabel('Effect')
+    axes[1].set_ylabel('Cause')
+    axes[1].set_xticks(range(d))
+    axes[1].set_yticks(range(d))
+    axes[1].set_xticklabels(node_names, rotation=45, ha='right', fontsize=7)
+    axes[1].set_yticklabels(node_names, fontsize=7)
+    plt.colorbar(im1, ax=axes[1], shrink=0.8)
+    
+    # Difference (error analysis: TP=green, FP=red, FN=blue)
+    A_true_bin = (A_true > 0.1).astype(float)
+    A_pred_bin = (A_sparse > 0.1).astype(float)
+    
+    # Create RGB image for difference
+    diff_img = np.zeros((d, d, 3))
+    tp_mask = (A_pred_bin > 0) & (A_true_bin > 0)  # True positive: green
+    fp_mask = (A_pred_bin > 0) & (A_true_bin == 0)  # False positive: red
+    fn_mask = (A_pred_bin == 0) & (A_true_bin > 0)  # False negative: blue
+    
+    diff_img[tp_mask] = [0.2, 0.8, 0.2]  # Green
+    diff_img[fp_mask] = [0.9, 0.2, 0.2]  # Red
+    diff_img[fn_mask] = [0.2, 0.4, 0.9]  # Blue
+    
+    axes[2].imshow(diff_img)
+    axes[2].set_title('Edge Accuracy', fontsize=12, fontweight='bold')
+    axes[2].set_xlabel('Effect')
+    axes[2].set_ylabel('Cause')
+    axes[2].set_xticks(range(d))
+    axes[2].set_yticks(range(d))
+    axes[2].set_xticklabels(node_names, rotation=45, ha='right', fontsize=7)
+    axes[2].set_yticklabels(node_names, fontsize=7)
+    
+    # Legend for difference plot
+    tp_patch = mpatches.Patch(color=[0.2, 0.8, 0.2], label=f'TP ({int(tp_mask.sum())})')
+    fp_patch = mpatches.Patch(color=[0.9, 0.2, 0.2], label=f'FP ({int(fp_mask.sum())})')
+    fn_patch = mpatches.Patch(color=[0.2, 0.4, 0.9], label=f'FN ({int(fn_mask.sum())})')
+    axes[2].legend(handles=[tp_patch, fp_patch, fn_patch], loc='upper right', fontsize=8)
+    
+    plt.suptitle(f'Causal Graph Recovery: {corruption_name}', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    heatmap_file = output_dir / f'graph_heatmap_{corruption_name}.png'
+    plt.savefig(heatmap_file, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"   📊 Heatmap saved: {heatmap_file}")
+    
+    # -------------------------------------------------------------------------
+    # 2. NETWORK DIAGRAM (if networkx available)
+    # -------------------------------------------------------------------------
+    if HAS_NETWORKX:
+        fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+        
+        for ax_idx, (A_mat, title, cmap) in enumerate([
+            (A_true, f'Ground Truth ({int(A_true.sum())} edges)', 'Blues'),
+            (A_sparse, f'RC-GNN Predicted ({actual_edges} edges)', 'Oranges')
+        ]):
+            ax = axes[ax_idx]
+            G = nx.DiGraph()
+            G.add_nodes_from(range(d))
+            
+            # Add edges with weights
+            for i in range(d):
+                for j in range(d):
+                    if A_mat[i, j] > 0.1 and i != j:
+                        G.add_edge(i, j, weight=float(A_mat[i, j]))
+            
+            # Layout
+            pos = nx.spring_layout(G, seed=42, k=2.0)
+            
+            # Draw nodes
+            node_colors = ['lightblue' if G.in_degree(n) + G.out_degree(n) > 0 else 'lightgray' 
+                          for n in G.nodes()]
+            nx.draw_networkx_nodes(G, pos, ax=ax, node_size=500, node_color=node_colors,
+                                   edgecolors='black', linewidths=1.5)
+            
+            # Draw edges with varying width based on weight
+            if G.number_of_edges() > 0:
+                edges = list(G.edges(data=True))
+                weights = [e[2].get('weight', 0.5) for e in edges]
+                max_w = max(weights) if weights else 1
+                widths = [2 + 3 * (w / max_w) for w in weights]
+                
+                nx.draw_networkx_edges(G, pos, ax=ax, edge_color='gray',
+                                       width=widths, alpha=0.7,
+                                       arrows=True, arrowsize=15,
+                                       connectionstyle='arc3,rad=0.1')
+            
+            # Draw labels
+            labels = {i: node_names[i] for i in range(d)}
+            nx.draw_networkx_labels(G, pos, labels, ax=ax, font_size=8, font_weight='bold')
+            
+            ax.set_title(title, fontsize=12, fontweight='bold')
+            ax.axis('off')
+        
+        plt.suptitle(f'Causal Graph Network: {corruption_name}', fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        network_file = output_dir / f'graph_network_{corruption_name}.png'
+        plt.savefig(network_file, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"   🔗 Network diagram saved: {network_file}")
+    
+    return heatmap_file
+
+
 # ============================================================================
 # MAIN EVALUATION
 # ============================================================================
@@ -625,11 +795,20 @@ def main():
     args = parser.parse_args()
     
     artifacts_dir = Path(args.artifacts_dir)
-    artifact_dirs = sorted(artifacts_dir.glob("unified_v8_*"))
+    
+    # Try v9 first, then fall back to v8
+    artifact_dirs = sorted(artifacts_dir.glob("unified_v9_*"))
+    if not artifact_dirs:
+        artifact_dirs = sorted(artifacts_dir.glob("unified_v8_*"))
+        version_prefix = "unified_v8_"
+    else:
+        version_prefix = "unified_v9_"
     
     if not artifact_dirs:
         print(f"❌ No artifacts found in {artifacts_dir}")
         return
+    
+    print(f"Found {len(artifact_dirs)} trained models ({version_prefix[:-1]})")
     
     print(f"\n{'='*80}")
     print(f"COMPREHENSIVE EVALUATION - RC-GNN vs ALL CLAIMS")
@@ -680,7 +859,7 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
     results_by_corruption = {}
     
     for artifact_dir in artifact_dirs:
-        corruption = artifact_dir.name.replace("unified_v8_", "")
+        corruption = artifact_dir.name.replace(version_prefix, "")
         corruption_type = corruption
         data_root = Path(args.data_dir) / "uci_air_c" / corruption_type
         
@@ -694,15 +873,19 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
         A_true = artifact_data['A_true']
         X = artifact_data.get('X')
         
-        # Compute metrics
+        # Compute metrics using calibrated threshold (DEFAULT_THRESHOLD=0.5)
         shd = compute_shd(A_rc_gnn, A_true)
         skel_f1, skel_p, skel_r = compute_skeleton_f1(A_rc_gnn, A_true)
         dir_f1, dir_p, dir_r = compute_directed_f1(A_rc_gnn, A_true)
         
+        # Count edges using same threshold
+        rcgnn_edges = int(np.sum(A_rc_gnn > DEFAULT_THRESHOLD))
+        true_edges = int(np.sum(A_true > 0.1))
+        
         result_row = {
             'Corruption': corruption,
-            'RC-GNN_Edges': int(A_rc_gnn.sum()),
-            'True_Edges': int(A_true.sum()),
+            'RC-GNN_Edges': rcgnn_edges,
+            'True_Edges': true_edges,
             'SHD': shd,
             'Skeleton_F1': skel_f1,
             'Skeleton_Precision': skel_p,
@@ -872,9 +1055,11 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
         
         for method, A_pred in methods.items():
             try:
-                shd = compute_shd(A_pred, A_true)
-                skel_f1, skel_p, skel_r = compute_skeleton_f1(A_pred, A_true)
-                dir_f1, dir_p, dir_r = compute_directed_f1(A_pred, A_true)
+                # Use appropriate threshold: 0.5 for RC-GNN (sigmoid output), 0.1 for baselines
+                thresh = DEFAULT_THRESHOLD if 'RC-GNN' in method else 0.1
+                shd = compute_shd(A_pred, A_true, threshold=thresh)
+                skel_f1, skel_p, skel_r = compute_skeleton_f1(A_pred, A_true, threshold=thresh)
+                dir_f1, dir_p, dir_r = compute_directed_f1(A_pred, A_true, threshold=thresh)
                 
                 baseline_comparison.append({
                     'Corruption': corruption,
@@ -886,12 +1071,34 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
                     'Directed_F1': dir_f1,
                     'Directed_Precision': dir_p,
                     'Directed_Recall': dir_r,
-                    'Edges': int(np.sum(A_pred > 0))
+                    'Edges': int(np.sum(A_pred > thresh))
                 })
                 
                 print(f"{method:20s} | SHD={shd:3d} | Skel-F1={skel_f1:.3f} | Dir-F1={dir_f1:.3f} | Prec={dir_p:.3f} | Rec={dir_r:.3f}")
             except Exception as e:
                 print(f"{method:20s} | ERROR: {str(e)[:60]}")
+        
+        # Plot recovered graph for this corruption
+        try:
+            # Use UCI Air Quality variable names
+            uci_node_names = ['CO(GT)', 'PT08.S1', 'NMHC(GT)', 'C6H6(GT)', 'PT08.S2', 
+                              'NOx(GT)', 'PT08.S3', 'NO2(GT)', 'PT08.S4', 'PT08.S5', 
+                              'T', 'RH', 'AH']
+            node_names = uci_node_names[:A_true.shape[0]] if A_true.shape[0] <= len(uci_node_names) else None
+            
+            graph_output_dir = Path(args.output).parent / "graphs"
+            plot_recovered_graph(
+                A_pred=A_rc_gnn_sparse,  # Use sparse version for consistency
+                A_true=A_true,
+                corruption_name=corruption,
+                output_dir=graph_output_dir,
+                node_names=node_names,
+                top_k=k_edges
+            )
+        except Exception as e:
+            import traceback
+            print(f"   ⚠️  Could not plot graph for {corruption}: {e}")
+            traceback.print_exc()
     
     # ========================================================================
     # SAVE COMPREHENSIVE REPORT
