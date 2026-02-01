@@ -1,370 +1,309 @@
 # RC-GNN Makefile
-# Comprehensive workflow for data processing, training, and evaluation
+# Works on local machines and Sapelo HPC cluster
 
-.PHONY: help install clean data train-synth train-air validate compare all test
+.PHONY: help install setup data train evaluate clean test
 .DEFAULT_GOAL := help
 
 #=============================================================================
-# Configuration
+# Configuration - Auto-detect environment
 #=============================================================================
 
-PYTHON := python3
-PIP := pip
-CONDA_ENV := rcgnn-env
+# Detect if running on Sapelo (SLURM environment)
+ifdef SLURM_JOB_ID
+    ENV := sapelo
+    PYTHON := python
+else ifdef SLURM_CLUSTER_NAME
+    ENV := sapelo
+    PYTHON := python
+else
+    ENV := local
+    PYTHON := python3
+endif
+
+# Directories
 DATA_DIR := data/interim
 ARTIFACTS := artifacts
 CONFIGS := configs
+LOGS := logs
 
-# Synthetic data parameters
-SYNTH_SMALL := $(DATA_DIR)/synth_small
-SYNTH_NONLINEAR := $(DATA_DIR)/synth_nonlinear
-SYNTH_D := 10
-SYNTH_EDGES := 15
-
-# UCI Air data parameters
+# Dataset paths
 UCI_AIR := $(DATA_DIR)/uci_air
-
-# Model outputs
-ADJ_SYNTH := $(ARTIFACTS)/adjacency/A_mean.npy
-ADJ_AIR := $(ARTIFACTS)/adjacency/A_mean_air.npy
-
-# Node names for UCI Air (13 sensors)
-UCI_AIR_NODES := "CO,PT08.S1,NMHC,C6H6,PT08.S2,NOx,PT08.S3,NO2,PT08.S4,PT08.S5,T,RH,AH"
+UCI_AIR_C := $(DATA_DIR)/uci_air_c
+SYNTH := $(DATA_DIR)/synth_small
 
 #=============================================================================
 # Help
 #=============================================================================
 
-help: ## Show this help message
-	@echo "════════════════════════════════════════════════════════════════════"
-	@echo "  RC-GNN Makefile - Robust Causal Graph Neural Networks"
-	@echo "════════════════════════════════════════════════════════════════════"
+help: ## Show available commands
+	@echo "================================================================"
+	@echo "  RC-GNN Makefile"
+	@echo "  Environment: $(ENV)"
+	@echo "================================================================"
 	@echo ""
-	@echo "Available targets:"
+	@echo "SETUP:"
+	@echo "  make install          Install Python dependencies"
+	@echo "  make setup            Full setup (env + dependencies)"
+	@echo "  make check            Verify environment is ready"
 	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-30s\033[0m %s\n", $$1, $$2}'
+	@echo "DATA:"
+	@echo "  make data             Generate all datasets"
+	@echo "  make data-synth       Generate synthetic data"
+	@echo "  make data-uci         Download UCI Air Quality"
 	@echo ""
-	@echo "Quick Start:"
-	@echo "  1. make install              # Install dependencies"
-	@echo "  2. make data                 # Generate all datasets"
-	@echo "  3. make train-synth          # Train on synthetic data"
-	@echo "  4. make train-air            # Train on UCI Air data"
-	@echo "  5. make validate-all         # Run all validation"
+	@echo "TRAINING (Local):"
+	@echo "  make train            Train on compound_full (default)"
+	@echo "  make train-quick      Quick test (10 epochs)"
+	@echo "  make train-all        Train on all 12 datasets"
 	@echo ""
-	@echo "Or simply: make all           # Complete pipeline"
+	@echo "TRAINING (Sapelo HPC):"
+	@echo "  make submit           Submit GPU job to Sapelo"
+	@echo "  make status           Check job status"
+	@echo "  make logs             View latest job logs"
+	@echo ""
+	@echo "EVALUATION:"
+	@echo "  make evaluate         Run comprehensive evaluation"
+	@echo "  make results          Show results summary"
+	@echo ""
+	@echo "UTILITIES:"
+	@echo "  make test             Run unit tests"
+	@echo "  make clean            Clean generated files"
+	@echo "  make sync-sapelo      Sync code to Sapelo"
 	@echo ""
 
 #=============================================================================
-# Installation & Setup
+# Setup & Installation
 #=============================================================================
 
-install: ## Install dependencies
-	@echo "📦 Installing dependencies..."
-	$(PIP) install --upgrade pip setuptools wheel
-	$(PIP) install -r requirements.txt
-	@echo "✅ Dependencies installed successfully"
+install: ## Install Python dependencies
+	@echo "[INFO] Installing dependencies..."
+	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON) -m pip install -r requirements.txt
+	@echo "[DONE] Dependencies installed"
 
-create-env: ## Create conda environment
-	@echo "🐍 Creating conda environment: $(CONDA_ENV)..."
-	conda create -y -n $(CONDA_ENV) python=3.12 pip 2>/dev/null || true
-	@echo "✅ Conda environment created. Activate with: conda activate $(CONDA_ENV)"
+setup-local: ## Setup for local development
+	@echo "[INFO] Setting up local environment..."
+	conda create -y -n rcgnn-env python=3.10 pip || true
+	@echo "[INFO] Activate with: conda activate rcgnn-env"
+	@echo "[INFO] Then run: make install"
 
-setup: create-env install ## Complete setup (environment + dependencies)
+setup-sapelo: ## Setup for Sapelo HPC
+	@echo "[INFO] Setting up Sapelo environment..."
+	@echo "Run these commands on Sapelo:"
+	@echo "  module load PyTorch/2.1.2-foss-2023a-CUDA-12.1.1"
+	@echo "  pip install --user -r requirements.txt"
 
-check-env: ## Check Python environment
-	@echo "🔍 Checking environment..."
-	@$(PYTHON) -c "import torch; import numpy; import networkx; print('✅ Core packages available')"
-	@$(PYTHON) -c "import sys; print(f'Python: {sys.version}')"
-	@echo "✅ Environment check complete"
+setup: ## Full setup (auto-detects environment)
+ifeq ($(ENV),sapelo)
+	@$(MAKE) setup-sapelo
+else
+	@$(MAKE) setup-local
+endif
+
+check: ## Verify environment is ready
+	@echo "[INFO] Checking environment ($(ENV))..."
+	@$(PYTHON) -c "import torch; print(f'PyTorch: {torch.__version__}')"
+	@$(PYTHON) -c "import numpy; print(f'NumPy: {numpy.__version__}')"
+	@$(PYTHON) -c "import scipy; print(f'SciPy: {scipy.__version__}')"
+	@$(PYTHON) -c "import sklearn; print(f'Scikit-learn: {sklearn.__version__}')"
+	@$(PYTHON) -c "from src.models.rcgnn import RCGNN; print('RC-GNN: OK')"
+	@echo "[DONE] Environment ready"
 
 #=============================================================================
-# Data Processing
+# Data Generation
 #=============================================================================
 
-data: data-synth-small data-synth-nonlinear data-air ## Generate all datasets
+data: data-synth data-uci ## Generate all datasets
 
-data-synth-small: ## Generate small synthetic dataset (linear)
-	@echo "🔬 Generating small synthetic dataset (linear)..."
-	@mkdir -p $(SYNTH_SMALL)
+data-synth: ## Generate synthetic dataset
+	@echo "[INFO] Generating synthetic dataset..."
+	@mkdir -p $(SYNTH)
 	$(PYTHON) scripts/synth_bench.py \
-		--graph_type er \
-		--d $(SYNTH_D) \
-		--edges $(SYNTH_EDGES) \
-		--mechanism linear \
+		--d 15 \
+		--edges 30 \
+		--n_envs 3 \
 		--missing_type mcar \
 		--missing_rate 0.2 \
-		--noise_scale 0.3 \
-		--output $(SYNTH_SMALL) \
+		--output $(SYNTH) \
 		--seed 42
-	@echo "✅ Small synthetic dataset created at $(SYNTH_SMALL)"
+	@echo "[DONE] Synthetic data at $(SYNTH)"
 
-data-synth-nonlinear: ## Generate synthetic dataset (nonlinear MLP)
-	@echo "🔬 Generating nonlinear synthetic dataset (MLP)..."
-	@mkdir -p $(SYNTH_NONLINEAR)
-	$(PYTHON) scripts/synth_bench.py \
-		--graph_type er \
-		--d $(SYNTH_D) \
-		--edges $(SYNTH_EDGES) \
-		--mechanism mlp \
-		--missing_type mcar \
-		--missing_rate 0.2 \
-		--noise_scale 0.3 \
-		--output $(SYNTH_NONLINEAR) \
-		--seed 300
-	@echo "✅ Nonlinear synthetic dataset created at $(SYNTH_NONLINEAR)"
-
-data-air: ## Download and process UCI Air Quality dataset
-	@echo "🌍 Downloading UCI Air Quality dataset..."
+data-uci: ## Download and prepare UCI Air Quality
+	@echo "[INFO] Preparing UCI Air Quality dataset..."
 	@mkdir -p $(UCI_AIR)
-	$(PYTHON) scripts/download_and_convert_uci_safe.py \
-		--out $(UCI_AIR)
-	@echo "✅ UCI Air dataset prepared at $(UCI_AIR)"
+	$(PYTHON) scripts/download_and_convert_uci_safe.py --out $(UCI_AIR)
+	@echo "[DONE] UCI Air data at $(UCI_AIR)"
 
-data-inspect: ## Inspect generated datasets
-	@echo "📊 Dataset Statistics:"
-	@echo ""
-	@if [ -f $(SYNTH_SMALL)/meta.json ]; then \
-		echo "📁 Synthetic Small:"; \
-		$(PYTHON) -c "import json,numpy as np; meta=json.load(open('$(SYNTH_SMALL)/meta.json')); X=np.load('$(SYNTH_SMALL)/X.npy'); print(f\"  Nodes: {meta.get('d','N/A')}\n  Edges: {meta.get('edges','N/A')}\n  Mechanism: {meta.get('mechanism','N/A')}\n  Shape: {X.shape}\")"; \
-		echo ""; \
-	fi
-	@if [ -f $(UCI_AIR)/X.npy ]; then \
-		echo "📁 UCI Air Quality:"; \
-		$(PYTHON) -c "import numpy as np; X=np.load('$(UCI_AIR)/X.npy'); M=np.load('$(UCI_AIR)/M.npy'); print(f\"  Shape: {X.shape}\n  Missing rate: {(M==0).mean():.2%}\")"; \
-	fi
+data-corrupted: ## Generate corrupted UCI variants
+	@echo "[INFO] Generating corruption variants..."
+	$(PYTHON) scripts/generate_uci_air_c.py
+	@echo "[DONE] Corrupted datasets at $(UCI_AIR_C)"
 
 #=============================================================================
-# Training
+# Training - Local
 #=============================================================================
 
-train-synth: data-synth-small ## Train RC-GNN on synthetic data
-	@echo "🚀 Training RC-GNN on synthetic dataset..."
-	@mkdir -p $(ARTIFACTS)/checkpoints $(ARTIFACTS)/adjacency
-	$(PYTHON) scripts/train_rcgnn.py \
-		$(CONFIGS)/data.yaml \
-		$(CONFIGS)/model.yaml \
-		$(CONFIGS)/train.yaml \
-		--adj-output $(ADJ_SYNTH)
-	@echo "✅ Training complete! Adjacency at $(ADJ_SYNTH)"
+train: ## Train on compound_full (default)
+	@echo "[INFO] Training RC-GNN on compound_full..."
+	@mkdir -p $(ARTIFACTS) $(LOGS)
+	$(PYTHON) scripts/train_rcgnn_unified.py \
+		--data_dir $(UCI_AIR_C)/compound_full \
+		--output_dir $(ARTIFACTS)/compound_full \
+		--epochs 100
+	@echo "[DONE] Training complete"
 
-train-air: data-air ## Train RC-GNN on UCI Air Quality dataset
-	@echo "🚀 Training RC-GNN on UCI Air Quality..."
-	@mkdir -p $(ARTIFACTS)/checkpoints $(ARTIFACTS)/adjacency
-	$(PYTHON) scripts/train_rcgnn.py \
-		$(CONFIGS)/data_uci.yaml \
-		$(CONFIGS)/model.yaml \
-		$(CONFIGS)/train.yaml \
-		--adj-output $(ADJ_AIR)
-	@echo "✅ Training complete! Adjacency at $(ADJ_AIR)"
+train-quick: ## Quick training test (10 epochs)
+	@echo "[INFO] Quick training test..."
+	@mkdir -p $(ARTIFACTS)
+	$(PYTHON) scripts/train_rcgnn_unified.py \
+		--data_dir $(UCI_AIR_C)/compound_full \
+		--output_dir $(ARTIFACTS)/quick_test \
+		--epochs 10
+	@echo "[DONE] Quick test complete"
 
-train-air-live: data-air ## Train UCI Air with live log streaming (tee)
-	@echo "📺 Live training (logs streaming to terminal and saved to artifacts/train_air_live.log)"
-	@mkdir -p $(ARTIFACTS)/checkpoints $(ARTIFACTS)/adjacency
-	$(PYTHON) -u scripts/train_rcgnn.py \
-		$(CONFIGS)/data_uci.yaml \
-		$(CONFIGS)/model.yaml \
-		$(CONFIGS)/train.yaml \
-		--adj-output $(ADJ_AIR) 2>&1 | tee $(ARTIFACTS)/train_air_live.log
+train-dataset: ## Train on specific dataset (usage: make train-dataset DS=mcar_20)
+	@echo "[INFO] Training on $(DS)..."
+	@mkdir -p $(ARTIFACTS)
+	$(PYTHON) scripts/train_rcgnn_unified.py \
+		--data_dir $(UCI_AIR_C)/$(DS) \
+		--output_dir $(ARTIFACTS)/$(DS) \
+		--epochs 100
+	@echo "[DONE] Training on $(DS) complete"
 
-train-all: train-synth train-air ## Train on both datasets
-
-train-quick: ## Quick training (5 epochs, for testing)
-	@echo "⚡ Quick training run (5 epochs)..."
-	$(PYTHON) scripts/train_rcgnn.py \
-		$(CONFIGS)/data.yaml \
-		$(CONFIGS)/model.yaml \
-		$(CONFIGS)/train.yaml \
-		--epochs 5
-	@echo "✅ Quick training complete"
-
-#=============================================================================
-# Validation & Evaluation
-#=============================================================================
-
-validate-synth: ## Validate synthetic results (basic)
-	@echo "📊 Validating synthetic results..."
-	@mkdir -p $(ARTIFACTS)/validation_synth
-	$(PYTHON) scripts/validate_and_visualize.py \
-		--adjacency $(ADJ_SYNTH) \
-		--data-root $(SYNTH_SMALL) \
-		--threshold 0.5 \
-		--export $(ARTIFACTS)/validation_synth
-	@echo "✅ Validation complete at $(ARTIFACTS)/validation_synth"
-
-validate-synth-advanced: ## Validate synthetic (PUBLICATION READY)
-	@echo "📊 Advanced validation - synthetic..."
-	@mkdir -p $(ARTIFACTS)/validation_synth_advanced
-	$(PYTHON) scripts/validate_and_visualize_advanced.py \
-		--adjacency $(ADJ_SYNTH) \
-		--data-root $(SYNTH_SMALL) \
-		--threshold 0.5 \
-		--export $(ARTIFACTS)/validation_synth_advanced
-	@echo "✅ Advanced validation complete!"
-
-validate-air: ## Validate UCI Air results (basic)
-	@echo "📊 Validating UCI Air results..."
-	@mkdir -p $(ARTIFACTS)/validation_air
-	$(PYTHON) scripts/validate_and_visualize.py \
-		--adjacency $(ADJ_AIR) \
-		--data-root $(UCI_AIR) \
-		--threshold 0.5 \
-		--export $(ARTIFACTS)/validation_air
-	@echo "✅ Validation complete at $(ARTIFACTS)/validation_air"
-
-validate-air-advanced: ## Validate UCI Air (PUBLICATION READY)
-	@echo "📊 Advanced validation - UCI Air..."
-	@mkdir -p $(ARTIFACTS)/validation_air_advanced
-	$(PYTHON) scripts/validate_and_visualize_advanced.py \
-		--adjacency $(ADJ_AIR) \
-		--data-root $(UCI_AIR) \
-		--threshold 0.5 \
-		--export $(ARTIFACTS)/validation_air_advanced \
-		--node-names $(UCI_AIR_NODES)
-	@echo "✅ Advanced validation complete!"
-	@echo ""
-	@echo "📈 Key Results:"
-	@$(PYTHON) -c "import json; m=json.load(open('$(ARTIFACTS)/validation_air_advanced/metrics.json')); print(f\"  AUPRC: {m['auprc']:.4f} (+{m['auprc_vs_chance']*100:.1f}% vs chance)\n  F1: {m['f1']:.4f}\n  Orientation Acc: {m['orientation_acc']:.1%}\")" 2>/dev/null || echo "  (metrics.json not found)"
-
-validate-all: validate-synth-advanced validate-air-advanced ## Run all advanced validation
+train-all: ## Train on all 12 datasets (local, sequential)
+	@echo "[INFO] Training on all datasets (this will take a while)..."
+	@for ds in clean_full compound_full compound_mnar_bias extreme mcar_20 mcar_40 \
+		mnar_structural moderate noise_0.5 regimes_5 sensor_failure; do \
+		echo "[INFO] Training on $$ds..."; \
+		$(PYTHON) scripts/train_rcgnn_unified.py \
+			--data_dir $(UCI_AIR_C)/$$ds \
+			--output_dir $(ARTIFACTS)/$$ds \
+			--epochs 100; \
+	done
+	@echo "[DONE] All training complete"
 
 #=============================================================================
-# Baseline Comparison
+# Training - Sapelo HPC
 #=============================================================================
 
-compare-baselines: ## Compare RC-GNN vs baselines
-	@echo "📊 Running baseline comparison..."
-	@mkdir -p $(ARTIFACTS)/baseline_comparison
-	$(PYTHON) scripts/compare_baselines.py \
-		--config $(CONFIGS)/data.yaml \
-		--export $(ARTIFACTS)/baseline_comparison
-	@echo "✅ Baseline comparison complete!"
+submit: ## Submit training job to Sapelo (from local)
+	@echo "[INFO] Submitting job to Sapelo..."
+	ssh sapelo2 "cd /scratch/aoo29179/rcgnn && sbatch slurm/train_unified_gpu.sh"
+
+submit-local: ## Submit from Sapelo login node (on Sapelo)
+	@mkdir -p $(LOGS)
+	sbatch slurm/train_unified_gpu.sh
+
+status: ## Check Sapelo job status
+	@ssh sapelo2 "squeue -u aoo29179" 2>/dev/null || squeue -u $$USER
+
+logs: ## View latest Sapelo job logs
+	@echo "[INFO] Latest log files:"
+	@ls -lt $(LOGS)/*.out 2>/dev/null | head -5 || echo "No logs found in $(LOGS)/"
+
+cancel: ## Cancel all Sapelo jobs
+	@ssh sapelo2 "scancel -u aoo29179" 2>/dev/null || scancel -u $$USER
+
+sync-sapelo: ## Sync code to Sapelo (from local)
+	@echo "[INFO] Syncing to Sapelo..."
+	rsync -avz --exclude='.git' --exclude='artifacts*' --exclude='__pycache__' \
+		--exclude='*.pyc' --exclude='.venv' --exclude='data/interim' \
+		./ sapelo2:/scratch/aoo29179/rcgnn/
+	@echo "[DONE] Code synced to Sapelo"
+
+sync-from-sapelo: ## Download results from Sapelo (to local)
+	@echo "[INFO] Downloading results from Sapelo..."
+	rsync -avz sapelo2:/scratch/aoo29179/rcgnn/artifacts/ ./artifacts_sapelo/
+	@echo "[DONE] Results downloaded to artifacts_sapelo/"
 
 #=============================================================================
-# Results & Reports
+# Evaluation
 #=============================================================================
 
-results: ## Show summary of all results
-	@echo "════════════════════════════════════════════════════════════════════"
+evaluate: ## Run comprehensive evaluation
+	@echo "[INFO] Running comprehensive evaluation..."
+	@mkdir -p $(ARTIFACTS)
+	$(PYTHON) scripts/comprehensive_evaluation.py \
+		--artifacts-dir $(ARTIFACTS) \
+		--data-dir $(DATA_DIR) \
+		--output $(ARTIFACTS)/evaluation_report.json
+	@echo "[DONE] Evaluation complete"
+
+results: ## Show results summary
+	@echo "================================================================"
 	@echo "  RC-GNN Results Summary"
-	@echo "════════════════════════════════════════════════════════════════════"
-	@echo ""
-	@echo "📊 SYNTHETIC DATA:"
-	@if [ -f $(ARTIFACTS)/validation_synth_advanced/metrics.json ]; then \
-		$(PYTHON) -c "import json; m=json.load(open('$(ARTIFACTS)/validation_synth_advanced/metrics.json')); print(f\"  AUPRC: {m['auprc']:.4f}\n  F1: {m['f1']:.4f}\n  SHD: {m['shd']}\n  Orientation: {m['orientation_acc']:.1%}\")"; \
+	@echo "================================================================"
+	@if [ -f $(ARTIFACTS)/evaluation_report.json ]; then \
+		$(PYTHON) -c "import json; r=json.load(open('$(ARTIFACTS)/evaluation_report.json')); \
+			print('Ground Truth Metrics:'); \
+			[print(f\"  {d['Corruption']}: SHD={d['SHD']}, F1={d['Directed_F1']:.3f}\") \
+			for d in r.get('ground_truth', [])[:6]]" 2>/dev/null || \
+		echo "  Run 'make evaluate' first"; \
 	else \
-		echo "  ❌ No results. Run: make validate-synth-advanced"; \
+		echo "  No results found. Run 'make evaluate' first."; \
 	fi
-	@echo ""
-	@echo "🌍 UCI AIR QUALITY:"
-	@if [ -f $(ARTIFACTS)/validation_air_advanced/metrics.json ]; then \
-		$(PYTHON) -c "import json; m=json.load(open('$(ARTIFACTS)/validation_air_advanced/metrics.json')); print(f\"  AUPRC: {m['auprc']:.4f} (+{m['auprc_vs_chance']*100:.1f}% vs chance)\n  F1: {m['f1']:.4f}\n  Orientation: {m['orientation_acc']:.1%}\n  Bootstrap CI: [{m['auprc_ci_low']:.3f}, {m['auprc_ci_high']:.3f}]\")"; \
-	else \
-		echo "  ❌ No results. Run: make validate-air-advanced"; \
-	fi
-	@echo ""
-
-results-paper: ## Generate LaTeX table for paper
-	@echo "\\begin{table}[htbp]"
-	@echo "\\centering"
-	@echo "\\caption{RC-GNN Performance on UCI Air Quality}"
-	@echo "\\begin{tabular}{lcc}"
-	@echo "\\hline"
-	@echo "Metric & Value & 95\\% CI \\\\"
-	@echo "\\hline"
-	@if [ -f $(ARTIFACTS)/validation_air_advanced/metrics.json ]; then \
-		$(PYTHON) -c "import json; m=json.load(open('$(ARTIFACTS)/validation_air_advanced/metrics.json')); print(f\"AUPRC & {m['auprc']:.4f} & [{m['auprc_ci_low']:.3f}, {m['auprc_ci_high']:.3f}] \\\\\\\\\nF1 & {m['f1']:.4f} & [{m['best_f1_ci_low']:.3f}, {m['best_f1_ci_high']:.3f}] \\\\\\\\\nOrientation Acc & {m['orientation_acc']:.2f} & -- \\\\\\\\\")"; \
-	fi
-	@echo "\\hline"
-	@echo "\\end{tabular}"
-	@echo "\\end{table}"
 
 #=============================================================================
 # Testing
 #=============================================================================
 
 test: ## Run all tests
-	@echo "🧪 Running tests..."
-	pytest -v tests/
-	@echo "✅ Tests passed!"
+	@echo "[INFO] Running tests..."
+	$(PYTHON) -m pytest tests/ -v
+	@echo "[DONE] Tests complete"
 
-test-quick: ## Run smoke tests only
-	@echo "🧪 Running smoke tests..."
-	pytest -v tests/test_synth_smoke.py tests/test_training_step.py
-	@echo "✅ Smoke tests passed!"
+test-quick: ## Run quick smoke tests
+	@echo "[INFO] Running smoke tests..."
+	$(PYTHON) -m pytest tests/test_synth_smoke.py tests/test_training_step.py -v
+
+test-import: ## Test that all modules import correctly
+	@echo "[INFO] Testing imports..."
+	@$(PYTHON) -c "from src.models.rcgnn import RCGNN; print('RCGNN: OK')"
+	@$(PYTHON) -c "from src.models.structure import StructureLearner; print('StructureLearner: OK')"
+	@$(PYTHON) -c "from src.models.encoders import EncoderS; print('Encoders: OK')"
+	@echo "[DONE] All imports successful"
 
 #=============================================================================
 # Cleanup
 #=============================================================================
 
 clean: ## Clean generated files (keep data)
-	@echo "🧹 Cleaning artifacts..."
+	@echo "[INFO] Cleaning artifacts..."
 	rm -rf $(ARTIFACTS)/*
 	rm -rf __pycache__ src/__pycache__ scripts/__pycache__
+	rm -rf src/*/__pycache__ tests/__pycache__
 	rm -rf .pytest_cache
 	find . -type f -name "*.pyc" -delete
-	@echo "✅ Cleanup complete"
+	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	@echo "[DONE] Cleanup complete"
 
-clean-data: ## Clean datasets (WARNING!)
-	@echo "⚠️  WARNING: This will delete ALL datasets!"
-	@read -p "Are you sure? [y/N] " -n 1 -r; \
-	echo; \
-	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
-		rm -rf $(DATA_DIR)/*; \
-		echo "✅ Datasets cleaned"; \
-	fi
+clean-logs: ## Clean log files
+	rm -rf $(LOGS)/*.out $(LOGS)/*.err
 
-clean-all: clean clean-data ## Clean everything
+clean-all: clean clean-logs ## Clean everything except data
+	@echo "[DONE] Full cleanup complete"
 
 #=============================================================================
-# Complete Pipelines
+# Information
 #=============================================================================
 
-all: install data train-all validate-all compare-baselines results ## Complete pipeline
+info: ## Show project information
+	@echo "================================================================"
+	@echo "  RC-GNN Project Information"
+	@echo "================================================================"
 	@echo ""
-	@echo "════════════════════════════════════════════════════════════════════"
-	@echo "  ✅ Complete pipeline finished!"
-	@echo "════════════════════════════════════════════════════════════════════"
-
-pipeline-synth: data-synth-small train-synth validate-synth-advanced ## Synthetic pipeline
-	@echo "✅ Synthetic pipeline complete!"
-
-pipeline-air: data-air train-air validate-air-advanced ## UCI Air pipeline
-	@echo "✅ UCI Air pipeline complete!"
-
-pipeline-paper: pipeline-air compare-baselines results-paper ## Paper results
-	@echo "✅ Paper-ready results generated!"
-
-#=============================================================================
-# Utilities
-#=============================================================================
-
-status: ## Show project status
-	@echo "📊 RC-GNN Project Status:"
+	@echo "Environment: $(ENV)"
+	@echo "Python: $(PYTHON)"
 	@echo ""
-	@echo "Data:"
-	@echo -n "  Synthetic: "; [ -f $(SYNTH_SMALL)/X.npy ] && echo "✅" || echo "❌"
-	@echo -n "  UCI Air: "; [ -f $(UCI_AIR)/X.npy ] && echo "✅" || echo "❌"
+	@echo "Directories:"
+	@echo "  Data:      $(DATA_DIR)"
+	@echo "  Artifacts: $(ARTIFACTS)"
+	@echo "  Configs:   $(CONFIGS)"
 	@echo ""
-	@echo "Models:"
-	@echo -n "  Synthetic trained: "; [ -f $(ADJ_SYNTH) ] && echo "✅" || echo "❌"
-	@echo -n "  UCI Air trained: "; [ -f $(ADJ_AIR) ] && echo "✅" || echo "❌"
-	@echo ""
-	@echo "Validation:"
-	@echo -n "  Synthetic: "; [ -f $(ARTIFACTS)/validation_synth_advanced/metrics.json ] && echo "✅" || echo "❌"
-	@echo -n "  UCI Air: "; [ -f $(ARTIFACTS)/validation_air_advanced/metrics.json ] && echo "✅" || echo "❌"
+	@echo "Datasets available:"
+	@ls -1 $(UCI_AIR_C) 2>/dev/null | head -12 || echo "  None (run 'make data-corrupted')"
 
-version: ## Show version info
-	@echo "RC-GNN Version Information:"
+version: ## Show version information
 	@$(PYTHON) --version
-	@$(PYTHON) -c "import torch; print(f'PyTorch: {torch.__version__}')"
-	@$(PYTHON) -c "import numpy; print(f'NumPy: {numpy.__version__}')"
-
-docs: ## Show documentation
-	@echo "📚 RC-GNN Documentation:"
-	@echo ""
-	@echo "  📋 VALIDATION_INDEX.md            - Complete guide"
-	@echo "  ⚡ VALIDATION_QUICK_REF.md        - Quick reference"
-	@echo "  📊 VALIDATION_ADVANCED_GUIDE.md   - Advanced features"
-	@echo "  📈 VALIDATION_SUMMARY.md          - Results summary"
-	@echo ""
+	@$(PYTHON) -c "import torch; print(f'PyTorch: {torch.__version__}')" 2>/dev/null || echo "PyTorch: not installed"
+	@$(PYTHON) -c "import numpy; print(f'NumPy: {numpy.__version__}')" 2>/dev/null || echo "NumPy: not installed"
