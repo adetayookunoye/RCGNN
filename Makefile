@@ -204,6 +204,10 @@ logs: ## View latest Sapelo job logs
 cancel: ## Cancel all Sapelo jobs
 	@ssh sapelo2 "scancel -u aoo29179" 2>/dev/null || scancel -u $$USER
 
+view-training: ## Live view of training logs on Sapelo (Ctrl+C to exit)
+	@echo "[INFO] Streaming latest training log (Ctrl+C to exit)..."
+	@ssh sapelo2 "tail -f /scratch/aoo29179/rcgnn/logs/\$$(ls -t /scratch/aoo29179/rcgnn/logs/*.out 2>/dev/null | head -1)"
+
 sync-sapelo: ## Sync code to Sapelo (from local)
 	@echo "[INFO] Syncing to Sapelo..."
 	rsync -avz --exclude='.git' --exclude='artifacts*' --exclude='__pycache__' \
