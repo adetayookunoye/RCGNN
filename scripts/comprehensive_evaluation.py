@@ -63,8 +63,13 @@ from src.training.baselines import (
 # ============================================================================
 
 # Default threshold for binarizing adjacency matrices
-# 0.5 is optimal based on calibration (sigmoid decision boundary)
+# Note: We prefer TopK selection over fixed threshold for fair comparison
 DEFAULT_THRESHOLD = 0.5
+
+# TopK mode: if True, use TopK edges; if False, use threshold
+# TopK is fairer because all methods get same number of edges
+USE_TOPK_EVALUATION = True
+DEFAULT_K = 13  # Default K = ground truth edge count for UCI Air
 
 def compute_shd(A_pred, A_true, threshold=None):
     """Structural Hamming Distance (lower is better)."""
@@ -469,13 +474,83 @@ def analyze_ablation_from_history(history_file):
 def select_topk_edges(A, k):
     """Select top-k highest magnitude edges (for fair sparsity matching with baselines)."""
     A_out = np.zeros_like(A)
-    if k <= 0 or np.sum(A > 0) == 0:
+    if k <= 0:
         return A_out
-    flat_indices = np.argsort(np.abs(A.flatten()))[-min(k, np.sum(A > 0)):]
-    for idx in flat_indices:
+    
+    # Flatten and get top-k indices by absolute magnitude
+    A_abs = np.abs(A.copy())
+    np.fill_diagonal(A_abs, 0)  # Never select diagonal
+    flat = A_abs.flatten()
+    
+    # Get indices of top-k values
+    n_nonzero = np.sum(flat > 0)
+    k_actual = min(k, n_nonzero) if n_nonzero > 0 else 0
+    if k_actual <= 0:
+        return A_out
+    
+    top_indices = np.argsort(flat)[-k_actual:]
+    for idx in top_indices:
         i, j = np.unravel_index(idx, A.shape)
-        A_out[i, j] = A[i, j]
+        A_out[i, j] = 1.0  # Binary output for fair comparison
     return A_out
+
+
+def compute_metrics_topk(A_pred, A_true, k=None):
+    """
+    Compute all metrics using TopK selection (fairer than threshold).
+    
+    Args:
+        A_pred: Predicted adjacency matrix (continuous values)
+        A_true: Ground truth adjacency matrix (binary or continuous)
+        k: Number of edges to select. If None, use ground truth edge count.
+    
+    Returns:
+        dict with SHD, Skeleton_F1, Directed_F1, etc.
+    """
+    if k is None:
+        k = int(np.sum(A_true > 0.1))
+    
+    # Select top-k edges from prediction
+    A_pred_bin = select_topk_edges(A_pred, k)
+    A_true_bin = (A_true > 0.1).astype(float)
+    np.fill_diagonal(A_true_bin, 0)
+    
+    # SHD (structural hamming distance)
+    shd = int(np.sum(np.abs(A_pred_bin - A_true_bin)))
+    
+    # Directed F1 (edge direction matters)
+    tp = np.sum((A_pred_bin > 0) & (A_true_bin > 0))
+    fp = np.sum((A_pred_bin > 0) & (A_true_bin == 0))
+    fn = np.sum((A_pred_bin == 0) & (A_true_bin > 0))
+    
+    dir_precision = tp / (tp + fp + 1e-10)
+    dir_recall = tp / (tp + fn + 1e-10)
+    dir_f1 = 2 * dir_precision * dir_recall / (dir_precision + dir_recall + 1e-10)
+    
+    # Skeleton F1 (undirected - edge presence ignoring direction)
+    A_pred_skel = ((A_pred_bin + A_pred_bin.T) > 0).astype(float)
+    A_true_skel = ((A_true_bin + A_true_bin.T) > 0).astype(float)
+    np.fill_diagonal(A_pred_skel, 0)
+    np.fill_diagonal(A_true_skel, 0)
+    
+    tp_skel = np.sum((A_pred_skel > 0) & (A_true_skel > 0))
+    fp_skel = np.sum((A_pred_skel > 0) & (A_true_skel == 0))
+    fn_skel = np.sum((A_pred_skel == 0) & (A_true_skel > 0))
+    
+    skel_precision = tp_skel / (tp_skel + fp_skel + 1e-10)
+    skel_recall = tp_skel / (tp_skel + fn_skel + 1e-10)
+    skel_f1 = 2 * skel_precision * skel_recall / (skel_precision + skel_recall + 1e-10)
+    
+    return {
+        'SHD': shd,
+        'Directed_F1': float(dir_f1),
+        'Directed_Precision': float(dir_precision),
+        'Directed_Recall': float(dir_recall),
+        'Skeleton_F1': float(skel_f1),
+        'Skeleton_Precision': float(skel_precision),
+        'Skeleton_Recall': float(skel_recall),
+        'Edges': int(np.sum(A_pred_bin > 0))
+    }
 
 def compute_sensitivity_curve(A_rc_gnn, A_true, k_range=None):
     """
@@ -873,14 +948,16 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
         A_true = artifact_data['A_true']
         X = artifact_data.get('X')
         
-        # Compute metrics using calibrated threshold (DEFAULT_THRESHOLD=0.5)
-        shd = compute_shd(A_rc_gnn, A_true)
-        skel_f1, skel_p, skel_r = compute_skeleton_f1(A_rc_gnn, A_true)
-        dir_f1, dir_p, dir_r = compute_directed_f1(A_rc_gnn, A_true)
-        
-        # Count edges using same threshold
-        rcgnn_edges = int(np.sum(A_rc_gnn > DEFAULT_THRESHOLD))
+        # Get ground truth edge count for TopK selection
         true_edges = int(np.sum(A_true > 0.1))
+        
+        # Compute metrics using TopK selection (same K as training)
+        # This is fairer than fixed threshold since all methods get same edge budget
+        metrics = compute_metrics_topk(A_rc_gnn, A_true, k=true_edges)
+        shd = metrics['SHD']
+        skel_f1, skel_p, skel_r = metrics['Skeleton_F1'], metrics['Skeleton_Precision'], metrics['Skeleton_Recall']
+        dir_f1, dir_p, dir_r = metrics['Directed_F1'], metrics['Directed_Precision'], metrics['Directed_Recall']
+        rcgnn_edges = metrics['Edges']
         
         result_row = {
             'Corruption': corruption,
@@ -1042,9 +1119,9 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
         k_edges = optimal_k if optimal_k is not None else int(A_true.sum())
         A_rc_gnn_sparse = select_topk_edges(A_rc_gnn, k_edges)
         
-        # All 7 baselines for fair comparison (now with RC-GNN at equal sparsity)
+        # All 7 baselines for fair comparison - ALL sparsified to same K edges
         methods = {
-            'RC-GNN (sparse)': A_rc_gnn_sparse,
+            'RC-GNN': A_rc_gnn,  # Original dense matrix
             'Correlation': compute_correlation_adjacency(X),
             'NOTears-Lite': notears_lite(X),
             'NOTEARS': notears_linear(X),
@@ -1055,11 +1132,13 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
         
         for method, A_pred in methods.items():
             try:
-                # Use appropriate threshold: 0.5 for RC-GNN (sigmoid output), 0.1 for baselines
-                thresh = DEFAULT_THRESHOLD if 'RC-GNN' in method else 0.1
-                shd = compute_shd(A_pred, A_true, threshold=thresh)
-                skel_f1, skel_p, skel_r = compute_skeleton_f1(A_pred, A_true, threshold=thresh)
-                dir_f1, dir_p, dir_r = compute_directed_f1(A_pred, A_true, threshold=thresh)
+                # FAIR COMPARISON: Use TopK for ALL methods with same K
+                # This ensures all methods produce exactly k_edges edges
+                metrics = compute_metrics_topk(A_pred, A_true, k=k_edges)
+                shd = metrics['SHD']
+                skel_f1, skel_p, skel_r = metrics['Skeleton_F1'], metrics['Skeleton_Precision'], metrics['Skeleton_Recall']
+                dir_f1, dir_p, dir_r = metrics['Directed_F1'], metrics['Directed_Precision'], metrics['Directed_Recall']
+                n_edges = metrics['Edges']
                 
                 baseline_comparison.append({
                     'Corruption': corruption,
@@ -1071,7 +1150,8 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
                     'Directed_F1': dir_f1,
                     'Directed_Precision': dir_p,
                     'Directed_Recall': dir_r,
-                    'Edges': int(np.sum(A_pred > thresh))
+                    'Edges': n_edges,
+                    'K_used': k_edges
                 })
                 
                 print(f"{method:20s} | SHD={shd:3d} | Skel-F1={skel_f1:.3f} | Dir-F1={dir_f1:.3f} | Prec={dir_p:.3f} | Rec={dir_r:.3f}")
