@@ -23,7 +23,7 @@ def extract_edges_directed_method(A_pred_np, A_true_np, n_true_edges):
     A_flat = A_pred_np.flatten()
     flat_mask = np.ones(len(A_flat), dtype=bool)
     for i in range(d):
-        flat_mask[i * d + i] = False  # mask diagonal
+        flat_mask[i * d + i] = False # mask diagonal
     
     # Get indices of top K in the FLAT directed space
     flat_valid = np.where(flat_mask)[0]
@@ -110,33 +110,33 @@ def test_case_1():
     overlaps = compute_overlaps(edges)
     
     print(f"\n[PRED]")
-    print(f"  Directed:   {sorted(edges['pred_edges_directed'])}")
-    print(f"  Undirected: {sorted(edges['pred_edges_undirected'])}")
+    print(f" Directed: {sorted(edges['pred_edges_directed'])}")
+    print(f" Undirected: {sorted(edges['pred_edges_undirected'])}")
     
     print(f"\n[TRUE]")
-    print(f"  Directed:   {sorted(edges['true_edges_directed'])}")
-    print(f"  Undirected: {sorted(edges['true_edges_undirected'])}")
+    print(f" Directed: {sorted(edges['true_edges_directed'])}")
+    print(f" Undirected: {sorted(edges['true_edges_undirected'])}")
     
     print(f"\n[INTERSECTION]")
-    print(f"  Directed:   {sorted(overlaps['inter_dir'])}")
-    print(f"  Undirected: {sorted(overlaps['inter_un'])}")
+    print(f" Directed: {sorted(overlaps['inter_dir'])}")
+    print(f" Undirected: {sorted(overlaps['inter_un'])}")
     
     print(f"\n[OVERLAP RESULTS]")
-    print(f"  DIR:   {overlaps['dir_overlap']:.4f}")
-    print(f"  UNDIR: {overlaps['undir_overlap']:.4f}")
+    print(f" DIR: {overlaps['dir_overlap']:.4f}")
+    print(f" UNDIR: {overlaps['undir_overlap']:.4f}")
     
     print(f"\n[ANALYSIS]")
     if overlaps['dir_overlap'] == 0.0 and overlaps['undir_overlap'] == 1.0:
-        print("  ❌ REPRODUCED THE BUG: DIR=0.0 + UNDIR=1.0")
-        print("  This should be IMPOSSIBLE if both use the same node indices!")
-        print("\n  Possible causes:")
-        print("  1. Pred edges are in one node ordering, true in another")
-        print("  2. There's a permutation being applied inconsistently")
-        print("  3. Undirected overlap calculation has a bug (not actually matching)")
+        print(" [FAIL] REPRODUCED THE BUG: DIR=0.0 + UNDIR=1.0")
+        print(" This should be IMPOSSIBLE if both use the same node indices!")
+        print("\n Possible causes:")
+        print(" 1. Pred edges are in one node ordering, true in another")
+        print(" 2. There's a permutation being applied inconsistently")
+        print(" 3. Undirected overlap calculation has a bug (not actually matching)")
     else:
-        print(f"  ✓ No bug reproduced. Results are sensible.")
-        print(f"    DIR overlap makes sense (no directed matches)")
-        print(f"    UNDIR overlap = {overlaps['undir_overlap']:.4f} (reasonable)")
+        print(f" [OK] No bug reproduced. Results are sensible.")
+        print(f" DIR overlap makes sense (no directed matches)")
+        print(f" UNDIR overlap = {overlaps['undir_overlap']:.4f} (reasonable)")
 
 
 def test_case_2_with_permutation():
@@ -163,8 +163,8 @@ def test_case_2_with_permutation():
     
     # Map true edges to permuted space
     true_edges_permuted = [(perm[i], perm[j]) for (i, j) in true_edges_orig]
-    print(f"\nTrue edges (original):  {sorted(true_edges_orig)}")
-    print(f"True edges (permuted):  {sorted(true_edges_permuted)}")
+    print(f"\nTrue edges (original): {sorted(true_edges_orig)}")
+    print(f"True edges (permuted): {sorted(true_edges_permuted)}")
     
     # Now check: if we compare pred in original space vs true in permuted space
     pred_edges = [(11, 10), (6, 5), (7, 5)]
@@ -175,11 +175,11 @@ def test_case_2_with_permutation():
     inter_un = pred_undirected & true_undirected_perm
     
     print(f"\n[MISMATCH SCENARIO]")
-    print(f"  Pred (original space):     {sorted(pred_undirected)}")
-    print(f"  True (permuted space):     {sorted(true_undirected_perm)}")
-    print(f"  Intersection:              {sorted(inter_un)}")
-    print(f"  Undirected overlap:        {len(inter_un) / max(len(true_undirected_perm), 1):.4f}")
-    print(f"  -> Could explain 0 overlap if permutation scrambles indices!")
+    print(f" Pred (original space): {sorted(pred_undirected)}")
+    print(f" True (permuted space): {sorted(true_undirected_perm)}")
+    print(f" Intersection: {sorted(inter_un)}")
+    print(f" Undirected overlap: {len(inter_un) / max(len(true_undirected_perm), 1):.4f}")
+    print(f" -> Could explain 0 overlap if permutation scrambles indices!")
 
 
 if __name__ == "__main__":

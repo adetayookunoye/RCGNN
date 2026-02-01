@@ -75,7 +75,7 @@ BENCHMARKS = {
         "description": "H1 - Hard: High missingness (40-60%), all corruption types, MLP",
         "graph_type": "sf",
         "d": 20,
-        "edges": None,  # Will use scale-free
+        "edges": None, # Will use scale-free
         "mechanism": "mlp",
         "n_envs": 5,
         "samples_per_env": 700,
@@ -133,7 +133,7 @@ BENCHMARKS = {
         "n_envs": 4,
         "samples_per_env": 600,
         "T_per_sample": 50,
-        "policy_edges": [(2, 5), (2, 8), (5, 12), (8, 12), (12, 20)],  # PM2.5-related pathways
+        "policy_edges": [(2, 5), (2, 8), (5, 12), (8, 12), (12, 20)], # PM2.5-related pathways
         "corruption_configs": [
             {"missing_type": "mcar", "missing_rate": 0.15, "noise_scale": 0.2, "drift_magnitude": 0.05},
             {"missing_type": "mar", "missing_rate": 0.25, "noise_scale": 0.3, "drift_magnitude": 0.1},
@@ -330,9 +330,9 @@ def generate_multi_env_benchmark(config, output_dir, seed=42):
     """Generate multi-environment benchmark dataset."""
     os.makedirs(output_dir, exist_ok=True)
     
-    print(f"\n📊 Generating benchmark: {config['description']}")
-    print(f"   Graph type: {config['graph_type']}, d={config['d']}")
-    print(f"   Environments: {config['n_envs']}, Mechanism: {config['mechanism']}")
+    print(f"\n Generating benchmark: {config['description']}")
+    print(f" Graph type: {config['graph_type']}, d={config['d']}")
+    print(f" Environments: {config['n_envs']}, Mechanism: {config['mechanism']}")
     
     # Generate graph
     if config['graph_type'] == 'er':
@@ -340,14 +340,14 @@ def generate_multi_env_benchmark(config, output_dir, seed=42):
     else:
         A_true = generate_scale_free_dag(config['d'], attachment=2, seed=seed)
     
-    print(f"✅ Generated DAG with {int(A_true.sum())} edges")
+    print(f"[DONE] Generated DAG with {int(A_true.sum())} edges")
     
     # Generate data per environment
     X_all, M_all, S_all, e_all = [], [], [], []
     
     for env_idx in range(config['n_envs']):
         corruption_config = config['corruption_configs'][env_idx]
-        print(f"\n   Env {env_idx+1}/{config['n_envs']}: {corruption_config['missing_type'].upper()} "
+        print(f"\n Env {env_idx+1}/{config['n_envs']}: {corruption_config['missing_type'].upper()} "
               f"({corruption_config['missing_rate']*100:.0f}%), "
               f"noise={corruption_config['noise_scale']:.2f}, "
               f"drift={corruption_config['drift_magnitude']:.2f}")
@@ -366,7 +366,7 @@ def generate_multi_env_benchmark(config, output_dir, seed=42):
             elif corruption_config['missing_type'] == 'mar':
                 M = apply_mar(S, corruption_config['missing_rate'],
                             seed=seed + env_idx*1000 + sample_idx + 10000)
-            else:  # mnar
+            else: # mnar
                 M = apply_mnar(S, corruption_config['missing_rate'],
                              seed=seed + env_idx*1000 + sample_idx + 10000)
             
@@ -388,7 +388,7 @@ def generate_multi_env_benchmark(config, output_dir, seed=42):
     S_all = np.stack(S_all, axis=0)
     e_all = np.array(e_all, dtype=np.int32)
     
-    print(f"\n✅ Generated {X_all.shape[0]} samples: shape {X_all.shape}")
+    print(f"\n[DONE] Generated {X_all.shape[0]} samples: shape {X_all.shape}")
     
     # Train/val split
     n_total = X_all.shape[0]
@@ -431,11 +431,11 @@ def generate_multi_env_benchmark(config, output_dir, seed=42):
     with open(os.path.join(output_dir, "meta.json"), "w") as f:
         json.dump(metadata, f, indent=2)
     
-    print(f"\n✅ Benchmark saved to: {output_dir}")
-    print(f"   Train: {X_train.shape[0]} samples ({X_train.shape})")
-    print(f"   Val: {X_val.shape[0]} samples ({X_val.shape})")
+    print(f"\n[DONE] Benchmark saved to: {output_dir}")
+    print(f" Train: {X_train.shape[0]} samples ({X_train.shape})")
+    print(f" Val: {X_val.shape[0]} samples ({X_val.shape})")
     if "policy_edges" in config:
-        print(f"   Policy edges (H3): {config['policy_edges']}")
+        print(f" Policy edges (H3): {config['policy_edges']}")
 
 
 # ============================================================================
@@ -468,15 +468,15 @@ def main():
     args = parser.parse_args()
     
     if args.list:
-        print("\n📊 Available Benchmarks:\n")
+        print("\n Available Benchmarks:\n")
         for name, config in BENCHMARKS.items():
-            print(f"  {name:20s} - {config['description']}")
+            print(f" {name:20s} - {config['description']}")
         return
     
     # Get benchmark config
     if args.benchmark not in BENCHMARKS:
-        print(f"❌ Unknown benchmark: {args.benchmark}")
-        print(f"   Available: {', '.join(BENCHMARKS.keys())}")
+        print(f"[FAIL] Unknown benchmark: {args.benchmark}")
+        print(f" Available: {', '.join(BENCHMARKS.keys())}")
         return
     
     config = BENCHMARKS[args.benchmark].copy()
@@ -492,8 +492,8 @@ def main():
     generate_multi_env_benchmark(config, output_dir, seed=args.seed)
     
     print("\n" + "="*70)
-    print(f"✅ Benchmark ready for training!")
-    print(f"   Next: python scripts/train_rcgnn.py configs/train.yaml --data_root {output_dir}")
+    print(f"[DONE] Benchmark ready for training!")
+    print(f" Next: python scripts/train_rcgnn.py configs/train.yaml --data_root {output_dir}")
     print("="*70 + "\n")
 
 

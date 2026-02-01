@@ -4,17 +4,17 @@ Purpose: brief, actionable guidance so an AI agent can safely edit, extend, and 
 
 Key concepts
 - This repo implements RC-GNN: a graph-structure learner + tri-latent encoders (signal/noise/bias). Main model sits in `src/models/rcgnn.py` and composes:
-  - `src/models/encoders.py` — encoders for signal/noise/bias and batched imputer with uncertainty
-  - `src/models/structure.py` — `StructureLearner` with environment-specific adjacency deltas, temperature annealing, and differentiable sparsification
-  - `src/models/mechanisms.py`, `recon.py`, `losses.py` — mechanisms, reconstruction with uncertainty, and disentanglement losses
-  - `src/models/missingness.py` — MNAR missingness modeling
-  - `src/models/disentanglement.py` — improved latent space disentanglement via MINE/InfoNCE
+ - `src/models/encoders.py` — encoders for signal/noise/bias and batched imputer with uncertainty
+ - `src/models/structure.py` — `StructureLearner` with environment-specific adjacency deltas, temperature annealing, and differentiable sparsification
+ - `src/models/mechanisms.py`, `recon.py`, `losses.py` — mechanisms, reconstruction with uncertainty, and disentanglement losses
+ - `src/models/missingness.py` — MNAR missingness modeling
+ - `src/models/disentanglement.py` — improved latent space disentanglement via MINE/InfoNCE
 - Data pipeline: synthetic datasets live under `data/interim/synth_small/` and are loaded by `src/dataio/loaders.py` via `load_synth(root, split, seed)` which returns a PyTorch Dataset producing dicts: {"X","M","e","S"}.
 - Training/eval scripts:
-  - `scripts/synth_bench.py` — generates tiny synthetic benchmarks (see README quickstart)
-  - `scripts/train_rcgnn.py` — orchestrates training loop (DataLoader -> model -> optimizer -> save best checkpoint to `artifacts/checkpoints/rcgnn_best.pt` and adjacency to `artifacts/adjacency/A_mean.npy`)
-  - `scripts/eval_rcgnn.py` — loads `A_mean.npy` and plots adjacency
-  - `scripts/run_baselines.py` — simple baseline runner (e.g. `notears_lite`) that loads `X.npy` and `A_true.npy` from dataset root
+ - `scripts/synth_bench.py` — generates tiny synthetic benchmarks (see README quickstart)
+ - `scripts/train_rcgnn.py` — orchestrates training loop (DataLoader -> model -> optimizer -> save best checkpoint to `artifacts/checkpoints/rcgnn_best.pt` and adjacency to `artifacts/adjacency/A_mean.npy`)
+ - `scripts/eval_rcgnn.py` — loads `A_mean.npy` and plots adjacency
+ - `scripts/run_baselines.py` — simple baseline runner (e.g. `notears_lite`) that loads `X.npy` and `A_true.npy` from dataset root
 
 Developer workflows & commands
 - Quickstart (CPU): `pip install -r requirements.txt` then follow README.

@@ -55,13 +55,13 @@ class MaskingAwareAttention(nn.Module):
         # Build relative differences and index into the stored antisymmetric table.
         device = self.rel_pos_embed.device
         positions = torch.arange(T, device=device)
-        rel_pos = positions.unsqueeze(1) - positions.unsqueeze(0)  # [T,T]
+        rel_pos = positions.unsqueeze(1) - positions.unsqueeze(0) # [T,T]
         # shift by center to map negative offsets
         rel_pos_idx = rel_pos + (self.max_len - 1)
         bias = self.rel_pos_embed[rel_pos_idx]
         # Enforce antisymmetry numerically to satisfy tests
         bias = 0.5 * (bias - bias.permute(1, 0, 2))
-        return bias  # [T,T,H]
+        return bias # [T,T,H]
         
     def forward(self, x, mask=None):
         """
@@ -86,21 +86,21 @@ class MaskingAwareAttention(nn.Module):
         scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
         
         # Add relative position bias
-        rel_pos = self.get_rel_pos_bias(T)  # [T,T,H]
-        rel_pos = rel_pos.permute(2, 0, 1)  # [H,T,T]
-        scores = scores + rel_pos.unsqueeze(0)  # [1,H,T,T]
+        rel_pos = self.get_rel_pos_bias(T) # [T,T,H]
+        rel_pos = rel_pos.permute(2, 0, 1) # [H,T,T]
+        scores = scores + rel_pos.unsqueeze(0) # [1,H,T,T]
         
             # Handle missing values in attention
         if mask is not None:
-            mask = mask.to(torch.bool).unsqueeze(1).unsqueeze(2)  # [B,1,1,T]
+            mask = mask.to(torch.bool).unsqueeze(1).unsqueeze(2) # [B,1,1,T]
             scores = scores.masked_fill(~mask, float('-inf'))
             # Add learned bias term for missing tokens
-            scores = torch.where(~mask, scores + self.missing_bias, scores)        # Apply softmax and dropout
+            scores = torch.where(~mask, scores + self.missing_bias, scores) # Apply softmax and dropout
         attn = F.softmax(scores, dim=-1)
         attn = self.dropout(attn)
         
         # Compute attended values
-        out = torch.matmul(attn, V)  # [B,h,T,d_k]
+        out = torch.matmul(attn, V) # [B,h,T,d_k]
         out = out.transpose(1, 2).contiguous().view(B, T, -1)
         
         return self.W_o(out)
@@ -123,7 +123,7 @@ class TransformerImputer(nn.Module):
         
         # Input embedding with uncertainty scaling
         self.embed = nn.Sequential(
-            nn.Linear(2*d_in, d_model),  # 2*d_in for concat with uncertainty
+            nn.Linear(2*d_in, d_model), # 2*d_in for concat with uncertainty
             nn.ReLU(),
             nn.Linear(d_model, d_model)
         )
@@ -152,7 +152,7 @@ class TransformerImputer(nn.Module):
             nn.Sequential(
                 nn.Conv1d(d_model, d_model, 3, padding=2**i, dilation=2**i),
                 nn.Dropout(dropout)
-            ) for i in range(3)  # Dilation rates: 1,2,4
+            ) for i in range(3) # Dilation rates: 1,2,4
         ])
         
         # Output heads with uncertainty
@@ -168,7 +168,7 @@ class TransformerImputer(nn.Module):
             nn.Linear(d_model, d_model),
             nn.ReLU(),
             nn.Linear(d_model, d_in),
-            nn.Softplus()  # Ensure positive uncertainty
+            nn.Softplus() # Ensure positive uncertainty
         )
         
         # Keep dropout layers for inference uncertainty estimation
@@ -186,12 +186,12 @@ class TransformerImputer(nn.Module):
         # Handle masks which may be per-feature [B,T,d] or per-timestep [B,T]
         if M_bool.dim() == 3:
             # Reduce per-feature mask to per-timestep observed flag
-            mask_ts = M_bool.any(dim=-1)  # [B,T]
+            mask_ts = M_bool.any(dim=-1) # [B,T]
         else:
             mask_ts = M_bool
         
         # Replace missing tokens (per-timestep)
-        mask_tok = mask_ts.unsqueeze(-1)  # [B,T,1]
+        mask_tok = mask_ts.unsqueeze(-1) # [B,T,1]
         h = torch.where(mask_tok, h, self.missing_embed.expand_as(h))
         
         # Transformer layers with dropout
@@ -205,7 +205,7 @@ class TransformerImputer(nn.Module):
             h = layer['norm2'](h + self.dropout(ff))
             
         # Local refinement with dropout
-        h_local = h.transpose(1, 2)  # [B,d_model,T]
+        h_local = h.transpose(1, 2) # [B,d_model,T]
         for conv in self.local_conv:
             h_local = h_local + conv(h_local)
         h = h + h_local.transpose(1, 2)
@@ -236,8 +236,8 @@ class TransformerImputer(nn.Module):
         
         # Initial uncertainty based on missing values
         input_uncert = torch.where(M_bool,
-                                 torch.zeros_like(X),  # Observed values
-                                 torch.ones_like(X))   # Missing values
+                                 torch.zeros_like(X), # Observed values
+                                 torch.ones_like(X)) # Missing values
         
         if self.training:
             # Single pass during training. Fix RNG to make forward deterministic
@@ -252,7 +252,7 @@ class TransformerImputer(nn.Module):
             aleatoric_uncerts = []
             rng_state = torch.get_rng_state()
             for i in range(self.n_samples):
-                torch.manual_seed(i)  # different but deterministic seeds per sample
+                torch.manual_seed(i) # different but deterministic seeds per sample
                 mean, aleatoric_uncert = self._forward_with_dropout(X, M_bool, input_uncert)
                 means.append(mean)
                 aleatoric_uncerts.append(aleatoric_uncert)
@@ -265,14 +265,14 @@ class TransformerImputer(nn.Module):
             # Estimate uncertainties
             mean = means.mean(dim=0)
             aleatoric_uncert = aleatoric_uncerts.mean(dim=0)
-            epistemic_uncert = means.var(dim=0)  # Model uncertainty from dropout variation
+            epistemic_uncert = means.var(dim=0) # Model uncertainty from dropout variation
         
         # Total predictive standard deviation from combined variance components
         total_var = aleatoric_uncert + epistemic_uncert
         sigma = torch.sqrt(total_var.clamp_min(1e-6))
         
         # Scale uncertainty higher for missing values
-        missing_scale = (~M_bool).float() * 0.5 + 1.0  # 1.5x for missing, 1.0x for observed
+        missing_scale = (~M_bool).float() * 0.5 + 1.0 # 1.5x for missing, 1.0x for observed
         sigma = sigma * missing_scale * self.uncert_scale
 
         # Calibrate uncertainties: shrink observed variance and align missing values

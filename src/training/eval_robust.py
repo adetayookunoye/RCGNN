@@ -8,12 +8,12 @@ from sklearn.metrics import precision_recall_fscore_support, roc_auc_score
 
 
 def evaluate_adj(
-    A_pred,             # float scores or logits in [N,N]
-    A_true,             # binary ground truth in [N,N]
-    threshold=None,     # if None -> tune by F1 on val grid
-    directed=True,      # evaluate direction; if False -> skeleton only
-    mask=None,          # boolean [N,N] of valid edge positions
-    tune_grid=None,     # thresholds to search for best F1
+    A_pred, # float scores or logits in [N,N]
+    A_true, # binary ground truth in [N,N]
+    threshold=None, # if None -> tune by F1 on val grid
+    directed=True, # evaluate direction; if False -> skeleton only
+    mask=None, # boolean [N,N] of valid edge positions
+    tune_grid=None, # thresholds to search for best F1
 ):
     """
     Evaluate predicted adjacency against ground truth with proper SHD computation.
@@ -42,7 +42,7 @@ def evaluate_adj(
     # ----- 1) Build a clean mask: no self-loops; (optionally) only one triangle for skeleton -----
     if mask is None:
         mask = np.ones((N, N), dtype=bool)
-    mask &= ~np.eye(N, dtype=bool)  # drop diagonal
+    mask &= ~np.eye(N, dtype=bool) # drop diagonal
 
     # If evaluating undirected structure quality (skeleton), only keep upper triangle to avoid double counting
     if not directed:
@@ -93,7 +93,7 @@ def evaluate_adj(
     # Skeleton SHD: treat edges as undirected (orientation ignored)
     Sk_true = ((A_true_m + A_true_m.T) > 0).astype(np.int32)
     Sk_pred = ((A_pred_m + A_pred_m.T) > 0).astype(np.int32)
-    shd_skeleton = np.sum(np.abs(Sk_true - Sk_pred)) // 2  # each undirected edge counted once
+    shd_skeleton = np.sum(np.abs(Sk_true - Sk_pred)) // 2 # each undirected edge counted once
 
     # Orientation error: count where skeletons agree but directions differ
     # For each unordered pair (i<j) with an edge in both skeletons, add 1 if directions disagree
@@ -177,10 +177,10 @@ def compute_metrics_robust(A_pred, A_true, threshold=0.5, verbose=False):
         # Use evaluate_adj with fixed threshold
         result = evaluate_adj(A_pred, A_true, threshold=threshold, directed=True)
         result["error_msg"] = None
-        result["edge_count"] = result["edges_pred"]  # Backward compat
+        result["edge_count"] = result["edges_pred"] # Backward compat
         
         if verbose:
-            print(f"   ✓ Edges predicted: {result['edges_pred']}/{result['edges_true']} | "
+            print(f" [OK] Edges predicted: {result['edges_pred']}/{result['edges_true']} | "
                   f"F1: {result['f1']:.4f} | SHD: {result['shd']:.0f}")
         
         return result

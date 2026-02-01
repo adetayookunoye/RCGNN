@@ -45,7 +45,7 @@ def adjacency_variance(A_dict_by_env):
     for i in range(len(A_list)):
         for j in range(i+1, len(A_list)):
             diff = A_list[i] - A_list[j]
-            frob_dist = np.sqrt(np.sum(diff ** 2))  # Frobenius norm
+            frob_dist = np.sqrt(np.sum(diff ** 2)) # Frobenius norm
             distances.append(frob_dist)
     
     if not distances:
@@ -70,7 +70,7 @@ def edge_set_jaccard(A_dict_by_env, threshold=0.5):
         float: Mean Jaccard similarity across all environment pairs
     """
     if not A_dict_by_env or len(A_dict_by_env) < 2:
-        return 1.0  # Perfect similarity if only one environment
+        return 1.0 # Perfect similarity if only one environment
     
     env_ids = sorted(A_dict_by_env.keys())
     A_list = [A_dict_by_env[eid].astype(float) for eid in env_ids]
@@ -106,14 +106,14 @@ def policy_consistency(A_dict_by_env, policy_edges, threshold=0.5):
     Args:
         A_dict_by_env: Dict mapping env_id -> adjacency matrix A [d, d]
         policy_edges: List of tuples [(i, j), ...] representing policy-relevant edges
-                     (e.g., [(0, 1), (2, 3)] = edges 0→1 and 2→3)
+                     (e.g., [(0, 1), (2, 3)] = edges 0->1 and 2->3)
         threshold: Threshold for detecting edge presence (default 0.5)
         
     Returns:
         dict: {
-            'consistency': float in [0, 1],  # How consistently edges appear
-            'presence': float in [0, 1],     # How many policy edges detected
-            'variance': float,                # Cross-env variance in presence
+            'consistency': float in [0, 1], # How consistently edges appear
+            'presence': float in [0, 1], # How many policy edges detected
+            'variance': float, # Cross-env variance in presence
         }
     """
     if not A_dict_by_env or not policy_edges:
@@ -160,7 +160,7 @@ def policy_consistency(A_dict_by_env, policy_edges, threshold=0.5):
     variance_presence = float(np.var(results_per_env))
     
     # Consistency score: 1 - normalized_variance
-    max_variance = 0.25  # Max possible variance for binary variable
+    max_variance = 0.25 # Max possible variance for binary variable
     consistency_score = max(0.0, 1.0 - (variance_presence / max_variance))
     
     return {

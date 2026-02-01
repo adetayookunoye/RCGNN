@@ -90,9 +90,9 @@ class LowRankGNN(nn.Module):
         
         # Normalization and dropout
         if out.dim() == 3:
-            out = out.transpose(1, 2)  # [B,d,N]
+            out = out.transpose(1, 2) # [B,d,N]
             out = self.norm(out)
-            out = out.transpose(1, 2)  # [B,N,d]
+            out = out.transpose(1, 2) # [B,N,d]
         else:
             out = self.norm(out)
         out = self.dropout(out)

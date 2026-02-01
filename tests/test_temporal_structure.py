@@ -19,7 +19,7 @@ def test_temporal_shapes():
     
     # Test batched input
     B = 4
-    ZS = torch.randn(B, d, d)  # [B,d,h]
+    ZS = torch.randn(B, d, d) # [B,d,h]
     A_all, logits_all = learner(ZS)
     
     assert len(A_all) == n_lags
@@ -29,7 +29,7 @@ def test_temporal_shapes():
         assert logits.shape == (B, d, d)
         
     # Test unbatched
-    ZS_single = ZS[0]  # [d,h]
+    ZS_single = ZS[0] # [d,h]
     A_all, logits_all = learner(ZS_single)
     
     for A, logits in zip(A_all, logits_all):
@@ -75,7 +75,7 @@ def test_acyclicity():
     # Create cyclic structure
     A_cyclic = []
     for _ in range(n_lags):
-        A = torch.rand(d, d)  # Dense = likely cyclic
+        A = torch.rand(d, d) # Dense = likely cyclic
         A_cyclic.append(A)
     
     pen_cyclic, _ = learner.acyclicity(A_cyclic)

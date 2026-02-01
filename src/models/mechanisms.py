@@ -13,9 +13,9 @@ class Mechanisms(nn.Module):
         T, d = ZS_time.shape
         out = []
         for t in range(T):
-            agg = torch.matmul(ZS_time[t], A)  # [d]
+            agg = torch.matmul(ZS_time[t], A) # [d]
             # apply node_mlp per node
-            agg_in = agg.unsqueeze(-1)  # [d,1]
-            node_out = self.node_mlp(agg_in).squeeze(-1)  # [d]
+            agg_in = agg.unsqueeze(-1) # [d,1]
+            node_out = self.node_mlp(agg_in).squeeze(-1) # [d]
             out.append(node_out)
-        return torch.stack(out, dim=0)  # [T,d]
+        return torch.stack(out, dim=0) # [T,d]

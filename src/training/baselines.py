@@ -8,7 +8,7 @@ warnings.filterwarnings('ignore')
 
 def notears_lite(Xw):
     """Simple correlation-threshold baseline (undirected structure learning)."""
-    X = Xw.mean(axis=1)  # average over time
+    X = Xw.mean(axis=1) # average over time
     d = X.shape[1]
     C = np.corrcoef(X, rowvar=False)
     A = np.abs(C) - np.eye(d)
@@ -41,19 +41,19 @@ def notears_linear(Xw, lambda1=0.1, lambda2=5.0, max_iter=100, tol=1e-5):
         X = Xw.copy()
     
     N, d = X.shape
-    X = X - X.mean(axis=0)  # Center
-    X = X / np.std(X, axis=0, keepdims=True)  # Normalize
+    X = X - X.mean(axis=0) # Center
+    X = X / np.std(X, axis=0, keepdims=True) # Normalize
     
     def _h(A):
         """Acyclicity constraint: tr(exp(A⊙A)) - d"""
-        M = A * A  # Element-wise square
+        M = A * A # Element-wise square
         E = expm(M)
         return np.trace(E) - d
     
     def _loss(w):
         """Loss = MSE + L1 + Lagrangian penalty"""
         A = w.reshape(d, d)
-        np.fill_diagonal(A, 0)  # Enforce no self-loops
+        np.fill_diagonal(A, 0) # Enforce no self-loops
         
         # Reconstruction error
         X_pred = X @ A
@@ -86,7 +86,7 @@ def notears_linear(Xw, lambda1=0.1, lambda2=5.0, max_iter=100, tol=1e-5):
     # Threshold small values
     A = (np.abs(A) > 0.05).astype(float) * A
     
-    return np.abs(A)  # Return magnitude
+    return np.abs(A) # Return magnitude
 
 
 def granger_causality(Xw, max_lag=2, significance=0.05):
@@ -102,14 +102,14 @@ def granger_causality(Xw, max_lag=2, significance=0.05):
         significance: Significance level for F-test
     
     Returns:
-        A: [d,d] directed adjacency matrix (A[i,j]=1 if i→j)
+        A: [d,d] directed adjacency matrix (A[i,j]=1 if i->j)
     """
     N, T, d = Xw.shape
     
     A = np.zeros((d, d))
     
-    for j in range(d):  # Target variable
-        for i in range(d):  # Source variable
+    for j in range(d): # Target variable
+        for i in range(d): # Source variable
             if i == j:
                 continue
             
@@ -118,8 +118,8 @@ def granger_causality(Xw, max_lag=2, significance=0.05):
             for lag in range(1, max_lag + 1):
                 for n in range(N):
                     if lag < T:
-                        X_i_lag = Xw[n, :-lag, i]  # X_i at t-lag
-                        X_j = Xw[n, lag:, j]        # X_j at t
+                        X_i_lag = Xw[n, :-lag, i] # X_i at t-lag
+                        X_j = Xw[n, lag:, j] # X_j at t
                         
                         if len(X_i_lag) == len(X_j) and len(X_i_lag) > 1:
                             # Normalize
@@ -161,8 +161,8 @@ def pcmci_plus(Xw, significance=0.05, max_lag=2):
     A = np.zeros((d, d))
     
     # Phase 1: Find time-lagged causal edges
-    for j in range(d):  # Target
-        for i in range(d):  # Source
+    for j in range(d): # Target
+        for i in range(d): # Source
             if i == j:
                 continue
             
@@ -173,7 +173,7 @@ def pcmci_plus(Xw, significance=0.05, max_lag=2):
                     corr = np.corrcoef(X[:-lag, i], X[lag:, j])[0, 1]
                     max_corr = max(max_corr, abs(corr))
             
-            if max_corr > 0.3:  # Threshold
+            if max_corr > 0.3: # Threshold
                 A[i, j] = max_corr
     
     # Phase 2: Prune weak edges (remove if explained by other edges)
@@ -228,13 +228,13 @@ def dag_gnn_simple(Xw, hidden_dim=64, num_layers=2):
             H_new[i] = H.mean(axis=0) + H[i]
         
         # Non-linearity
-        H = np.maximum(H_new, 0)  # ReLU
+        H = np.maximum(H_new, 0) # ReLU
         
         # Normalize
         H = H / (np.linalg.norm(H, axis=1, keepdims=True) + 1e-8)
     
     # Predict adjacency via dot product
-    A_scores = H @ H.T  # [d, d]
+    A_scores = H @ H.T # [d, d]
     np.fill_diagonal(A_scores, 0)
     
     # Threshold to binary
@@ -243,7 +243,7 @@ def dag_gnn_simple(Xw, hidden_dim=64, num_layers=2):
     
     # Enforce DAG by topological ordering (greedy)
     A_dag = np.zeros_like(A)
-    for _ in range(d):  # Multiple passes
+    for _ in range(d): # Multiple passes
         # Find node with minimum in-degree
         in_degrees = A.sum(axis=0)
         if in_degrees.sum() == 0:

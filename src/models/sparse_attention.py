@@ -97,12 +97,12 @@ class LowRankSparseAttention(nn.Module):
         _, S, _ = k.shape
         
         # Low-rank projections
-        q = self.q_net(q).view(B, L, self.n_heads, -1).transpose(1, 2)  # [B,H,L,r]
-        k = self.k_net(k).view(B, S, self.n_heads, -1).transpose(1, 2)  # [B,H,S,r]
-        v = self.v_net(v).view(B, S, self.n_heads, -1).transpose(1, 2)  # [B,H,S,d']
+        q = self.q_net(q).view(B, L, self.n_heads, -1).transpose(1, 2) # [B,H,L,r]
+        k = self.k_net(k).view(B, S, self.n_heads, -1).transpose(1, 2) # [B,H,S,r]
+        v = self.v_net(v).view(B, S, self.n_heads, -1).transpose(1, 2) # [B,H,S,d']
         
         # Scaled attention scores
-        attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # [B,H,L,S]
+        attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale # [B,H,L,S]
         mask_tensor = None
         mask_bool = None
         if mask is not None:
@@ -148,7 +148,7 @@ class LowRankSparseAttention(nn.Module):
             attn = sparse_attn / sparse_attn.sum(dim=-1, keepdim=True).clamp_min(1e-6)
         
         # Compute attended values
-        out = torch.matmul(attn, v)  # [B,H,L,d']
+        out = torch.matmul(attn, v) # [B,H,L,d']
         out = out.transpose(1, 2).contiguous().view(B, L, -1)
         out = self.out_proj(out)
         
@@ -177,7 +177,7 @@ class LowRankProjection(nn.Module):
         # Support two calling conventions:
         # - LowRankProjection(d_in, d_out, rank)
         # - LowRankProjection(d_in, rank) where the second positional arg is
-        #   the desired rank and the output dimension defaults to d_in.
+        # the desired rank and the output dimension defaults to d_in.
         # To disambiguate, if rank is None but d_out is provided we treat the
         # provided d_out as the `rank` and set d_out = d_in.
         if rank is None and d_out is not None:

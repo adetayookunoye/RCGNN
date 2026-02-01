@@ -5,11 +5,11 @@
 This directory contains the complete evaluation protocol for RC-GNN causal discovery under missingness and compound sensor corruptions. All documentation is designed for publication submission and reviewer scrutiny.
 
 **Key principles:**
-- ✅ **No ground-truth leakage** in training, hyperparameter selection, or early stopping
-- ✅ **Multi-dataset generalization** (in-domain + leave-one-dataset-out)
-- ✅ **Threshold-free metrics** (not just TopK-F1)
-- ✅ **Statistical rigor** (mean ± std, paired tests, effect sizes)
-- ✅ **Reproducibility** (fixed seeds, exact splits, hyperparameter search space documented)
+- [DONE] **No ground-truth leakage** in training, hyperparameter selection, or early stopping
+- [DONE] **Multi-dataset generalization** (in-domain + leave-one-dataset-out)
+- [DONE] **Threshold-free metrics** (not just TopK-F1)
+- [DONE] **Statistical rigor** (mean ± std, paired tests, effect sizes)
+- [DONE] **Reproducibility** (fixed seeds, exact splits, hyperparameter search space documented)
 
 ---
 
@@ -76,25 +76,25 @@ This directory contains the complete evaluation protocol for RC-GNN causal disco
 
 ## Key Evaluation Claims (Reviewers Will Check)
 
-### ✅ Claim 1: Causal Recovery Under Missingness
+### [DONE] Claim 1: Causal Recovery Under Missingness
 - Report graph metrics (F1, SHD, orientation) across 0%, 20%, 40%, 60%, 80% missing rates
 - Show that RC-GNN outperforms baselines at all missing rates
 
-### ✅ Claim 2: Robustness to Corruption Regimes
+### [DONE] Claim 2: Robustness to Corruption Regimes
 - Test on each regime combination (compound alone, mnar_bias alone, both, etc.)
 - Report worst-case performance across corruption types
 
-### ✅ Claim 3: Multi-Dataset Generalization
+### [DONE] Claim 3: Multi-Dataset Generalization
 - In-domain: train on all, test on held-out per dataset
 - LODO: train on all-but-one, test on held-out dataset
 - Show generalization without per-dataset tuning
 
-### ✅ Claim 4: No Leakage
+### [DONE] Claim 4: No Leakage
 - Explicit "leakage test": run training with `A_true=None`
 - Performance should match main results
 - Include in appendix as sanity check
 
-### ✅ Claim 5: Calibration Under Corruption
+### [DONE] Claim 5: Calibration Under Corruption
 - If using uncertainty estimates: report ECE, coverage vs nominal
 - Show predictions degrade gracefully under corruption
 
@@ -137,8 +137,8 @@ Effect size (Cohen's d): d = 0.50
 
 Example:
 ```
-Directed F1 (extreme):     0.92 ± 0.03  (95% CI: [0.89, 0.95])  p < 0.001 ***
-Directed F1 (compound_full): 0.65 ± 0.08  (95% CI: [0.57, 0.73])  p = 0.012 *
+Directed F1 (extreme): 0.92 ± 0.03 (95% CI: [0.89, 0.95]) p < 0.001 ***
+Directed F1 (compound_full): 0.65 ± 0.08 (95% CI: [0.57, 0.73]) p = 0.012 *
 ```
 
 ---
@@ -150,21 +150,21 @@ After full evaluation, you should have:
 ```
 artifacts/
 ├── evaluation_results/
-│   ├── {dataset}_{seed}/
-│   │   ├── metrics.json          # All graph metrics
-│   │   ├── forecasting.json      # MAE, RMSE, NLL, ECE
-│   │   ├── pred_edges.npy        # Predicted adjacency
-│   │   └── pred_scores.npy       # Edge probabilities
-│   ├── summary_table.csv         # Mean ± std across seeds
-│   └── statistical_tests.txt     # p-values, effect sizes
+│ ├── {dataset}_{seed}/
+│ │ ├── metrics.json # All graph metrics
+│ │ ├── forecasting.json # MAE, RMSE, NLL, ECE
+│ │ ├── pred_edges.npy # Predicted adjacency
+│ │ └── pred_scores.npy # Edge probabilities
+│ ├── summary_table.csv # Mean ± std across seeds
+│ └── statistical_tests.txt # p-values, effect sizes
 ├── baseline_results/
-│   ├── notears_{dataset}_{seed}/ # NOTEARS results
-│   ├── correlation_{dataset}_{seed}/
-│   └── ...
+│ ├── notears_{dataset}_{seed}/ # NOTEARS results
+│ ├── correlation_{dataset}_{seed}/
+│ └── ...
 └── ablations/
-    ├── no_3stage_{dataset}_{seed}/
-    ├── no_direction_phase_{dataset}_{seed}/
-    └── ...
+ ├── no_3stage_{dataset}_{seed}/
+ ├── no_direction_phase_{dataset}_{seed}/
+ └── ...
 ```
 
 ---
@@ -206,6 +206,6 @@ This pipeline directly addresses common causal discovery paper rejections:
 
 ---
 
-**Version:** 1.0  
-**Last updated:** Jan 21, 2026  
+**Version:** 1.0
+**Last updated:** Jan 21, 2026
 **Status:** Publication-ready template

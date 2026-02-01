@@ -11,7 +11,7 @@ This script creates controlled synthetic datasets for testing RC-GNN and baselin
 Usage:
     python scripts/synth_bench.py --help
     python scripts/synth_bench.py --graph_type er --d 10 --edges 20 --output data/interim/synth_er10
-    python scripts/synth_bench.py --sweep  # Run full factorial sweep
+    python scripts/synth_bench.py --sweep # Run full factorial sweep
 """
 
 import argparse
@@ -47,12 +47,12 @@ def generate_er_dag(d, num_edges, seed=None):
     
     A_true = np.zeros((d, d))
     edges_added = 0
-    max_attempts = num_edges * 10  # Prevent infinite loop
+    max_attempts = num_edges * 10 # Prevent infinite loop
     attempts = 0
     
     while edges_added < num_edges and attempts < max_attempts:
         i, j = np.random.randint(0, d, size=2)
-        if i < j and A_true[i, j] == 0:  # Lower triangular (DAG constraint)
+        if i < j and A_true[i, j] == 0: # Lower triangular (DAG constraint)
             A_true[i, j] = 1
             edges_added += 1
         attempts += 1
@@ -95,7 +95,7 @@ def generate_scale_free_dag(d, attachment=2, seed=None):
         targets = np.random.choice(new_node, size=min(attachment, new_node), 
                                      replace=False, p=probs)
         for target in targets:
-            if new_node > target:  # Maintain DAG (lower triangular)
+            if new_node > target: # Maintain DAG (lower triangular)
                 A_true[target, new_node] = 1
             else:
                 A_true[new_node, target] = 1
@@ -157,7 +157,7 @@ def generate_data_from_dag(A_true, T, mechanism="linear", noise_scale=0.1, seed=
     while remaining:
         # Find nodes with no incoming edges from remaining nodes
         roots = [i for i in remaining if in_degree[i] == 0]
-        if not roots:  # Cycle detected (shouldn't happen with valid DAG)
+        if not roots: # Cycle detected (shouldn't happen with valid DAG)
             roots = list(remaining)
         
         order.extend(roots)
@@ -319,9 +319,9 @@ def generate_multi_env_dataset(
         for env_idx in range(n_envs):
             corruption_configs.append({
                 "missing_type": ["mcar", "mar", "mnar"][env_idx % 3],
-                "missing_rate": 0.2 + env_idx * 0.1,  # 20%, 30%, 40%
-                "noise_scale": 0.1 + env_idx * 0.2,   # 0.1, 0.3, 0.5
-                "drift_magnitude": 0.0 + env_idx * 0.1  # 0.0, 0.1, 0.2
+                "missing_rate": 0.2 + env_idx * 0.1, # 20%, 30%, 40%
+                "noise_scale": 0.1 + env_idx * 0.2, # 0.1, 0.3, 0.5
+                "drift_magnitude": 0.0 + env_idx * 0.1 # 0.0, 0.1, 0.2
             })
     
     for env_idx in range(n_envs):
@@ -339,7 +339,7 @@ def generate_multi_env_dataset(
                 M = apply_mcar(S, config["missing_rate"], seed=seed + env_idx*1000 + sample_idx + 10000)
             elif config["missing_type"] == "mar":
                 M = apply_mar(S, config["missing_rate"], seed=seed + env_idx*1000 + sample_idx + 10000)
-            else:  # mnar
+            else: # mnar
                 M = apply_mnar(S, config["missing_rate"], seed=seed + env_idx*1000 + sample_idx + 10000)
             
             # Add noise
@@ -353,7 +353,7 @@ def generate_multi_env_dataset(
             S_all.append(S)
             e_all.append(env_idx)
     
-    X_all = np.stack(X_all, axis=0)  # (N, T, d)
+    X_all = np.stack(X_all, axis=0) # (N, T, d)
     M_all = np.stack(M_all, axis=0)
     S_all = np.stack(S_all, axis=0)
     e_all = np.array(e_all, dtype=np.int32)
@@ -385,12 +385,12 @@ def save_dataset(output_dir, A_true, X_train, M_train, S_train, e_train,
     with open(os.path.join(output_dir, "meta.json"), "w") as f:
         json.dump(metadata, f, indent=2)
     
-    print(f"✅ Dataset saved to: {output_dir}")
-    print(f"   - Train: {X_train.shape[0]} samples")
-    print(f"   - Val: {X_val.shape[0]} samples")
-    print(f"   - Features: {X_train.shape[-1]}")
-    print(f"   - Time steps: {X_train.shape[1]}")
-    print(f"   - True edges: {int(A_true.sum())}")
+    print(f"[DONE] Dataset saved to: {output_dir}")
+    print(f" - Train: {X_train.shape[0]} samples")
+    print(f" - Val: {X_val.shape[0]} samples")
+    print(f" - Features: {X_train.shape[-1]}")
+    print(f" - Time steps: {X_train.shape[1]}")
+    print(f" - True edges: {int(A_true.sum())}")
 
 
 # ============================================================================
@@ -432,18 +432,18 @@ def main():
     args = parser.parse_args()
     
     if args.sweep:
-        print("🔄 Running factorial sweep...")
+        print(" Running factorial sweep...")
         run_factorial_sweep()
         return
     
     # Generate graph
-    print(f"\n📊 Generating {args.graph_type.upper()} graph (d={args.d})...")
+    print(f"\n Generating {args.graph_type.upper()} graph (d={args.d})...")
     if args.graph_type == "er":
         A_true = generate_er_dag(args.d, args.edges, seed=args.seed)
-    else:  # sf
+    else: # sf
         A_true = generate_scale_free_dag(args.d, args.attachment, seed=args.seed)
     
-    print(f"✅ Graph generated: {int(A_true.sum())} edges")
+    print(f"[DONE] Graph generated: {int(A_true.sum())} edges")
     
     # Corruption configs (uniform for all envs in single-run mode)
     corruption_configs = [{
@@ -454,7 +454,7 @@ def main():
     } for _ in range(args.n_envs)]
     
     # Generate data
-    print(f"\n🔧 Generating multi-environment data ({args.n_envs} envs, {args.mechanism} mechanism)...")
+    print(f"\n Generating multi-environment data ({args.n_envs} envs, {args.mechanism} mechanism)...")
     X_all, M_all, S_all, e_all = generate_multi_env_dataset(
         A_true, 
         n_envs=args.n_envs,
@@ -504,7 +504,7 @@ def run_factorial_sweep():
     noise_scales = [0.1, 0.5, 1.0]
     
     total_configs = len(graph_types) * len(d_values) * len(mechanisms) * len(missing_types) * len(missing_rates) * len(noise_scales)
-    print(f"📊 Generating {total_configs} synthetic datasets...")
+    print(f" Generating {total_configs} synthetic datasets...")
     
     config_idx = 0
     for graph_type in graph_types:
@@ -524,7 +524,7 @@ def run_factorial_sweep():
                             # Generate graph
                             seed = config_idx
                             if graph_type == "er":
-                                edges = d * 2  # 2x sparsity
+                                edges = d * 2 # 2x sparsity
                                 A_true = generate_er_dag(d, edges, seed=seed)
                             else:
                                 A_true = generate_scale_free_dag(d, attachment=2, seed=seed)
@@ -569,7 +569,7 @@ def run_factorial_sweep():
                             save_dataset(output_dir, A_true, X_train, M_train, S_train, e_train,
                                         X_val, M_val, S_val, e_val, metadata)
     
-    print(f"\n✅ Factorial sweep complete: {total_configs} datasets generated!")
+    print(f"\n[DONE] Factorial sweep complete: {total_configs} datasets generated!")
 
 
 if __name__ == "__main__":

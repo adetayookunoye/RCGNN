@@ -45,16 +45,16 @@ if A_base.grad is not None:
     grad_norm = A_base.grad.abs().mean().item()
     grad_max = A_base.grad.abs().max().item()
     print(f"\n||grad(A_base)||.mean(): {grad_norm:.10f}")
-    print(f"||grad(A_base)||.max():  {grad_max:.10f}")
+    print(f"||grad(A_base)||.max(): {grad_max:.10f}")
     
     if grad_norm < 1e-10:
-        print("\n⚠️ Gradient is effectively zero!")
+        print("\n[WARN] Gradient is effectively zero!")
         print("Reason: A_soft values are EXTREMELY small (sigmoid(-12) ≈ 6e-6)")
         print("The gradient of sigmoid at x=-12 is sigmoid(-12)*(1-sigmoid(-12)) ≈ 6e-6")
         print("This gets multiplied through the chain, giving near-zero gradient.")
         
         print("\n--- Let's try with W_adj initialized near 0 ---")
-        A_base2 = nn.Parameter(torch.randn(d, d) * 0.5)  # Around 0, sigmoid(0)=0.5
+        A_base2 = nn.Parameter(torch.randn(d, d) * 0.5) # Around 0, sigmoid(0)=0.5
         A_logits2 = A_base2.unsqueeze(0).expand(B, -1, -1).clone()
         A_soft2 = torch.sigmoid(A_logits2 / tau) * diag_mask.unsqueeze(0)
         X_msg2 = torch.bmm(signal_features.detach().clone().requires_grad_(True), A_soft2.transpose(1, 2))
@@ -68,10 +68,10 @@ if A_base.grad is not None:
         grad_norm2 = A_base2.grad.abs().mean().item()
         grad_max2 = A_base2.grad.abs().max().item()
         print(f"\n||grad(A_base2)||.mean(): {grad_norm2:.10f}")
-        print(f"||grad(A_base2)||.max():  {grad_max2:.10f}")
+        print(f"||grad(A_base2)||.max(): {grad_max2:.10f}")
         
         if grad_norm2 > 1e-6:
-            print("\n✓ With W_adj near 0, gradient exists!")
-            print("  THE FIX: Initialize A_base near 0, not at -3.0")
+            print("\n[OK] With W_adj near 0, gradient exists!")
+            print(" THE FIX: Initialize A_base near 0, not at -3.0")
 else:
     print("A_base.grad is None!")

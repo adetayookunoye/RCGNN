@@ -28,7 +28,7 @@ def sparsemax(x: torch.Tensor, dim=-1, eps: float | None = None) -> torch.Tensor
     # move dim to last
     if dim != -1:
         x = x.transpose(dim, -1)
-    flat = x.contiguous().view(-1, x.size(-1))  # [R, n]
+    flat = x.contiguous().view(-1, x.size(-1)) # [R, n]
 
     # sort
     zs = torch.sort(flat, dim=1, descending=True).values
@@ -37,7 +37,7 @@ def sparsemax(x: torch.Tensor, dim=-1, eps: float | None = None) -> torch.Tensor
 
     # determine support
     support = (1 + k * zs) > zs_cumsum
-    k_z = support.sum(dim=1).unsqueeze(1)  # [R,1]
+    k_z = support.sum(dim=1).unsqueeze(1) # [R,1]
 
     # compute tau
     zs_cumsum_k = zs_cumsum.gather(1, (k_z - 1).clamp(min=0))

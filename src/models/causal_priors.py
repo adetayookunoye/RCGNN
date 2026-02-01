@@ -80,8 +80,8 @@ class InterventionAwareStructure(nn.Module):
         
     def compute_intervention_loss(
         self,
-        A_per_env: torch.Tensor,  # [n_envs, d, d] or [B, d, d] per-sample
-        regimes: torch.Tensor,  # [B] regime indices
+        A_per_env: torch.Tensor, # [n_envs, d, d] or [B, d, d] per-sample
+        regimes: torch.Tensor, # [B] regime indices
     ) -> torch.Tensor:
         """
         Compute intervention consistency loss.
@@ -107,18 +107,18 @@ class InterventionAwareStructure(nn.Module):
                 continue
                 
             # Get intervention targets for this regime
-            int_mask = self.intervention_mask[e]  # [d]
+            int_mask = self.intervention_mask[e] # [d]
             
             if int_mask.sum() > 0:
                 # For each intervened node, penalize incoming edges
                 # A_per_env[b, :, i] = incoming edges to node i
                 if A_per_env.dim() == 3 and A_per_env.shape[0] == B:
-                    A_sample = A_per_env[b]  # [d, d]
+                    A_sample = A_per_env[b] # [d, d]
                 else:
                     A_sample = A_per_env[e] if A_per_env.shape[0] == self.n_regimes else A_per_env
                 
                 # Incoming edges to intervened nodes should be small
-                incoming = A_sample.sum(dim=0)  # [d] - sum of incoming per node
+                incoming = A_sample.sum(dim=0) # [d] - sum of incoming per node
                 intervened_incoming = (incoming * int_mask).sum()
                 loss = loss + intervened_incoming
                 count += int_mask.sum().item()
@@ -138,7 +138,7 @@ class OrientationPenalty(nn.Module):
     Orientation penalty based on Additive Noise Model (ANM) identifiability.
     
     Key insight from causal discovery theory:
-    - In X → Y: Y = f(X) + ε, where X ⊥ ε
+    - In X -> Y: Y = f(X) + ε, where X ⊥ ε
     - The effect Y typically has HIGHER entropy than the cause X
       (noise adds uncertainty)
     - Residuals of correct direction have lower dependence on cause
@@ -176,11 +176,11 @@ class OrientationPenalty(nn.Module):
     
     def compute_residual_independence(
         self,
-        X: torch.Tensor,  # [B, T, d] or [N, d]
-        A: torch.Tensor,  # [d, d]
+        X: torch.Tensor, # [B, T, d] or [N, d]
+        A: torch.Tensor, # [d, d]
     ) -> torch.Tensor:
         """
-        For each edge (i→j), compute how independent the residual is from cause.
+        For each edge (i->j), compute how independent the residual is from cause.
         
         residual[j] = X[j] - predicted[j]
         predicted[j] = sum_i A[i,j] * X[i]
@@ -197,8 +197,8 @@ class OrientationPenalty(nn.Module):
         device = X_flat.device
         
         # Predicted values using current A
-        X_pred = X_flat @ A  # [N, d]
-        residuals = X_flat - X_pred  # [N, d]
+        X_pred = X_flat @ A # [N, d]
+        residuals = X_flat - X_pred # [N, d]
         
         # For each edge (i,j), compute |corr(residual[j], X[i])|
         # This should be low for correctly oriented edges
@@ -241,15 +241,15 @@ class OrientationPenalty(nn.Module):
             X_flat = X
         
         # 1. Entropy-based orientation
-        entropy = self.estimate_entropy(X_flat)  # [d]
+        entropy = self.estimate_entropy(X_flat) # [d]
         
         # For each edge A[i,j] > 0, prefer H(X_i) < H(X_j)
         # Create penalty matrix: penalty[i,j] = max(0, H(X_i) - H(X_j))
         # High penalty when cause has higher entropy than effect (wrong direction)
-        H_i = entropy.unsqueeze(1).expand(-1, self.d)  # [d, d]
-        H_j = entropy.unsqueeze(0).expand(self.d, -1)  # [d, d]
+        H_i = entropy.unsqueeze(1).expand(-1, self.d) # [d, d]
+        H_j = entropy.unsqueeze(0).expand(self.d, -1) # [d, d]
         
-        entropy_penalty = F.relu(H_i - H_j)  # Penalty when cause > effect
+        entropy_penalty = F.relu(H_i - H_j) # Penalty when cause > effect
         
         # Weight by edge strength
         L_entropy = (A * entropy_penalty).sum() / (A.sum() + 1e-8)
@@ -280,7 +280,7 @@ class EdgeNecessityValidator(nn.Module):
     """
     Counterfactual edge validation during training.
     
-    For each edge (i→j), test: "If we remove this edge, how much worse 
+    For each edge (i->j), test: "If we remove this edge, how much worse 
     does prediction of X[j] become?"
     
     - True causal edges: Removal significantly hurts prediction
@@ -293,7 +293,7 @@ class EdgeNecessityValidator(nn.Module):
     def __init__(
         self,
         d: int,
-        n_edges_to_test: int = 5,  # Test top-K edges per batch (expensive!)
+        n_edges_to_test: int = 5, # Test top-K edges per batch (expensive!)
         necessity_threshold: float = 0.1,
     ):
         super().__init__()
@@ -303,9 +303,9 @@ class EdgeNecessityValidator(nn.Module):
         
     def compute_edge_necessity(
         self,
-        X: torch.Tensor,  # [B, T, d]
-        A: torch.Tensor,  # [d, d]
-        decoder_fn,  # Callable that takes (X, A) -> predictions
+        X: torch.Tensor, # [B, T, d]
+        A: torch.Tensor, # [d, d]
+        decoder_fn, # Callable that takes (X, A) -> predictions
         top_k: int = None,
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
@@ -332,8 +332,8 @@ class EdgeNecessityValidator(nn.Module):
         
         # Get baseline prediction
         with torch.no_grad():
-            base_pred = decoder_fn(A)  # [B, T, d]
-            base_error = (X - base_pred).pow(2).mean(dim=(0, 1))  # [d]
+            base_pred = decoder_fn(A) # [B, T, d]
+            base_error = (X - base_pred).pow(2).mean(dim=(0, 1)) # [d]
         
         # Find top-K edges by weight
         A_flat = A.clone()
@@ -346,7 +346,7 @@ class EdgeNecessityValidator(nn.Module):
             i = idx // d
             j = idx % d
             
-            if A[i, j] > 0.01:  # Only test meaningful edges
+            if A[i, j] > 0.01: # Only test meaningful edges
                 # Remove edge
                 A_ablated = A.clone()
                 A_ablated[i, j] = 0
@@ -429,7 +429,7 @@ class EnvironmentSpecificDecoder(nn.Module):
         super().__init__()
         self.d = d
         self.latent_dim = latent_dim
-        self.n_envs = max(n_envs, 2)  # At least 2 for comparison
+        self.n_envs = max(n_envs, 2) # At least 2 for comparison
         self.min_sigma = min_sigma
         
         # Shared signal projection (structure-dependent)
@@ -440,7 +440,7 @@ class EnvironmentSpecificDecoder(nn.Module):
             nn.Sequential(
                 nn.Linear(hidden_dim, hidden_dim),
                 nn.ReLU(),
-                nn.Linear(hidden_dim, 2),  # mu, log_sigma
+                nn.Linear(hidden_dim, 2), # mu, log_sigma
             )
             for _ in range(self.n_envs)
         ])
@@ -451,10 +451,10 @@ class EnvironmentSpecificDecoder(nn.Module):
         
     def forward(
         self,
-        z_signal: torch.Tensor,  # [B, T, d, L]
-        z_corrupt: torch.Tensor,  # [B, T, d, L]
-        A: torch.Tensor,  # [d, d]
-        regime: torch.Tensor,  # [B] regime indices
+        z_signal: torch.Tensor, # [B, T, d, L]
+        z_corrupt: torch.Tensor, # [B, T, d, L]
+        A: torch.Tensor, # [d, d]
+        regime: torch.Tensor, # [B] regime indices
     ) -> Tuple[torch.Tensor, torch.Tensor, Dict[int, torch.Tensor]]:
         """
         Forward pass with per-environment decoding.
@@ -481,7 +481,7 @@ class EnvironmentSpecificDecoder(nn.Module):
             z_s_flat
         )
         
-        h_signal = self.signal_proj(z_agg)  # [BT, d, H]
+        h_signal = self.signal_proj(z_agg) # [BT, d, H]
         
         # Per-sample predictions using appropriate environment decoder
         mu_all = torch.zeros(B, T, d, device=z_signal.device)
@@ -496,7 +496,7 @@ class EnvironmentSpecificDecoder(nn.Module):
         for e in unique_regimes:
             e_idx = e.item()
             if e_idx >= self.n_envs:
-                e_idx = 0  # Fallback to first env
+                e_idx = 0 # Fallback to first env
                 
             mask = (regime == e)
             indices = mask.nonzero(as_tuple=True)[0]
@@ -505,11 +505,11 @@ class EnvironmentSpecificDecoder(nn.Module):
                 continue
             
             # Get signal features for this environment's samples
-            h_env = h_signal.reshape(B, T, d, -1)[mask]  # [n_e, T, d, H]
-            h_env_flat = h_env.reshape(-1, d, h_env.shape[-1])  # [n_e*T, d, H]
+            h_env = h_signal.reshape(B, T, d, -1)[mask] # [n_e, T, d, H]
+            h_env_flat = h_env.reshape(-1, d, h_env.shape[-1]) # [n_e*T, d, H]
             
             # Apply environment-specific mechanism
-            out = self.env_mechanisms[e_idx](h_env_flat)  # [n_e*T, d, 2]
+            out = self.env_mechanisms[e_idx](h_env_flat) # [n_e*T, d, 2]
             
             mu_env = out[..., 0]
             sigma_env = F.softplus(out[..., 1]) + self.min_sigma
@@ -573,13 +573,13 @@ class EnvironmentSpecificDecoder(nn.Module):
             A.unsqueeze(0).expand(B * T, -1, -1).transpose(-1, -2),
             z_s_flat
         )
-        h_signal = self.signal_proj(z_agg)  # [BT, d, H]
+        h_signal = self.signal_proj(z_agg) # [BT, d, H]
         
         # Get outputs from each environment decoder
         env_outputs = []
         for e_idx in range(self.n_envs):
             out = self.env_mechanisms[e_idx](h_signal)
-            mu = out[..., 0]  # [BT, d]
+            mu = out[..., 0] # [BT, d]
             env_outputs.append(mu)
         
         # Compute pairwise mechanism differences
@@ -603,7 +603,7 @@ class CausalPriorLoss(nn.Module):
     
     L_causal = λ_int * L_intervention 
              + λ_orient * L_orientation
-             + λ_nec * L_necessity  
+             + λ_nec * L_necessity 
              + λ_mech * L_mechanism
     """
     
@@ -613,7 +613,7 @@ class CausalPriorLoss(nn.Module):
         n_regimes: int = 1,
         lambda_intervention: float = 0.1,
         lambda_orientation: float = 0.1,
-        lambda_necessity: float = 0.05,  # Less frequent, expensive
+        lambda_necessity: float = 0.05, # Less frequent, expensive
         lambda_mechanism: float = 0.1,
     ):
         super().__init__()
@@ -628,7 +628,7 @@ class CausalPriorLoss(nn.Module):
         
         # Components
         self.intervention = InterventionAwareStructure(d, n_regimes)
-        self.orientation = OrientationPenalty(d, lambda_orient=1.0)  # Scaled by wrapper
+        self.orientation = OrientationPenalty(d, lambda_orient=1.0) # Scaled by wrapper
         self.necessity = EdgeNecessityValidator(d, n_edges_to_test=5)
         
     def forward(
@@ -640,7 +640,7 @@ class CausalPriorLoss(nn.Module):
         decoder_fn=None,
         env_decoder: Optional[EnvironmentSpecificDecoder] = None,
         z_signal: Optional[torch.Tensor] = None,
-        compute_necessity: bool = False,  # Expensive, do periodically
+        compute_necessity: bool = False, # Expensive, do periodically
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
         Compute total causal prior loss.
@@ -781,9 +781,9 @@ def diagnose_correlation_vs_causation(
     avg_true_corr = np.mean(true_edge_corrs) if true_edge_corrs else 0
     
     return {
-        "pred_corr_overlap": pred_corr_overlap,  # High = learning correlation
-        "pred_true_overlap": pred_true_overlap,  # High = learning causation
-        "corr_true_overlap": corr_true_overlap,  # Baseline: how correlated are true edges?
+        "pred_corr_overlap": pred_corr_overlap, # High = learning correlation
+        "pred_true_overlap": pred_true_overlap, # High = learning causation
+        "corr_true_overlap": corr_true_overlap, # Baseline: how correlated are true edges?
         "avg_pred_edge_corr": float(avg_pred_corr),
         "avg_true_edge_corr": float(avg_true_corr),
         "diagnosis": "correlation" if pred_corr_overlap > pred_true_overlap else "causation",

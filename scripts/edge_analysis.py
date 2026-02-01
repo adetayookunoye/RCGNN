@@ -98,8 +98,8 @@ def main():
         corr = corr_matrix[i, j]
         pred = A_pred[i, j]
         pred_rev = A_pred[j, i]
-        direction_ok = "✓" if pred > pred_rev else "⇄"
-        print(f"{i:>2} -> {j:<2}     {corr:>8.4f}     {pred:>8.4f}     {pred_rev:>8.4f}  {direction_ok}")
+        direction_ok = "[OK]" if pred > pred_rev else "<->"
+        print(f"{i:>2} -> {j:<2} {corr:>8.4f} {pred:>8.4f} {pred_rev:>8.4f} {direction_ok}")
     
     print()
     
@@ -120,13 +120,13 @@ def main():
         corr_w = corr_matrix[i, j]
         
         if (i, j) in true_edges:
-            status = "✓ CORRECT"
+            status = "[OK] CORRECT"
             analysis = ""
         elif (j, i) in true_edges:
-            status = "⇄ REVERSED"
+            status = "<-> REVERSED"
             analysis = f"Should be {j}->{i}"
         else:
-            status = "✗ WRONG"
+            status = "[X] WRONG"
             # Check if this edge is due to confounding
             # i.e., is there a common ancestor?
             common_parents = []
@@ -157,10 +157,10 @@ def main():
     
     for (i, j, w) in wrong_edges[:5]:
         print(f"\nWRONG EDGE: {i} -> {j} (weight={w:.4f})")
-        print(f"  Correlation: {corr_matrix[i, j]:.4f}")
+        print(f" Correlation: {corr_matrix[i, j]:.4f}")
         
         # Find paths through true edges
-        print(f"  True edge paths involving {i} and {j}:")
+        print(f" True edge paths involving {i} and {j}:")
         
         # Direct connections of i
         i_parents = [k for k in range(d) if (k, i) in true_edges]
@@ -170,22 +170,22 @@ def main():
         j_parents = [k for k in range(d) if (k, j) in true_edges]
         j_children = [k for k in range(d) if (j, k) in true_edges]
         
-        print(f"    Node {i}: parents={i_parents}, children={i_children}")
-        print(f"    Node {j}: parents={j_parents}, children={j_children}")
+        print(f" Node {i}: parents={i_parents}, children={i_children}")
+        print(f" Node {j}: parents={j_parents}, children={j_children}")
         
         # Check for confounding (common parent)
         common_parents = set(i_parents) & set(j_parents)
         if common_parents:
-            print(f"    ⚠️ CONFOUNDED: Common parents = {common_parents}")
-            print(f"       This edge is due to confounding, not causation!")
+            print(f" [WARN] CONFOUNDED: Common parents = {common_parents}")
+            print(f" This edge is due to confounding, not causation!")
         
         # Check for mediation (i->k->j or j->k->i)
         for k in i_children:
             if k in j_parents:
-                print(f"    📍 MEDIATION: {i} -> {k} -> {j}")
+                print(f" MEDIATION: {i} -> {k} -> {j}")
         for k in j_children:
             if k in i_parents:
-                print(f"    📍 MEDIATION: {j} -> {k} -> {i}")
+                print(f" MEDIATION: {j} -> {k} -> {i}")
     
     print()
     
@@ -201,18 +201,18 @@ def main():
     corr_edges = set()
     for idx in top_corr_idx:
         i, j = idx // d, idx % d
-        corr_edges.add((min(i,j), max(i,j)))  # Undirected
+        corr_edges.add((min(i,j), max(i,j))) # Undirected
     
     true_skel = set((min(i,j), max(i,j)) for i,j in true_edges)
     
     print(f"Top {n_true} correlated pairs (undirected):")
     overlap = corr_edges & true_skel
-    print(f"  Overlap with true skeleton: {len(overlap)}/{len(true_skel)}")
-    print(f"  True edges in top correlations: {overlap}")
+    print(f" Overlap with true skeleton: {len(overlap)}/{len(true_skel)}")
+    print(f" True edges in top correlations: {overlap}")
     print()
     
     only_corr = corr_edges - true_skel
-    print(f"  High-correlation NON-CAUSAL edges:")
+    print(f" High-correlation NON-CAUSAL edges:")
     for (i, j) in sorted(only_corr):
         c = max(corr_matrix[i,j], corr_matrix[j,i])
         # Check if confounded
@@ -221,7 +221,7 @@ def main():
             if (k, i) in true_edges and (k, j) in true_edges:
                 common_parents.append(k)
         reason = f"confounded by {common_parents}" if common_parents else "indirect path?"
-        print(f"    {i}-{j}: corr={c:.4f} ({reason})")
+        print(f" {i}-{j}: corr={c:.4f} ({reason})")
     
     print()
     
@@ -236,19 +236,19 @@ def main():
     print(f"Correlation between A_pred and |r| matrix: {corr_with_pred:.4f}")
     
     if corr_with_pred > 0.7:
-        print("⚠️ Model outputs are HIGHLY correlated with data correlation!")
-        print("   The model is learning CORRELATION, not CAUSATION.")
+        print("[WARN] Model outputs are HIGHLY correlated with data correlation!")
+        print(" The model is learning CORRELATION, not CAUSATION.")
         print()
-        print("   Recommendations:")
-        print("   1. Increase sparsity pressure to focus on fewer edges")
-        print("   2. Use intervention/regime information more strongly")
-        print("   3. Add explicit anti-correlation loss on confounded pairs")
+        print(" Recommendations:")
+        print(" 1. Increase sparsity pressure to focus on fewer edges")
+        print(" 2. Use intervention/regime information more strongly")
+        print(" 3. Add explicit anti-correlation loss on confounded pairs")
     elif corr_with_pred > 0.4:
         print("~ Model outputs are MODERATELY correlated with data correlation")
-        print("  Some causal learning, but still influenced by correlation")
+        print(" Some causal learning, but still influenced by correlation")
     else:
-        print("✓ Model outputs are NOT strongly correlated with data correlation")
-        print("  Good sign - model may be learning causal structure")
+        print("[OK] Model outputs are NOT strongly correlated with data correlation")
+        print(" Good sign - model may be learning causal structure")
     
     print()
     
@@ -262,12 +262,12 @@ def main():
         else:
             wrong_dir += 1
     
-    print(f"  True edges with correct direction: {correct_dir}/{n_true}")
-    print(f"  True edges with wrong direction: {wrong_dir}/{n_true}")
+    print(f" True edges with correct direction: {correct_dir}/{n_true}")
+    print(f" True edges with wrong direction: {wrong_dir}/{n_true}")
     
     if wrong_dir > correct_dir:
-        print("  ⚠️ More wrong than correct directions!")
-        print("     Check if GT convention matches model convention")
+        print(" [WARN] More wrong than correct directions!")
+        print(" Check if GT convention matches model convention")
     
     print()
 

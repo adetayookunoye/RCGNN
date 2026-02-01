@@ -9,7 +9,7 @@ from src.models.low_rank import (
 @pytest.fixture
 def sample_data():
     """Generate sample high-dimensional data."""
-    B, N, d = 4, 16, 256  # Large feature dimension
+    B, N, d = 4, 16, 256 # Large feature dimension
     x = torch.randn(B, N, d)
     mask = torch.ones(B, N, N, dtype=torch.bool)
     return x, mask
@@ -27,10 +27,10 @@ def test_low_rank_gnn(sample_data):
     
     # Test with attention weights
     out, attn = gnn(x, mask, return_attn=True)
-    assert attn.shape == (4, 8, 16, 16)  # [B,H,N,N]
+    assert attn.shape == (4, 8, 16, 16) # [B,H,N,N]
     
     # Check parameter efficiency
-    full_params = d * d * 3  # Rough estimate for full rank
+    full_params = d * d * 3 # Rough estimate for full rank
     low_params = sum(p.numel() for p in gnn.parameters())
     assert low_params < full_params
 
@@ -51,7 +51,7 @@ def test_low_rank_encoder(sample_data):
     
     # Verify parameter efficiency
     params = sum(p.numel() for p in encoder.parameters())
-    full_params = d * d * 9  # Rough estimate for full rank
+    full_params = d * d * 9 # Rough estimate for full rank
     assert params < full_params
 
 def test_low_rank_structure(sample_data):
@@ -64,8 +64,8 @@ def test_low_rank_structure(sample_data):
     adj, attn = learner(x, mask)
     
     # Check output shapes
-    assert adj.shape == (4, 16, 16)  # [B,N,N]
-    assert attn.shape == (4, 8, 16, 16)  # [B,H,N,N]
+    assert adj.shape == (4, 16, 16) # [B,N,N]
+    assert attn.shape == (4, 8, 16, 16) # [B,H,N,N]
     
     # Verify adjacency properties
     assert torch.all(adj >= 0) and torch.all(adj <= 1)
@@ -76,10 +76,10 @@ def test_low_rank_structure(sample_data):
 
 def test_memory_scaling():
     """Test memory scaling with dimension."""
-    Bs = [4, 4]  # Batch sizes
-    Ns = [16, 16]  # Number of nodes
-    ds = [128, 256]  # Feature dimensions
-    ranks = [32, 32]  # Rank of low-rank approximation
+    Bs = [4, 4] # Batch sizes
+    Ns = [16, 16] # Number of nodes
+    ds = [128, 256] # Feature dimensions
+    ranks = [32, 32] # Rank of low-rank approximation
     
     def get_mem_usage(model, x):
         if not torch.cuda.is_available():
@@ -151,4 +151,4 @@ def test_sparsity_patterns(sample_data):
         
         # Check that attention is sparse
         sparsity_ratio = (attn == 0).float().mean()
-        assert sparsity_ratio > 0.5  # At least 50% sparse
+        assert sparsity_ratio > 0.5 # At least 50% sparse

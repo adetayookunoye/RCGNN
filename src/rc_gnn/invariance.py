@@ -31,8 +31,8 @@ class InvarianceRegularizer(nn.Module):
     
     def __init__(
         self,
-        method: str = "variance",  # "variance", "mmd", "wasserstein"
-        aggregation: str = "sum",  # "sum", "mean", "max"
+        method: str = "variance", # "variance", "mmd", "wasserstein"
+        aggregation: str = "sum", # "sum", "mean", "max"
     ):
         super().__init__()
         self.method = method
@@ -102,7 +102,7 @@ class InvarianceRegularizer(nn.Module):
         
         if weights is not None:
             weights = torch.tensor(weights, device=A_stack.device, dtype=A_stack.dtype)
-            weights = weights / weights.sum()  # Normalize
+            weights = weights / weights.sum() # Normalize
             
             # Weighted mean
             A_mean = (A_stack * weights.view(-1, 1, 1)).sum(dim=0)
@@ -132,7 +132,7 @@ class InvarianceRegularizer(nn.Module):
         K = A_stack.shape[0]
         
         # Flatten each A to vector
-        A_flat = A_stack.view(K, -1)  # [K, d*d]
+        A_flat = A_stack.view(K, -1) # [K, d*d]
         
         # RBF kernel
         def rbf_kernel(X, Y, sigma=1.0):
@@ -145,8 +145,8 @@ class InvarianceRegularizer(nn.Module):
         
         for i in range(K):
             for j in range(i + 1, K):
-                x = A_flat[i:i+1]  # [1, d*d]
-                y = A_flat[j:j+1]  # [1, d*d]
+                x = A_flat[i:i+1] # [1, d*d]
+                y = A_flat[j:j+1] # [1, d*d]
                 
                 kxx = rbf_kernel(x, x)
                 kyy = rbf_kernel(y, y)
@@ -168,7 +168,7 @@ class InvarianceRegularizer(nn.Module):
         d = A_list[0].shape[0]
         
         # Flatten
-        A_flat = torch.stack([A.flatten() for A in A_list])  # [K, d*d]
+        A_flat = torch.stack([A.flatten() for A in A_list]) # [K, d*d]
         
         # Sliced Wasserstein via random projections
         n_projections = 50
@@ -179,7 +179,7 @@ class InvarianceRegularizer(nn.Module):
         theta = theta / theta.norm(dim=1, keepdim=True)
         
         # Project
-        projections = torch.matmul(A_flat, theta.T)  # [K, n_proj]
+        projections = torch.matmul(A_flat, theta.T) # [K, n_proj]
         
         # Sort and compute pairwise distances
         sorted_proj, _ = projections.sort(dim=0)
@@ -323,8 +323,8 @@ class IRM_Invariance(nn.Module):
             return torch.tensor(0.0, device=A_batch.device), {"l_irm": 0.0}
         
         # Stack and compute variance
-        A_stack = torch.stack(A_per_env, dim=0)  # [K, d, d]
-        variance = A_stack.var(dim=0)  # [d, d]
+        A_stack = torch.stack(A_per_env, dim=0) # [K, d, d]
+        variance = A_stack.var(dim=0) # [d, d]
         
         penalty = self.penalty_weight * variance.mean()
         

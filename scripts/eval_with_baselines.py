@@ -77,7 +77,7 @@ def best_threshold_metrics(A_pred, A_true):
 def top_k_metrics(A_pred, A_true, k=None):
     """Top-k edge recovery metrics."""
     if k is None:
-        k = int(A_true.sum())  # Number of true edges
+        k = int(A_true.sum()) # Number of true edges
     
     # Get top-k predicted edges
     flat_pred = A_pred.flatten()
@@ -108,7 +108,7 @@ def notears_baseline(X, A_true, lambda1=0.1, max_iter=100):
     """
     # Flatten time if needed
     if X.ndim == 3:
-        X_flat = X.reshape(-1, X.shape[-1])  # [N*T, d]
+        X_flat = X.reshape(-1, X.shape[-1]) # [N*T, d]
     else:
         X_flat = X
     
@@ -182,9 +182,9 @@ def main():
     M = np.load(os.path.join(args.data_root, 'M.npy'))
     
     print(f"\nDataset: {args.data_root}")
-    print(f"  X shape: {X.shape}")
-    print(f"  Missing ratio: {(M == 0).mean():.1%}")
-    print(f"  True edges: {int(A_true.sum())}")
+    print(f" X shape: {X.shape}")
+    print(f" Missing ratio: {(M == 0).mean():.1%}")
+    print(f" True edges: {int(A_true.sum())}")
     
     d = X.shape[-1]
     num_true_edges = int(A_true.sum())
@@ -203,7 +203,7 @@ def main():
         # Reconstruct model (need to match architecture)
         model = RCGNN(
             d=d,
-            input_dim=1,  # univariate per node
+            input_dim=1, # univariate per node
             hidden_dim=64,
             latent_dim=32,
             n_envs=1
@@ -219,17 +219,17 @@ def main():
         rcgnn_best = best_threshold_metrics(A_rcgnn, A_true)
         rcgnn_topk = top_k_metrics(A_rcgnn, A_true, k=num_true_edges)
         
-        print(f"  Best threshold: {rcgnn_best['threshold']:.3f}")
-        print(f"  F1: {rcgnn_best['f1']:.4f}")
-        print(f"  Precision: {rcgnn_best['precision']:.4f}")
-        print(f"  Recall: {rcgnn_best['recall']:.4f}")
-        print(f"  SHD: {rcgnn_best['shd']}")
-        print(f"  AUPRC: {rcgnn_best['auprc']:.4f}")
-        print(f"  Top-{num_true_edges} F1: {rcgnn_topk['top_k_f1']:.4f}")
+        print(f" Best threshold: {rcgnn_best['threshold']:.3f}")
+        print(f" F1: {rcgnn_best['f1']:.4f}")
+        print(f" Precision: {rcgnn_best['precision']:.4f}")
+        print(f" Recall: {rcgnn_best['recall']:.4f}")
+        print(f" SHD: {rcgnn_best['shd']}")
+        print(f" AUPRC: {rcgnn_best['auprc']:.4f}")
+        print(f" Top-{num_true_edges} F1: {rcgnn_topk['top_k_f1']:.4f}")
         
         results['rcgnn'] = {**rcgnn_best, **rcgnn_topk}
     else:
-        print(f"  Checkpoint not found: {args.checkpoint}")
+        print(f" Checkpoint not found: {args.checkpoint}")
         results['rcgnn'] = None
     
     # ========== NOTEARS Baseline ==========
@@ -241,13 +241,13 @@ def main():
     notears_best = best_threshold_metrics(A_notears, A_true)
     notears_topk = top_k_metrics(A_notears, A_true, k=num_true_edges)
     
-    print(f"  Best threshold: {notears_best['threshold']:.3f}")
-    print(f"  F1: {notears_best['f1']:.4f}")
-    print(f"  Precision: {notears_best['precision']:.4f}")
-    print(f"  Recall: {notears_best['recall']:.4f}")
-    print(f"  SHD: {notears_best['shd']}")
-    print(f"  AUPRC: {notears_best['auprc']:.4f}")
-    print(f"  Top-{num_true_edges} F1: {notears_topk['top_k_f1']:.4f}")
+    print(f" Best threshold: {notears_best['threshold']:.3f}")
+    print(f" F1: {notears_best['f1']:.4f}")
+    print(f" Precision: {notears_best['precision']:.4f}")
+    print(f" Recall: {notears_best['recall']:.4f}")
+    print(f" SHD: {notears_best['shd']}")
+    print(f" AUPRC: {notears_best['auprc']:.4f}")
+    print(f" Top-{num_true_edges} F1: {notears_topk['top_k_f1']:.4f}")
     
     results['notears'] = {**notears_best, **notears_topk}
     
@@ -260,13 +260,13 @@ def main():
     corr_best = best_threshold_metrics(A_corr, A_true)
     corr_topk = top_k_metrics(A_corr, A_true, k=num_true_edges)
     
-    print(f"  Best threshold: {corr_best['threshold']:.3f}")
-    print(f"  F1: {corr_best['f1']:.4f}")
-    print(f"  Precision: {corr_best['precision']:.4f}")
-    print(f"  Recall: {corr_best['recall']:.4f}")
-    print(f"  SHD: {corr_best['shd']}")
-    print(f"  AUPRC: {corr_best['auprc']:.4f}")
-    print(f"  Top-{num_true_edges} F1: {corr_topk['top_k_f1']:.4f}")
+    print(f" Best threshold: {corr_best['threshold']:.3f}")
+    print(f" F1: {corr_best['f1']:.4f}")
+    print(f" Precision: {corr_best['precision']:.4f}")
+    print(f" Recall: {corr_best['recall']:.4f}")
+    print(f" SHD: {corr_best['shd']}")
+    print(f" AUPRC: {corr_best['auprc']:.4f}")
+    print(f" Top-{num_true_edges} F1: {corr_topk['top_k_f1']:.4f}")
     
     results['correlation'] = {**corr_best, **corr_topk}
     

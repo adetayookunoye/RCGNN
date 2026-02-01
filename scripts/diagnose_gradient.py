@@ -23,7 +23,7 @@ def main():
     
     # Load data
     data_path = Path('data/interim/uci_air')
-    X = np.load(data_path / 'X.npy')[:32]  # Just 32 samples
+    X = np.load(data_path / 'X.npy')[:32] # Just 32 samples
     M = np.load(data_path / 'M.npy')[:32]
     
     X_mean, X_std = X.mean(), X.std() + 1e-8
@@ -96,11 +96,11 @@ def main():
         grad_norm = model.structure_learner.A_base.grad.abs().mean().item()
         print(f"||grad(A_base)|| after toy_loss: {grad_norm:.6f}")
         if grad_norm > 0:
-            print("✓ A_base gets gradient from direct A dependency!")
+            print("[OK] A_base gets gradient from direct A dependency!")
         else:
-            print("✗ PROBLEM: A_base grad is still 0 even with direct dependency")
+            print("[X] PROBLEM: A_base grad is still 0 even with direct dependency")
     else:
-        print("✗ PROBLEM: A_base.grad is None!")
+        print("[X] PROBLEM: A_base.grad is None!")
     
     # ==========================================================================
     # TEST 4: Reconstruction loss gradient
@@ -125,12 +125,12 @@ def main():
         grad_norm = model.structure_learner.A_base.grad.abs().mean().item()
         print(f"||grad(A_base)|| after recon_loss: {grad_norm:.6f}")
         if grad_norm > 0:
-            print("✓ A_base gets gradient from recon_loss!")
+            print("[OK] A_base gets gradient from recon_loss!")
         else:
-            print("✗ PROBLEM: A_base grad is 0 from recon_loss")
-            print("  This means the message passing path is not contributing")
+            print("[X] PROBLEM: A_base grad is 0 from recon_loss")
+            print(" This means the message passing path is not contributing")
     else:
-        print("✗ PROBLEM: A_base.grad is None!")
+        print("[X] PROBLEM: A_base.grad is None!")
     
     # ==========================================================================
     # TEST 5: Force gate=0 and check gradient
@@ -141,7 +141,7 @@ def main():
     
     # Temporarily set gate to force all signal through A
     with torch.no_grad():
-        model.gate_alpha.fill_(-10.0)  # sigmoid(-10) ≈ 0.00005
+        model.gate_alpha.fill_(-10.0) # sigmoid(-10) ≈ 0.00005
     
     optimizer.zero_grad()
     out = model(X_tensor, M_tensor)
@@ -158,13 +158,13 @@ def main():
         grad_norm = model.structure_learner.A_base.grad.abs().mean().item()
         print(f"||grad(A_base)|| with gate≈0: {grad_norm:.6f}")
         if grad_norm > 0:
-            print("✓ A_base gets gradient when gate=0!")
-            print("  → The FIX is to initialize gate_alpha much lower (e.g., -5)")
+            print("[OK] A_base gets gradient when gate=0!")
+            print(" -> The FIX is to initialize gate_alpha much lower (e.g., -5)")
         else:
-            print("✗ PROBLEM: A_base grad is STILL 0 even with gate=0")
-            print("  → There's a deeper issue in the message passing path")
+            print("[X] PROBLEM: A_base grad is STILL 0 even with gate=0")
+            print(" -> There's a deeper issue in the message passing path")
     else:
-        print("✗ PROBLEM: A_base.grad is None!")
+        print("[X] PROBLEM: A_base.grad is None!")
     
     # ==========================================================================
     # TEST 6: Check gradient flow step by step

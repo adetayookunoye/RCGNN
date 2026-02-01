@@ -8,7 +8,7 @@
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Overview](#overview)
 - [Project Status](#project-status)
@@ -52,29 +52,29 @@ RC-GNN is a graph neural network framework for learning causal structures from t
 
 ## Project Status
 
-**Overall: ~85% Complete → Ready for Final Validation**
+**Overall: ~85% Complete -> Ready for Final Validation**
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| **Architecture** | ✅ 95% | Tri-latent encoders, hybrid decoder, structure learner working |
-| **Training** | ✅ 90% | V3 script with GroupDRO, warm-up schedules, gradient diagnostics |
-| **Empty Graph Fix** | ✅ 100% | Hybrid message passing prevents collapse (SHD 30→0-2) |
-| **Benchmarks** | ✅ 100% | 6 synthetic benchmarks generated (12,400 samples) |
-| **Experiments** | ⚠️ 70% | Main training done, ablations in progress |
-| **Hypothesis Tests** | ⚠️ 50% | H1/H2/H3 framework ready, needs execution |
+| **Architecture** | [DONE] 95% | Tri-latent encoders, hybrid decoder, structure learner working |
+| **Training** | [DONE] 90% | V3 script with GroupDRO, warm-up schedules, gradient diagnostics |
+| **Empty Graph Fix** | [DONE] 100% | Hybrid message passing prevents collapse (SHD 30->0-2) |
+| **Benchmarks** | [DONE] 100% | 6 synthetic benchmarks generated (12,400 samples) |
+| **Experiments** | [WARN] 70% | Main training done, ablations in progress |
+| **Hypothesis Tests** | [WARN] 50% | H1/H2/H3 framework ready, needs execution |
 
 ### Validated Claims
 
-- ✅ RC-GNN achieves comparable structure recovery to NOTEARS (F1 ≈ 0.35)
-- ✅ Improves Top-k edge ranking (RC-GNN Top-13 F1=0.31 vs NOTEARS=0.23)
-- ✅ Recovers meaningful sparse graphs (SHD=14-15 on UCI Air, close to 13 true edges)
-- ✅ Hybrid architecture prevents empty graph collapse (SHD 30→0-2 on synthetic)
+- [DONE] RC-GNN achieves comparable structure recovery to NOTEARS (F1 ≈ 0.35)
+- [DONE] Improves Top-k edge ranking (RC-GNN Top-13 F1=0.31 vs NOTEARS=0.23)
+- [DONE] Recovers meaningful sparse graphs (SHD=14-15 on UCI Air, close to 13 true edges)
+- [DONE] Hybrid architecture prevents empty graph collapse (SHD 30->0-2 on synthetic)
 
 ### Pending Validation
 
-- ⚠️ Robustness under increasing corruption (needs retraining sweep)
-- ⚠️ Disentangled representations (waiting on ablation results)
-- ⚠️ 60% variance reduction with invariance loss (H2 experiment needed)
+- [WARN] Robustness under increasing corruption (needs retraining sweep)
+- [WARN] Disentangled representations (waiting on ablation results)
+- [WARN] 60% variance reduction with invariance loss (H2 experiment needed)
 
 ---
 
@@ -86,9 +86,9 @@ The hybrid message passing architecture successfully prevents empty graph collap
 
 | Dataset | Before Fix | After Fix | Improvement |
 |---------|-----------|-----------|-------------|
-| **h1_easy** | SHD = 30.0 | SHD = 2.0 | 15x ✅ |
-| **h1_medium** | SHD = 30.0 | SHD = 0.0 | Perfect ✅ |
-| **h1_hard** | SHD = 30.0 | SHD = 0.0 | Perfect ✅ |
+| **h1_easy** | SHD = 30.0 | SHD = 2.0 | 15x [DONE] |
+| **h1_medium** | SHD = 30.0 | SHD = 0.0 | Perfect [DONE] |
+| **h1_hard** | SHD = 30.0 | SHD = 0.0 | Perfect [DONE] |
 
 ### UCI Air Quality Performance
 
@@ -142,8 +142,8 @@ make train-synth
 ```bash
 # Advanced validation with all metrics
 python scripts/validate_and_visualize_advanced.py \
-    --adjacency artifacts/adjacency/A_mean.npy \
-    --data-root data/interim/synth_small
+ --adjacency artifacts/adjacency/A_mean.npy \
+ --data-root data/interim/synth_small
 
 # Or use Makefile
 make validate-synth-advanced
@@ -186,27 +186,27 @@ The key architectural innovation that prevents empty graph collapse:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│           HYBRID MESSAGE PASSING                │
+│ HYBRID MESSAGE PASSING │
 └─────────────────────────────────────────────────┘
 
 PATH 1: Bypass Decoder (fast learning)
-  z_s, z_n, z_b ──→ [MLP] ──→ X_bypass
-  
-  Weight: gate_α  (gradually decreases during training)
+ z_s, z_n, z_b ──-> [MLP] ──-> X_bypass
+
+ Weight: gate_α (gradually decreases during training)
 
 PATH 2: Message Passing (forces causal structure)
-  z_s ──→ [Projector] ──→ features ──→ @ A_soft ──→ X_msg
-  z_n, z_b ──→ [Noise/Bias Decoder] ──→ noise_contrib
-  
-  Weight: (1 - gate_α)  (gradually increases)
+ z_s ──-> [Projector] ──-> features ──-> @ A_soft ──-> X_msg
+ z_n, z_b ──-> [Noise/Bias Decoder] ──-> noise_contrib
+
+ Weight: (1 - gate_α) (gradually increases)
 
 FINAL OUTPUT:
-  X_recon = gate_α × X_bypass + (1-gate_α) × X_msg
+ X_recon = gate_α × X_bypass + (1-gate_α) × X_msg
 ```
 
 **Why it works:**
 - Early training (gate_α ≈ 1): Use bypass for fast learning
-- Late training (gate_α → 0): Forced through A (prevents collapse)
+- Late training (gate_α -> 0): Forced through A (prevents collapse)
 - Learnable gate eliminates manual scheduling
 
 ### The Problem & Solution
@@ -214,16 +214,16 @@ FINAL OUTPUT:
 | Aspect | Problem | Solution |
 |--------|---------|----------|
 | **Issue** | A unused in reconstruction | Force A dependency via message path |
-| **Root Cause** | Bypass path: `[z_s,z_n,z_b]→MLP→X` | Hybrid: `gate*bypass + (1-gate)*message` |
+| **Root Cause** | Bypass path: `[z_s,z_n,z_b]->MLP->X` | Hybrid: `gate*bypass + (1-gate)*message` |
 | **Effect** | Acyclicity incentivizes A=0 | Now A essential (erasing breaks recon) |
 | **Result** | SHD=30 (empty graph) | SHD=0-2 (learned structure) |
 
 ### Tri-Latent Encoder
 
 ```python
-Z_S = E_S(Imputer(X, M), e)      # Signal
-Z_N = E_N(Imputer(X, M), e)      # Noise context
-Z_B = E_B(X̄_e, e)                # Bias/drift factors
+Z_S = E_S(Imputer(X, M), e) # Signal
+Z_N = E_N(Imputer(X, M), e) # Noise context
+Z_B = E_B(X̄_e, e) # Bias/drift factors
 ```
 
 ### Complete Loss Function
@@ -234,12 +234,12 @@ All six components are implemented and integrated:
 
 | Loss Component | Description | Status |
 |----------------|-------------|--------|
-| Reconstruction | MSE between X and X̂ | ✅ |
-| Sparsity | L1 norm on adjacency | ✅ |
-| Acyclicity | DAG constraint h(A) | ✅ |
-| Disentanglement | Correlation between z_s, z_n, z_b | ✅ |
-| Invariance | Cross-environment stability | ✅ |
-| Supervised | Optional ground truth guidance | ✅ |
+| Reconstruction | MSE between X and X̂ | [DONE] |
+| Sparsity | L1 norm on adjacency | [DONE] |
+| Acyclicity | DAG constraint h(A) | [DONE] |
+| Disentanglement | Correlation between z_s, z_n, z_b | [DONE] |
+| Invariance | Cross-environment stability | [DONE] |
+| Supervised | Optional ground truth guidance | [DONE] |
 
 ---
 
@@ -250,9 +250,9 @@ All six components are implemented and integrated:
 ```bash
 # Train on synthetic data
 python scripts/train_rcgnn.py \
-    configs/data.yaml \
-    configs/model.yaml \
-    configs/train.yaml
+ configs/data.yaml \
+ configs/model.yaml \
+ configs/train.yaml
 ```
 
 ### Training with Empty Graph Fix
@@ -260,9 +260,9 @@ python scripts/train_rcgnn.py \
 ```bash
 # Use fixed configurations with warm-up schedules
 python scripts/test_empty_graph_fix.py \
-    --dataset h1_easy \
-    --epochs 100 \
-    --batch_size 32
+ --dataset h1_easy \
+ --epochs 100 \
+ --batch_size 32
 ```
 
 ### Multi-Environment Training (with Invariance)
@@ -270,11 +270,11 @@ python scripts/test_empty_graph_fix.py \
 ```bash
 # Enable invariance loss for stability
 python scripts/train_rcgnn.py \
-    configs/data.yaml \
-    configs/model.yaml \
-    configs/train.yaml \
-    --model.loss.invariance.lambda_inv 0.5 \
-    --model.loss.invariance.n_envs 4
+ configs/data.yaml \
+ configs/model.yaml \
+ configs/train.yaml \
+ --model.loss.invariance.lambda_inv 0.5 \
+ --model.loss.invariance.n_envs 4
 ```
 
 ### Training Script Versions
@@ -293,40 +293,40 @@ The unified script consolidates best practices from all training scripts:
 ```bash
 # 1. Basic training (CPU/single GPU)
 python scripts/train_rcgnn_unified.py \
-    --data_dir data/interim/uci_air \
-    --epochs 100
+ --data_dir data/interim/uci_air \
+ --epochs 100
 
 # 2. Multi-GPU with DDP (4 GPUs)
 torchrun --nproc_per_node=4 scripts/train_rcgnn_unified.py \
-    --ddp \
-    --data_dir data/interim/uci_air \
-    --epochs 100
+ --ddp \
+ --data_dir data/interim/uci_air \
+ --epochs 100
 
 # 3. With GroupDRO for worst-case robustness
 python scripts/train_rcgnn_unified.py \
-    --data_dir data/interim/uci_air \
-    --use_groupdro \
-    --epochs 100
+ --data_dir data/interim/uci_air \
+ --use_groupdro \
+ --epochs 100
 
 # 4. Sweep mode (minimal output for ablation)
 python scripts/train_rcgnn_unified.py \
-    --data_dir data/interim/uci_air \
-    --seed 42 \
-    --sweep_mode
+ --data_dir data/interim/uci_air \
+ --seed 42 \
+ --sweep_mode
 
 # 5. Custom hyperparameters
 python scripts/train_rcgnn_unified.py \
-    --data_dir data/interim/synth_small \
-    --epochs 200 \
-    --lr 1e-3 \
-    --lambda_recon 200 \
-    --patience 30
+ --data_dir data/interim/synth_small \
+ --epochs 200 \
+ --lr 1e-3 \
+ --lambda_recon 200 \
+ --patience 30
 ```
 
 **Unified script features:**
 - Multi-GPU DDP support
 - GroupDRO for worst-case robustness
-- 3-stage training (discovery → pruning → refinement)
+- 3-stage training (discovery -> pruning -> refinement)
 - Publication-quality fixes (temperature, loss rebalancing, LR restarts)
 - Causal diagnostics (correlation vs causation detection)
 - Comprehensive metrics (TopK-F1, Best-F1, AUC-F1)
@@ -351,15 +351,15 @@ The empty graph fix uses warm-up schedules:
 ```yaml
 # configs/train_fixed.yaml
 lambda_supervised: 0.01
-supervised_warmup_epochs: 10    # Turn off after 10 epochs
+supervised_warmup_epochs: 10 # Turn off after 10 epochs
 
 lambda_acyclic: 0.05
-acyclic_warmup_epochs: 40       # Delay 40 epochs, then ramp
+acyclic_warmup_epochs: 40 # Delay 40 epochs, then ramp
 
 lambda_sparse: 1e-5
-sparse_warmup_epochs: 50        # Delay 50 epochs, then ramp
+sparse_warmup_epochs: 50 # Delay 50 epochs, then ramp
 
-mask_ratio: 0.7                 # Force graph usage
+mask_ratio: 0.7 # Force graph usage
 ```
 
 ---
@@ -372,9 +372,9 @@ RC-GNN includes **publication-grade validation** with 28 advanced metrics.
 
 ```bash
 python scripts/validate_and_visualize_advanced.py \
-    --adjacency artifacts/adjacency/A_mean.npy \
-    --data-root data/interim/synth_small \
-    --output-dir artifacts/validation_synth_advanced
+ --adjacency artifacts/adjacency/A_mean.npy \
+ --data-root data/interim/synth_small \
+ --output-dir artifacts/validation_synth_advanced
 ```
 
 ### 10 Advanced Features
@@ -404,9 +404,9 @@ python scripts/validate_and_visualize_advanced.py \
 
 ```python
 from src.training.metrics import (
-    adjacency_variance,     # Var_{e,e'}[||A^(e) - A^(e')||_F]
-    edge_set_jaccard,       # E[Jaccard(E^(e), E^(e'))]
-    policy_consistency      # Domain-relevant pathway tracking
+ adjacency_variance, # Var_{e,e'}[||A^(e) - A^(e')||_F]
+ edge_set_jaccard, # E[Jaccard(E^(e), E^(e'))]
+ policy_consistency # Domain-relevant pathway tracking
 )
 
 # Per-environment adjacencies
@@ -444,17 +444,17 @@ Six pre-configured benchmarks for hypothesis testing:
 
 | Benchmark | Nodes | Edges | Policy Edges |
 |-----------|-------|-------|--------------|
-| h3_policy | 25 | 50 | (2→5), (2→8), (5→12), (8→12), (12→20) |
+| h3_policy | 25 | 50 | (2->5), (2->8), (5->12), (8->12), (12->20) |
 
 ### Expected Results
 
 | Hypothesis | Benchmark | Success Criterion | Expected RC-GNN |
 |------------|-----------|-------------------|-----------------|
-| H1 | h1_easy | SHD < 5 | ✅ 2-3 |
-| H1 | h1_medium | SHD < 10 | ✅ 6-8 |
-| H1 | h1_hard | SHD < 20 | ✅ 12-18 |
-| H2 | h2_multi_env | Var_ratio ≤ 0.4 | ✅ 0.35-0.45 |
-| H3 | h3_policy | consistency ≥ 0.75 | ✅ 0.80-0.90 |
+| H1 | h1_easy | SHD < 5 | [DONE] 2-3 |
+| H1 | h1_medium | SHD < 10 | [DONE] 6-8 |
+| H1 | h1_hard | SHD < 20 | [DONE] 12-18 |
+| H2 | h2_multi_env | Var_ratio ≤ 0.4 | [DONE] 0.35-0.45 |
+| H3 | h3_policy | consistency ≥ 0.75 | [DONE] 0.80-0.90 |
 
 ### Generate Benchmarks
 
@@ -477,10 +477,10 @@ The UCI Air Quality dataset (13 variables, 13 true causal edges) with various co
 
 | Dataset | Missing% | Envs | Signal Gap | CorrF1 | TP/13 | Rating |
 |---------|----------|------|------------|--------|-------|--------|
-| **compound_mnar_bias** | 25.3% | 1 | 0.1533 | 0.2222 | 3 | ⭐⭐⭐ BEST |
-| **compound_full** | 25.0% | 3 | 0.0614 | 0.3704 | 5 | ⭐⭐ GOOD |
-| **extreme** | 40.0% | 5 | 0.0140 | 0.3704 | 5 | ⭐ WEAK |
-| **mcar_40** | 40.0% | 1 | 0.0052 | 0.1538 | 2 | ⭐ WEAK |
+| **compound_mnar_bias** | 25.3% | 1 | 0.1533 | 0.2222 | 3 | *** BEST |
+| **compound_full** | 25.0% | 3 | 0.0614 | 0.3704 | 5 | ** GOOD |
+| **extreme** | 40.0% | 5 | 0.0140 | 0.3704 | 5 | * WEAK |
+| **mcar_40** | 40.0% | 1 | 0.0052 | 0.1538 | 2 | * WEAK |
 
 **Key Metrics:**
 - **Signal Gap**: True edge correlation minus spurious edge correlation (higher = more identifiable)
@@ -525,15 +525,15 @@ The UCI Air Quality dataset (13 variables, 13 true causal edges) with various co
 ```bash
 # Train on recommended dataset
 python scripts/train_rcgnn_unified.py \
-    --data_dir data/interim/uci_air_c/compound_mnar_bias \
-    --output_dir artifacts/unified_compound_mnar_bias
+ --data_dir data/interim/uci_air_c/compound_mnar_bias \
+ --output_dir artifacts/unified_compound_mnar_bias
 
 # Train on all key datasets (multi-job)
 DATASETS=("compound_mnar_bias" "compound_full" "extreme" "mcar_40")
 for ds in "${DATASETS[@]}"; do
-    python scripts/train_rcgnn_unified.py \
-        --data_dir data/interim/uci_air_c/${ds} \
-        --output_dir artifacts/unified_${ds}
+ python scripts/train_rcgnn_unified.py \
+ --data_dir data/interim/uci_air_c/${ds} \
+ --output_dir artifacts/unified_${ds}
 done
 ```
 
@@ -543,16 +543,16 @@ Each benchmark directory contains:
 
 ```
 synth_corrupted_{name}/
-├── A_true.npy         # (d, d) — True adjacency
-├── X_train.npy        # (N_train, T, d) — Observed data
-├── M_train.npy        # (N_train, T, d) — Missingness masks (1=observed)
-├── S_train.npy        # (N_train, T, d) — Clean signals (for oracle)
-├── e_train.npy        # (N_train,) — Environment labels
-├── X_val.npy          # (N_val, T, d)
+├── A_true.npy # (d, d) — True adjacency
+├── X_train.npy # (N_train, T, d) — Observed data
+├── M_train.npy # (N_train, T, d) — Missingness masks (1=observed)
+├── S_train.npy # (N_train, T, d) — Clean signals (for oracle)
+├── e_train.npy # (N_train,) — Environment labels
+├── X_val.npy # (N_val, T, d)
 ├── M_val.npy
 ├── S_val.npy
 ├── e_val.npy
-└── meta.json          # Full metadata (reproducibility)
+└── meta.json # Full metadata (reproducibility)
 ```
 
 ---
@@ -567,31 +567,31 @@ window_len: 100
 features: 10
 
 paths:
-  root: "data/interim/synth_small"
+ root: "data/interim/synth_small"
 ```
 
 ### Model Config (`configs/model.yaml`)
 
 ```yaml
 encoder:
-  hidden_dim: 64
-  latent_dim: 32
+ hidden_dim: 64
+ latent_dim: 32
 
 structure:
-  n_envs: 3
-  temperature:
-    init: 1.5
-    final: 0.5
-  sparsify:
-    method: "topk"
-    k: 20
+ n_envs: 3
+ temperature:
+ init: 1.5
+ final: 0.5
+ sparsify:
+ method: "topk"
+ k: 20
 
 loss:
-  disentangle:
-    lambda_disen: 0.01
-  invariance:
-    lambda_inv: 0.0
-    n_envs: 1
+ disentangle:
+ lambda_disen: 0.01
+ invariance:
+ lambda_inv: 0.0
+ n_envs: 1
 ```
 
 ### Training Config (`configs/train.yaml`)
@@ -603,9 +603,9 @@ learning_rate: 5e-4
 gradient_clip: 1.0
 
 loss:
-  lambda_recon: 10.0
-  lambda_sparse: 1e-5
-  lambda_acyclic: 3e-6
+ lambda_recon: 10.0
+ lambda_sparse: 1e-5
+ lambda_acyclic: 3e-6
 
 device: "cpu"
 seed: 1337
@@ -627,10 +627,10 @@ mask_ratio: 0.7
 ```yaml
 # configs/model_fixed.yaml
 edge:
-  init_logit: -1.5              # Initialize ~18% edges "on"
-  concrete_temp_start: 2.0      # High temperature for soft sampling
-  concrete_temp_end: 0.5        # Low temperature for sharp decisions
-  threshold: 0.2                # Lower threshold for easier activation
+ init_logit: -1.5 # Initialize ~18% edges "on"
+ concrete_temp_start: 2.0 # High temperature for soft sampling
+ concrete_temp_end: 0.5 # Low temperature for sharp decisions
+ threshold: 0.2 # Lower threshold for easier activation
 ```
 
 ---
@@ -663,8 +663,8 @@ python scripts/test_empty_graph_fix.py --dataset h1_easy --epochs 100
 **Solution:** Reduce loss weights:
 ```yaml
 loss:
-  lambda_sparse: 1e-6    # Was 1e-5
-  lambda_acyclic: 3e-7   # Was 3e-6
+ lambda_sparse: 1e-6 # Was 1e-5
+ lambda_acyclic: 3e-7 # Was 3e-6
 ```
 
 ### SHD = 1e9 (Invalid)
@@ -689,9 +689,9 @@ batch_size: 16
 
 **Problem:** A stays uniform (min ≈ mean ≈ max)
 
-**Solution:** 
+**Solution:**
 1. Initialize gate_alpha = -2.0 (88% through A)
-2. Use sharper temperature schedule (0.5 → 0.1)
+2. Use sharper temperature schedule (0.5 -> 0.1)
 3. Use target-sparsity instead of L1
 
 ---
@@ -700,58 +700,58 @@ batch_size: 16
 
 ```
 rcgnn/
-├── README.md                          ← This file
-├── requirements.txt                   ← Python dependencies
-├── environment.yml                    ← Conda environment
-├── Makefile                          ← Automation commands
+├── README.md <- This file
+├── requirements.txt <- Python dependencies
+├── environment.yml <- Conda environment
+├── Makefile <- Automation commands
 │
-├── configs/                          ← Configuration files
-│   ├── data.yaml                     ← Synthetic data config
-│   ├── data_uci.yaml                 ← UCI Air config
-│   ├── model.yaml                    ← Model architecture
-│   ├── train.yaml                    ← Training hyperparameters
-│   ├── train_fixed.yaml              ← Fixed config with warm-ups
-│   └── model_fixed.yaml              ← Fixed edge parameterization
+├── configs/ <- Configuration files
+│ ├── data.yaml <- Synthetic data config
+│ ├── data_uci.yaml <- UCI Air config
+│ ├── model.yaml <- Model architecture
+│ ├── train.yaml <- Training hyperparameters
+│ ├── train_fixed.yaml <- Fixed config with warm-ups
+│ └── model_fixed.yaml <- Fixed edge parameterization
 │
-├── data/                             ← Datasets
-│   └── interim/
-│       ├── synth_small/              ← Synthetic (linear)
-│       ├── synth_corrupted_*/        ← Corruption benchmarks
-│       └── uci_air/                  ← UCI Air Quality
+├── data/ <- Datasets
+│ └── interim/
+│ ├── synth_small/ <- Synthetic (linear)
+│ ├── synth_corrupted_*/ <- Corruption benchmarks
+│ └── uci_air/ <- UCI Air Quality
 │
-├── scripts/                          ← Executable scripts
-│   ├── synth_bench.py                ← Generate synthetic data
-│   ├── synth_corruption_benchmark.py ← Generate corruption benchmarks
-│   ├── train_rcgnn.py                ← Main training script
-│   ├── train_rcgnn_v3.py             ← Training with GroupDRO + diagnostics
-│   ├── train_rcgnn_v4.py             ← Training with causal priors
-│   ├── eval_rcgnn.py                 ← Evaluation script
-│   ├── validate_and_visualize_advanced.py  ← Advanced validation
-│   └── run_baselines.py              ← Baseline methods
+├── scripts/ <- Executable scripts
+│ ├── synth_bench.py <- Generate synthetic data
+│ ├── synth_corruption_benchmark.py <- Generate corruption benchmarks
+│ ├── train_rcgnn.py <- Main training script
+│ ├── train_rcgnn_v3.py <- Training with GroupDRO + diagnostics
+│ ├── train_rcgnn_v4.py <- Training with causal priors
+│ ├── eval_rcgnn.py <- Evaluation script
+│ ├── validate_and_visualize_advanced.py <- Advanced validation
+│ └── run_baselines.py <- Baseline methods
 │
-├── src/                              ← Source code
-│   ├── models/
-│   │   ├── rcgnn.py                  ← Main RC-GNN model (canonical)
-│   │   ├── causal_priors.py          ← Causal identifiability priors
-│   │   ├── invariance.py             ← IRM structure invariance
-│   │   ├── mechanisms.py             ← Causal mechanisms
-│   │   ├── recon.py                  ← Reconstruction with uncertainty
-│   │   ├── invariance.py             ← IRM structure invariance
-│   │   └── disentanglement.py        ← MINE/InfoNCE
-│   └── training/
-│       ├── loop.py                   ← Training loop
-│       ├── optim.py                  ← Loss computation
-│       ├── metrics.py                ← Evaluation + stability metrics
-│       └── eval_robust.py            ← Robust evaluation
+├── src/ <- Source code
+│ ├── models/
+│ │ ├── rcgnn.py <- Main RC-GNN model (canonical)
+│ │ ├── causal_priors.py <- Causal identifiability priors
+│ │ ├── invariance.py <- IRM structure invariance
+│ │ ├── mechanisms.py <- Causal mechanisms
+│ │ ├── recon.py <- Reconstruction with uncertainty
+│ │ ├── invariance.py <- IRM structure invariance
+│ │ └── disentanglement.py <- MINE/InfoNCE
+│ └── training/
+│ ├── loop.py <- Training loop
+│ ├── optim.py <- Loss computation
+│ ├── metrics.py <- Evaluation + stability metrics
+│ └── eval_robust.py <- Robust evaluation
 │
-├── tests/                            ← Unit tests
+├── tests/ <- Unit tests
 │
-└── artifacts/                        ← Outputs
-    ├── adjacency/                    ← Learned adjacency matrices
-    ├── checkpoints/                  ← Model checkpoints
-    ├── v3/                           ← V3 experiment results
-    ├── v4_experiments/               ← V4 experiment results
-    └── validation_*/                 ← Validation results
+└── artifacts/ <- Outputs
+ ├── adjacency/ <- Learned adjacency matrices
+ ├── checkpoints/ <- Model checkpoints
+ ├── v3/ <- V3 experiment results
+ ├── v4_experiments/ <- V4 experiment results
+ └── validation_*/ <- Validation results
 ```
 
 ---
@@ -780,52 +780,52 @@ make results
 
 **Setup:**
 ```bash
-make help              # Show all commands
-make setup             # Complete initial setup (conda + packages + data)
-make check-env         # Verify Python environment
-make create-env        # Create conda environment
-make install-deps      # Install Python packages
-make info              # Show project info
+make help # Show all commands
+make setup # Complete initial setup (conda + packages + data)
+make check-env # Verify Python environment
+make create-env # Create conda environment
+make install-deps # Install Python packages
+make info # Show project info
 ```
 
 **Data:**
 ```bash
-make data-download     # Check dataset
-make data-prepare      # Prepare dataset
-make data-verify       # Verify dataset integrity
-make data-synth-small  # Generate synthetic data
-make data-air          # Prepare UCI Air Quality
+make data-download # Check dataset
+make data-prepare # Prepare dataset
+make data-verify # Verify dataset integrity
+make data-synth-small # Generate synthetic data
+make data-air # Prepare UCI Air Quality
 ```
 
 **Training:**
 ```bash
-make train             # Train RC-GNN model (~60 sec)
-make train-verbose     # Show detailed progress
-make train-synth       # Train on synthetic
-make train-air         # Train on UCI Air
-make train-quick       # Quick test (5 epochs)
-make analyze           # Optimize threshold
-make baseline          # Compare with baseline methods
-make full-pipeline     # Train + analyze + compare
-make visualize         # Generate charts
+make train # Train RC-GNN model (~60 sec)
+make train-verbose # Show detailed progress
+make train-synth # Train on synthetic
+make train-air # Train on UCI Air
+make train-quick # Quick test (5 epochs)
+make analyze # Optimize threshold
+make baseline # Compare with baseline methods
+make full-pipeline # Train + analyze + compare
+make visualize # Generate charts
 ```
 
 **Validation:**
 ```bash
-make validate-synth-advanced  # Full validation with 28 metrics
-make validate-all             # Both datasets
-make compare-baselines        # RC-GNN vs baselines
+make validate-synth-advanced # Full validation with 28 metrics
+make validate-all # Both datasets
+make compare-baselines # RC-GNN vs baselines
 ```
 
 **Results & Maintenance:**
 ```bash
-make results           # Show summary
-make view-artifacts    # List all output files
-make test              # Run unit tests
-make clean             # Remove artifacts
-make clean-all         # Remove everything
-make docs              # Show documentation
-make status            # Project status
+make results # Show summary
+make view-artifacts # List all output files
+make test # Run unit tests
+make clean # Remove artifacts
+make clean-all # Remove everything
+make docs # Show documentation
+make status # Project status
 ```
 
 ### Typical Workflows
@@ -838,33 +838,33 @@ conda activate rcgnn-env
 
 **Regular Training:**
 ```bash
-make train         # Train model (60 seconds)
-make results       # View results
+make train # Train model (60 seconds)
+make results # View results
 ```
 
 **Full Analysis:**
 ```bash
-make analyze       # Threshold optimization
-make baseline      # Compare methods
+make analyze # Threshold optimization
+make baseline # Compare methods
 make full-pipeline # Everything together
 ```
 
 **Clean & Restart:**
 ```bash
-make clean         # Remove old results
-make train         # Train new model
+make clean # Remove old results
+make train # Train new model
 ```
 
 ### Makefile Features
 
-- ✓ Colored terminal output (easy to read)
-- ✓ Progress indicators (know what's happening)
-- ✓ Error checking (catches problems early)
-- ✓ Built-in help system
-- ✓ Flexible workflows (run commands in any order)
-- ✓ Safe cleanup (won't delete source code)
-- ✓ One-command setup
-- ✓ Beginner-friendly (no coding knowledge needed)
+- [OK] Colored terminal output (easy to read)
+- [OK] Progress indicators (know what's happening)
+- [OK] Error checking (catches problems early)
+- [OK] Built-in help system
+- [OK] Flexible workflows (run commands in any order)
+- [OK] Safe cleanup (won't delete source code)
+- [OK] One-command setup
+- [OK] Beginner-friendly (no coding knowledge needed)
 
 ---
 
@@ -878,7 +878,7 @@ This project has gone through several major phases:
 - Basic training loop with 6 loss components
 
 ### Phase 2: Empty Graph Fix (Oct-Nov 2025)
-- Discovered bypass path problem causing A→0
+- Discovered bypass path problem causing A->0
 - Implemented hybrid message passing decoder
 - Added regularizer warm-up schedules
 - Achieved perfect recovery on synthetic benchmarks
@@ -903,7 +903,7 @@ The following documents capture the development history:
 | `ANALYSIS_ACYCLICITY_COLLAPSE.md` | Discovery of acyclicity destroying edges |
 | `ANALYSIS_BYPASS_PATH_FUNDAMENTAL_ISSUE.md` | Root cause analysis |
 | `ARCHITECTURAL_FIX_COMPLETE.md` | Hybrid decoder solution |
-| `EMPTY_GRAPH_FIX_VALIDATED.md` | Validation results (SHD 30→0) |
+| `EMPTY_GRAPH_FIX_VALIDATED.md` | Validation results (SHD 30->0) |
 | `BENCHMARK_SUMMARY.md` | 6 synthetic benchmark specs |
 | `EXPERIMENT_STATUS.md` | Current experiment status |
 | `PAPER_CODE_GAP_ANALYSIS.md` | Paper vs implementation mapping |
@@ -924,27 +924,27 @@ The comprehensive evaluation uses a 5-step calibration protocol:
 
 ```
 STEP 1: SELECT VALIDATION CORRUPTION
-  └─ Default: compound_full (held out for K selection)
+ └─ Default: compound_full (held out for K selection)
 
 STEP 2: COMPUTE SENSITIVITY CURVE (K sweep)
-  ├─ K range: [5, 39] (for 13-edge ground truth)
-  ├─ For each K: Compute F1, SHD, Precision, Recall
-  └─ Result: Dict mapping K → {f1, shd, precision, recall}
+ ├─ K range: [5, 39] (for 13-edge ground truth)
+ ├─ For each K: Compute F1, SHD, Precision, Recall
+ └─ Result: Dict mapping K -> {f1, shd, precision, recall}
 
 STEP 3: FIND OPTIMAL K
-  └─ optimal_k = argmax_K F1(K) on validation set
-     (No oracle information - K selected from validation only)
+ └─ optimal_k = argmax_K F1(K) on validation set
+ (No oracle information - K selected from validation only)
 
 STEP 4: REPORT ROBUSTNESS
-  ├─ Show F1 values for K ∈ [optimal_k - 5, optimal_k + 5]
-  ├─ Calculate F1 variation (max - min)
-  └─ Interpret:
-     < 0.1  → ✅ ROBUST (highly stable)
-     0.1-0.2 → ⚠️ MODERATE (some sensitivity)
-     > 0.2  → ❌ SENSITIVE (threshold-dependent)
+ ├─ Show F1 values for K ∈ [optimal_k - 5, optimal_k + 5]
+ ├─ Calculate F1 variation (max - min)
+ └─ Interpret:
+ < 0.1 -> [DONE] ROBUST (highly stable)
+ 0.1-0.2 -> [WARN] MODERATE (some sensitivity)
+ > 0.2 -> [FAIL] SENSITIVE (threshold-dependent)
 
 STEP 5: APPLY UNCHANGED TO TEST SET
-  └─ Use same K for all test corruptions + all methods
+ └─ Use same K for all test corruptions + all methods
 ```
 
 ### Quick Start: Running the Evaluation
@@ -952,9 +952,9 @@ STEP 5: APPLY UNCHANGED TO TEST SET
 #### Local (CPU, 30 seconds)
 ```bash
 python scripts/comprehensive_evaluation.py \
-  --artifacts-dir artifacts \
-  --data-dir data/interim \
-  --output artifacts/eval_calibrated.json
+ --artifacts-dir artifacts \
+ --data-dir data/interim \
+ --output artifacts/eval_calibrated.json
 ```
 
 #### Sapelo GPU (2 minutes)
@@ -964,45 +964,45 @@ sbatch slurm/train_unified_gpu.sh
 
 ### Actual Results (January 21, 2026)
 
-**Calibration Protocol Execution: ✅ SUCCESS**
+**Calibration Protocol Execution: [DONE] SUCCESS**
 
 ![Sensitivity Curve](artifacts/sensitivity_curve_compound_full.png)
 
 **Output Summary:**
 
 ```
-📊 CALIBRATION PROTOCOL: SENSITIVITY ANALYSIS
+ CALIBRATION PROTOCOL: SENSITIVITY ANALYSIS
 ─────────────────────────────────────────────
-✅ OPTIMAL K FOUND: 13 (matching ground truth)
-   F1-Score: 0.923
-   SHD: 2
-   Precision: 0.833
-   Recall: 1.000
+[DONE] OPTIMAL K FOUND: 13 (matching ground truth)
+ F1-Score: 0.923
+ SHD: 2
+ Precision: 0.833
+ Recall: 1.000
 
-💡 Methodology: K selected from validation corruption (compound_full),
-   applied unchanged to all test corruptions (compound_mnar_bias, extreme, mcar_40)
+ Methodology: K selected from validation corruption (compound_full),
+ applied unchanged to all test corruptions (compound_mnar_bias, extreme, mcar_40)
 
-📊 F1-Score robustness: RC-GNN achieves perfect or near-perfect scores:
-   • compound_full: SHD=10, F1=0.923 (best among all baselines)
-   • compound_mnar_bias: SHD=0, F1=1.000 (PERFECT)
-   • extreme: SHD=0, F1=1.000 (PERFECT)
-   • mcar_40: SHD=0, F1=1.000 (PERFECT)
+ F1-Score robustness: RC-GNN achieves perfect or near-perfect scores:
+ - compound_full: SHD=10, F1=0.923 (best among all baselines)
+ - compound_mnar_bias: SHD=0, F1=1.000 (PERFECT)
+ - extreme: SHD=0, F1=1.000 (PERFECT)
+ - mcar_40: SHD=0, F1=1.000 (PERFECT)
 
-✅ ROBUST: Structure is stable across 40% missing data scenarios
-✅ Invariance: 68.9% edge consistency (strong across corruptions)
-✅ Sensitivity curve saved to: artifacts/sensitivity_curve_compound_full.png
+[DONE] ROBUST: Structure is stable across 40% missing data scenarios
+[DONE] Invariance: 68.9% edge consistency (strong across corruptions)
+[DONE] Sensitivity curve saved to: artifacts/sensitivity_curve_compound_full.png
 ```
 
 **Fair Baseline Comparison (All methods at K=13):**
 
 | Corruption | Method | SHD | F1 | Winner |
 |---|---|---|---|---|
-| **compound_full** | RC-GNN | 10 | 0.923 | ✅ RC-GNN |
+| **compound_full** | RC-GNN | 10 | 0.923 | [DONE] RC-GNN |
 | | NOTears-Lite | 25 | 0.194 | |
-| **compound_mnar_bias** | RC-GNN | 0 | 1.000 | ✅ RC-GNN (PERFECT) |
+| **compound_mnar_bias** | RC-GNN | 0 | 1.000 | [DONE] RC-GNN (PERFECT) |
 | | NOTears-Lite | 21 | 0.323 | |
-| **extreme** | RC-GNN | 0 | 1.000 | ✅ RC-GNN (PERFECT) |
-| **mcar_40** | RC-GNN | 0 | 1.000 | ✅ RC-GNN (PERFECT) |
+| **extreme** | RC-GNN | 0 | 1.000 | [DONE] RC-GNN (PERFECT) |
+| **mcar_40** | RC-GNN | 0 | 1.000 | [DONE] RC-GNN (PERFECT) |
 
 ### Fair Baseline Comparison
 
@@ -1010,37 +1010,37 @@ All 7 methods evaluated at **same K=13** (equal sparsity):
 
 ```
 COMPOUND_FULL:
-RC-GNN (sparse)  | SHD=2   | Skel-F1=0.923 | Dir-F1=0.923 | Win: ✅
-Correlation      | SHD=25  | Skel-F1=0.385 | Dir-F1=0.308 |
-NOTears-Lite     | SHD=12  | Skel-F1=0.615 | Dir-F1=0.538 |
-NOTEARS          | SHD=10  | Skel-F1=0.692 | Dir-F1=0.615 |
-Granger          | SHD=16  | Skel-F1=0.538 | Dir-F1=0.462 |
-PCMCI+           | SHD=8   | Skel-F1=0.769 | Dir-F1=0.692 |
-PC Algorithm     | SHD=14  | Skel-F1=0.615 | Dir-F1=0.538 |
+RC-GNN (sparse) | SHD=2 | Skel-F1=0.923 | Dir-F1=0.923 | Win: [DONE]
+Correlation | SHD=25 | Skel-F1=0.385 | Dir-F1=0.308 |
+NOTears-Lite | SHD=12 | Skel-F1=0.615 | Dir-F1=0.538 |
+NOTEARS | SHD=10 | Skel-F1=0.692 | Dir-F1=0.615 |
+Granger | SHD=16 | Skel-F1=0.538 | Dir-F1=0.462 |
+PCMCI+ | SHD=8 | Skel-F1=0.769 | Dir-F1=0.692 |
+PC Algorithm | SHD=14 | Skel-F1=0.615 | Dir-F1=0.538 |
 
 COMPOUND_MNAR_BIAS:
-RC-GNN (sparse)  | SHD=0   | Skel-F1=1.000 | Dir-F1=1.000 | Win: ✅✅✅
+RC-GNN (sparse) | SHD=0 | Skel-F1=1.000 | Dir-F1=1.000 | Win: [DONE][DONE][DONE]
 [Others consistently worse]
 ```
 
 ### Key Principles
 
-✅ **No Oracle Information**
+[DONE] **No Oracle Information**
 - K selected from validation corruption's sensitivity curve
 - K NOT based on knowledge of test corruption labels
 - Standard ML practice: train/val/test split applied to threshold selection
 
-✅ **Fair Comparison**
+[DONE] **Fair Comparison**
 - All 7 methods (RC-GNN + 6 baselines) evaluated at K=optimal_k
 - No method receives preferential treatment
 - Identical sparsity ensures fair SHD and F1 comparison
 
-✅ **Robustness Proof**
+[DONE] **Robustness Proof**
 - Sensitivity curves show F1 stability across K range
 - If F1 varies by < 0.1, result is robust
 - Preempts "lucky threshold" or "cherry-picked K" criticisms
 
-✅ **Full Transparency**
+[DONE] **Full Transparency**
 - Every step documented in code and docstring
 - Sensitivity curves generated as visual proof
 - Reproducible by independent researchers
@@ -1080,11 +1080,11 @@ RC-GNN (sparse)  | SHD=0   | Skel-F1=1.000 | Dir-F1=1.000 | Win: ✅✅✅
 
 | Output | Interpretation |
 |--------|-----------------|
-| `✅ OPTIMAL K FOUND: 13` | Calibration converged to ground truth ✓ |
+| `[DONE] OPTIMAL K FOUND: 13` | Calibration converged to ground truth [OK] |
 | `F1-Score: 0.9231` | Model achieves 92% F1 on validation |
 | `SHD: 2` | Only 2 structural differences from ground truth |
-| `✅ ROBUST` | F1 varies < 0.04, result is threshold-independent |
-| `✅ Sensitivity curve saved` | PNG available for paper |
+| `[DONE] ROBUST` | F1 varies < 0.04, result is threshold-independent |
+| `[DONE] Sensitivity curve saved` | PNG available for paper |
 
 ### Publishing Your Results
 
@@ -1140,10 +1140,10 @@ If you use RC-GNN in your research, please cite:
 
 ```bibtex
 @article{rcgnn2025,
-  title={RC-GNN: Robust Causal Graph Neural Networks under Compound Sensor Corruptions},
-  author={Okunoye, Adetayo},
-  journal={arXiv preprint},
-  year={2025}
+ title={RC-GNN: Robust Causal Graph Neural Networks under Compound Sensor Corruptions},
+ author={Okunoye, Adetayo},
+ journal={arXiv preprint},
+ year={2025}
 }
 ```
 
@@ -1163,6 +1163,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Last Updated:** January 19, 2026  
-**Version:** 2.0.0  
-**Status:** Production Ready ✅
+**Last Updated:** January 19, 2026
+**Version:** 2.0.0
+**Status:** Production Ready [DONE]

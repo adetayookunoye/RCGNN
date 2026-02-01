@@ -41,7 +41,7 @@ def test_masking_aware_attention():
     B, T = 2, 10
     x = torch.randn(B, T, d_model)
     mask = torch.ones(B, T, dtype=torch.bool)
-    mask[:, [3,7]] = False  # Make some positions missing
+    mask[:, [3,7]] = False # Make some positions missing
     
     # Test forward pass
     out = attn(x, mask)
@@ -150,7 +150,7 @@ def test_imputer_uncertainty_calibration(sample_data):
         calibration_error += torch.abs(empirical_std - bin_uncert)
     
     avg_calibration_error = calibration_error / n_bins
-    assert avg_calibration_error < 0.5  # Should be reasonably calibrated
+    assert avg_calibration_error < 0.5 # Should be reasonably calibrated
 
 def test_imputer_batch_handling():
     """Test imputer's handling of batched and unbatched inputs."""

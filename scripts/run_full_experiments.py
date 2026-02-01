@@ -144,7 +144,7 @@ def apply_corruption(X: np.ndarray, M: np.ndarray, missing_rate: float, seed: in
     # Apply mask only to observed entries
     new_missing = observed_mask & additional_mask
     M_corrupt[new_missing] = 0
-    X_corrupt[new_missing] = 0  # Or np.nan
+    X_corrupt[new_missing] = 0 # Or np.nan
     
     return X_corrupt, M_corrupt
 
@@ -233,7 +233,7 @@ def train_model(
             # Add invariance penalty if enabled
             if use_invariance:
                 A = output['A']
-                inv_loss = 0.01 * A.var()  # Simple variance penalty
+                inv_loss = 0.01 * A.var() # Simple variance penalty
                 loss = loss + inv_loss
             
             loss.backward()
@@ -251,7 +251,7 @@ def train_model(
                 best_A = A_pred.copy()
         
         if verbose and epoch % 10 == 0:
-            print(f"  Epoch {epoch}: F1={eval_metrics['f1']:.3f}, AUPRC={eval_metrics['auprc']:.3f}")
+            print(f" Epoch {epoch}: F1={eval_metrics['f1']:.3f}, AUPRC={eval_metrics['auprc']:.3f}")
     
     if best_A is None:
         best_A = A_pred
@@ -309,7 +309,7 @@ def run_ablation_study(
         )
         
         results[name] = metrics
-        print(f"  Final: F1={metrics['f1']:.4f}, AUPRC={metrics['auprc']:.4f}, "
+        print(f" Final: F1={metrics['f1']:.4f}, AUPRC={metrics['auprc']:.4f}, "
               f"SHD={metrics['shd']}, Top-k F1={metrics['top_k_f1']:.4f}")
     
     # Save results
@@ -362,7 +362,7 @@ def run_corruption_sweep(
         # Apply corruption
         X, M = apply_corruption(X_orig, M_orig, rate, seed)
         actual_missing = (M == 0).mean()
-        print(f"  Actual missing: {actual_missing:.1%}")
+        print(f" Actual missing: {actual_missing:.1%}")
         
         # Train RC-GNN
         train_loader, val_loader = prepare_dataloader(X, M, e)
@@ -379,8 +379,8 @@ def run_corruption_sweep(
         metrics_notears.update(top_k_metrics(A_notears, A_true))
         results['notears'][f'{rate:.0%}'] = metrics_notears
         
-        print(f"  RC-GNN:  AUPRC={metrics_rcgnn['auprc']:.4f}, Top-k F1={metrics_rcgnn['top_k_f1']:.4f}")
-        print(f"  NOTEARS: AUPRC={metrics_notears['auprc']:.4f}, Top-k F1={metrics_notears['top_k_f1']:.4f}")
+        print(f" RC-GNN: AUPRC={metrics_rcgnn['auprc']:.4f}, Top-k F1={metrics_rcgnn['top_k_f1']:.4f}")
+        print(f" NOTEARS: AUPRC={metrics_notears['auprc']:.4f}, Top-k F1={metrics_notears['top_k_f1']:.4f}")
     
     # Save results
     os.makedirs(output_dir, exist_ok=True)
@@ -470,7 +470,7 @@ def run_stability_experiment(
         all_A_preds.append(A_pred)
         all_metrics.append(metrics)
         
-        print(f"  F1={metrics['f1']:.4f}, AUPRC={metrics['auprc']:.4f}, SHD={metrics['shd']}")
+        print(f" F1={metrics['f1']:.4f}, AUPRC={metrics['auprc']:.4f}, SHD={metrics['shd']}")
     
     # Compute statistics
     f1_scores = [m['f1'] for m in all_metrics]
@@ -510,10 +510,10 @@ def run_stability_experiment(
     print("\n" + "-" * 60)
     print("STABILITY RESULTS")
     print("-" * 60)
-    print(f"F1:           {results['f1_mean']:.4f} ± {results['f1_std']:.4f}")
-    print(f"AUPRC:        {results['auprc_mean']:.4f} ± {results['auprc_std']:.4f}")
-    print(f"SHD:          {results['shd_mean']:.1f} ± {results['shd_std']:.1f}")
-    print(f"Top-k F1:     {results['topk_f1_mean']:.4f} ± {results['topk_f1_std']:.4f}")
+    print(f"F1: {results['f1_mean']:.4f} ± {results['f1_std']:.4f}")
+    print(f"AUPRC: {results['auprc_mean']:.4f} ± {results['auprc_std']:.4f}")
+    print(f"SHD: {results['shd_mean']:.1f} ± {results['shd_std']:.1f}")
+    print(f"Top-k F1: {results['topk_f1_mean']:.4f} ± {results['topk_f1_std']:.4f}")
     print(f"Edge Jaccard: {results['edge_jaccard_mean']:.4f} ± {results['edge_jaccard_std']:.4f}")
     
     return results

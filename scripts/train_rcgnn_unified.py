@@ -12,7 +12,7 @@ Consolidates best practices from all training scripts:
 Features:
 1. Multi-GPU (DDP) with single-GPU/CPU fallback
 2. GroupDRO for worst-case robustness across regimes
-3. 3-Stage Training: discovery → pruning → refinement
+3. 3-Stage Training: discovery -> pruning -> refinement
 4. Publication-quality fixes (temperature, loss rebalancing)
 5. Gradient stability (aggressive clipping, LR scheduling)
 6. Causal diagnostics (correlation vs causation)
@@ -77,7 +77,7 @@ DEFAULT_CONFIG = {
     "epochs": 100,
     "batch_size": 32,
     "patience": 20,
-    "eval_frequency": 1,  # V8.12 FIX: Validate every epoch (was 2, caused alternation bug)
+    "eval_frequency": 1, # V8.12 FIX: Validate every epoch (was 2, caused alternation bug)
     
     # Learning rate (with warm restarts - FIX 6 from publication)
     "lr": 5e-4,
@@ -95,138 +95,138 @@ DEFAULT_CONFIG = {
     # CRITICAL FIX: Gradual sparsity ramp (not cliff)
     # ===========================================================================
     # Loss weights (rebalanced for causal discovery, not just reconstruction)
-    "lambda_recon": 1.0,        # FIXED: Was 50.0, dominated all other losses
-    "lambda_miss": 0.5,         # Missingness prediction
-    "lambda_hsic": 0.1,         # Disentanglement
+    "lambda_recon": 1.0, # FIXED: Was 50.0, dominated all other losses
+    "lambda_miss": 0.5, # Missingness prediction
+    "lambda_hsic": 0.1, # Disentanglement
     
     # Sparsity schedule (ramps from epoch 1)
-    # INCREASED: 0.01 → 0.05 for stronger sparsity pressure
+    # INCREASED: 0.01 -> 0.05 for stronger sparsity pressure
     "lambda_sparse_init": 1e-5, # Start tiny at epoch 1
     "lambda_sparse_final": 0.05,# Ramp to this by end of PRUNE (was 0.01)
     
     # Acyclicity schedule (delayed until some structure learned)
     "lambda_acyclic_init": 0.0, # Start at 0
     "lambda_acyclic_final": 0.5,# Ramp to this by end of training
-    "acyclic_start_epoch": 10,  # Start acyclicity after epoch 10
+    "acyclic_start_epoch": 10, # Start acyclicity after epoch 10
     
     # Edge budget schedule (ramps from epoch 10)
-    "lambda_budget_init": 0.0,  # Start at 0
+    "lambda_budget_init": 0.0, # Start at 0
     "lambda_budget_final": 0.5, # Ramp to this
-    "budget_start_epoch": 10,   # Start budget pressure after epoch 10
+    "budget_start_epoch": 10, # Start budget pressure after epoch 10
     
-    "lambda_inv": 1.0,          # Invariance (needs regimes > 1)
-    "lambda_causal": 1.0,       # FIXED: Was 0.2, increased for direction awareness
+    "lambda_inv": 1.0, # Invariance (needs regimes > 1)
+    "lambda_causal": 1.0, # FIXED: Was 0.2, increased for direction awareness
     "lambda_var_penalty": 0.01, # MNAR variance penalty
     
     # ===========================================================================
     # CRITICAL FIX: Binarization penalty A*(1-A) for edge confidence
     # Encourages edges to be near 0 or 1, not in gray zone (0.2-0.3)
     # ===========================================================================
-    "lambda_binary_init": 0.0,  # Start at 0 (allow exploration)
+    "lambda_binary_init": 0.0, # Start at 0 (allow exploration)
     "lambda_binary_final": 0.2, # Ramp to this during PRUNE
-    "binary_start_epoch": 10,   # Start after initial exploration
+    "binary_start_epoch": 10, # Start after initial exploration
     
     # ===========================================================================
     # CALIBRATION FIX: Prevent adjacency collapse
     # ===========================================================================
-    "sparse_refine_factor": 0.5,      # Reduce λs to 50% in REFINE phase
-    "min_edge_sum_for_sparse": 5.0,   # If edge_sum drops below this, reduce λs
+    "sparse_refine_factor": 0.5, # Reduce λs to 50% in REFINE phase
+    "min_edge_sum_for_sparse": 5.0, # If edge_sum drops below this, reduce λs
     "temperature_floor_unstable": 0.8, # Don't go below this τ if direction unstable
     
     # ===========================================================================
     # CRITICAL FIX: Temperature annealing (prevent early saturation)
-    # Aggressive schedule: 2.0 → 0.3 to force confident edge separation
+    # Aggressive schedule: 2.0 -> 0.3 to force confident edge separation
     # ===========================================================================
-    "temperature_init": 2.0,    # Start high (soft edges)
-    "temperature_final": 0.3,   # Anneal to LOW (sharp edges) - was 0.5, now 0.3
-    "temperature_anneal_start": 0.2,  # Start annealing at 20% training (earlier)
-    "temperature_anneal_end": 0.7,    # Finish annealing at 70% (faster)
+    "temperature_init": 2.0, # Start high (soft edges)
+    "temperature_final": 0.3, # Anneal to LOW (sharp edges) - was 0.5, now 0.3
+    "temperature_anneal_start": 0.2, # Start annealing at 20% training (earlier)
+    "temperature_anneal_end": 0.7, # Finish annealing at 70% (faster)
     
     # Structure learning
-    "sparsify_method": "topk",  # or "sigmoid" for continuous
+    "sparsify_method": "topk", # or "sigmoid" for continuous
     "topk_ratio": 0.15,
-    "target_edges": 13,         # Adjust per dataset
+    "target_edges": 13, # Adjust per dataset
     
     # FIX E: Boost direction learning (orientation penalty)
-    "lambda_orientation": 0.5,  # Increased from 0.1 for better direction learning
+    "lambda_orientation": 0.5, # Increased from 0.1 for better direction learning
     
     # ===========================================================================
     # CRITICAL FIX: Hard Top-K projection during PRUNE/REFINE
     # This forces model to commit to exactly K edges, preventing "soft dense"
     # where all edges cluster in 0.2-0.3 band. Single most impactful fix.
     #
-    # GOTCHA FIX: Use 2K→K schedule to avoid freezing wrong edges too early
+    # GOTCHA FIX: Use 2K->K schedule to avoid freezing wrong edges too early
     # - Epoch < 35%: no projection (soft exploration)
     # - 35%-55%: project to 2*K (allows some flexibility)
     # - 55%+: project to K (final commitment)
     # ===========================================================================
-    "use_topk_projection": True,     # Enable hard Top-K projection
-    "topk_projection_start": 0.35,   # Start projecting at 35% training (after DISC)
-    "topk_projection_2k_end": 0.55,  # Switch from 2K to K at 55% training
-    "topk_use_logits": True,         # Project based on W magnitude (stable across temps)
-    "lambda_projection": 0.5,        # FIX B: Projection consistency loss weight
+    "use_topk_projection": True, # Enable hard Top-K projection
+    "topk_projection_start": 0.35, # Start projecting at 35% training (after DISC)
+    "topk_projection_2k_end": 0.55, # Switch from 2K to K at 55% training
+    "topk_use_logits": True, # Project based on W magnitude (stable across temps)
+    "lambda_projection": 0.5, # FIX B: Projection consistency loss weight
     
     # FIX E: Direction Asymmetry Loss
-    "use_asymmetry_loss": True,      # Penalize edges where transpose is stronger
-    "lambda_asymmetry": 0.5,         # Asymmetry loss weight
-    "asymmetry_start": 0.35,         # Start when PRUNE begins
+    "use_asymmetry_loss": True, # Penalize edges where transpose is stronger
+    "lambda_asymmetry": 0.5, # Asymmetry loss weight
+    "asymmetry_start": 0.35, # Start when PRUNE begins
     
-    # 2-Stage scheduling (V8.5: Skeleton → Direction)
-    "stage1_end": 0.30,         # Discovery phase ends (part of Stage S)
-    "stage2_end": 0.80,         # Pruning phase ends (Stage S complete, skeleton frozen)
-    # Stage S (Skeleton): epochs 1 → stage2_end (DISC + PRUNE) - no direction penalty
-    # Stage D (Direction): epochs stage2_end → 100% (REFINE) - skeleton frozen
+    # 2-Stage scheduling (V8.5: Skeleton -> Direction)
+    "stage1_end": 0.30, # Discovery phase ends (part of Stage S)
+    "stage2_end": 0.80, # Pruning phase ends (Stage S complete, skeleton frozen)
+    # Stage S (Skeleton): epochs 1 -> stage2_end (DISC + PRUNE) - no direction penalty
+    # Stage D (Direction): epochs stage2_end -> 100% (REFINE) - skeleton frozen
     
     # V8.5: Two-Stage Training
-    "two_stage_training": True,       # Enable skeleton→direction separation
+    "two_stage_training": True, # Enable skeleton->direction separation
     "skeleton_freeze_threshold": 0.1, # Edges > this in skeleton mask can be trained for direction
-    "direction_penalty_stage_d_only": True,  # Only apply dir penalty in Stage D
+    "direction_penalty_stage_d_only": True, # Only apply dir penalty in Stage D
     
     # V8.6: Confidence-based Direction Evaluation
     # Only evaluate/train direction on edges where max(A_ij, A_ji) > t_conf
-    "direction_conf_threshold": 0.3,  # Confidence threshold for direction eval
-    "direction_conf_adaptive": True,  # Use adaptive threshold (top 50% of skeleton)
+    "direction_conf_threshold": 0.3, # Confidence threshold for direction eval
+    "direction_conf_adaptive": True, # Use adaptive threshold (top 50% of skeleton)
     
     # V8.7: Direction Margin Loss (hinge-based)
-    # For edge i→j: enforce A_ij >= A_ji + margin (hard separation)
-    "use_direction_margin": True,     # Use margin-based direction loss
-    "direction_margin": 0.1,          # Margin value (A_ij - A_ji >= margin)
-    "lambda_direction_margin": 1.0,   # Weight for margin loss
+    # For edge i->j: enforce A_ij >= A_ji + margin (hard separation)
+    "use_direction_margin": True, # Use margin-based direction loss
+    "direction_margin": 0.1, # Margin value (A_ij - A_ji >= margin)
+    "lambda_direction_margin": 1.0, # Weight for margin loss
     
     # V8.8: Edge Discovery Fixes (address mode collapse to easy subgraph)
     # These directly target the recall problem on hard edges
     
     # 1. Presence loss with hard negative mining
-    "use_presence_loss": True,        # BCE on edge presence with pos_weight
-    "presence_pos_weight": 3.0,       # Upweight true edge positives
-    "use_hard_negatives": True,       # Mine hard negatives from high-corr non-edges
-    "hard_neg_corr_percentile": 80,   # Top X% correlation as hard negatives
-    "lambda_presence": 0.5,           # Weight for presence loss
+    "use_presence_loss": True, # BCE on edge presence with pos_weight
+    "presence_pos_weight": 3.0, # Upweight true edge positives
+    "use_hard_negatives": True, # Mine hard negatives from high-corr non-edges
+    "hard_neg_corr_percentile": 80, # Top X% correlation as hard negatives
+    "lambda_presence": 0.5, # Weight for presence loss
     
     # 2. Cousin penalty (anti-confounding)
-    "use_cousin_penalty": True,       # Penalize edges between nodes with common ancestors
-    "lambda_cousin": 0.3,             # Weight for cousin penalty
+    "use_cousin_penalty": True, # Penalize edges between nodes with common ancestors
+    "lambda_cousin": 0.3, # Weight for cousin penalty
     
     # 3. Coverage loss (prevent hub collapse)
-    "use_coverage_loss": True,        # Ensure every node has minimum outgoing mass
-    "coverage_min_outdeg": 0.5,       # Minimum outgoing degree sum per node
-    "lambda_coverage": 0.2,           # Weight for coverage loss
-    "coverage_epochs": 0.5,           # Apply coverage for first X% of training
+    "use_coverage_loss": True, # Ensure every node has minimum outgoing mass
+    "coverage_min_outdeg": 0.5, # Minimum outgoing degree sum per node
+    "lambda_coverage": 0.2, # Weight for coverage loss
+    "coverage_epochs": 0.5, # Apply coverage for first X% of training
     
     # V8.9: Direction Stability Fixes
     # 4. Exclusivity loss (force commitment to ONE direction per pair)
-    "use_exclusivity_loss": True,     # Penalize A_ij * A_ji (both directions high)
-    "lambda_exclusivity": 0.3,        # Weight for exclusivity loss
+    "use_exclusivity_loss": True, # Penalize A_ij * A_ji (both directions high)
+    "lambda_exclusivity": 0.3, # Weight for exclusivity loss
     
     # 5. Budget floor (maintain asymmetry pressure after sparsification)
-    "lambda_budget_floor": 0.05,      # Minimum budget λ after projection
+    "lambda_budget_floor": 0.05, # Minimum budget λ after projection
     
     # V8.15: Non-TopK Suppression (clean up fat tail of medium-confidence edges)
     # Problem: Perfect TopK-F1 but 146 edges @ 0.2 vs 13 @ 0.5 hurts interpretability
-    "use_nontopk_suppression": True,  # Push non-TopK edges toward zero
+    "use_nontopk_suppression": True, # Push non-TopK edges toward zero
     "nontopk_suppression_start": 0.2, # Start at 20% of training
     "lambda_nontopk_suppression": 0.5,# Weight for suppression loss
-    "nontopk_margin": 0.1,            # Desired margin between TopK and rest
+    "nontopk_margin": 0.1, # Desired margin between TopK and rest
     
     # V8.12: Convention handling is now ALWAYS applied via to_causal_convention()
     # Model outputs: A[i,j] = "j depends on i" (SEM/dependency convention)
@@ -234,31 +234,31 @@ DEFAULT_CONFIG = {
     # No config needed - conversion happens automatically at all boundaries
     
     # V8.10: EMA smoothing for stable TopK-F1 evaluation
-    "ema_alpha": 0.1,                 # EMA weight (0.1=slow/stable, 0.5=fast/responsive)
+    "ema_alpha": 0.1, # EMA weight (0.1=slow/stable, 0.5=fast/responsive)
     
     # V8.11: Skeleton Freeze + Antisymmetric Direction Learning
     # Once skeleton is learned, freeze it and train only direction
-    "skeleton_freeze_enabled": True,  # Enable skeleton freezing
-    "skeleton_freeze_threshold": 0.95,  # Freeze when Skel-F1 >= this
-    "skeleton_freeze_patience": 5,    # Consecutive epochs before freeze
-    "direction_tau": 0.5,             # Fixed τ for direction learning (lower=sharper)
-    "lambda_direction": 2.0,          # Boost direction loss after freeze
+    "skeleton_freeze_enabled": True, # Enable skeleton freezing
+    "skeleton_freeze_threshold": 0.95, # Freeze when Skel-F1 >= this
+    "skeleton_freeze_patience": 5, # Consecutive epochs before freeze
+    "direction_tau": 0.5, # Fixed τ for direction learning (lower=sharper)
+    "lambda_direction": 2.0, # Boost direction loss after freeze
     
     # =========================================================================
     # V8.18: MNAR-aware Fixes
     # =========================================================================
-    "lambda_inv_mask": 1e-3,          # Mask-invariance penalty weight (only if skeleton frozen)
+    "lambda_inv_mask": 1e-3, # Mask-invariance penalty weight (only if skeleton frozen)
     
     # GroupDRO (from V3)
     "dro_step_size": 0.01,
     
     # Evaluation (multi-K for stability)
     "threshold_grid": list(np.arange(0.05, 0.55, 0.05)),
-    "eval_k_values": [13, 20, 30],  # F1 at multiple K values
+    "eval_k_values": [13, 20, 30], # F1 at multiple K values
     
     # Health check thresholds (Step 3 fix)
-    "max_edges_at_0.5_ratio": 3.0,  # edges@0.5 <= 3 * target_edges by DISC end
-    "min_topk_jaccard": 0.7,        # TopK stability threshold
+    "max_edges_at_0.5_ratio": 3.0, # edges@0.5 <= 3 * target_edges by DISC end
+    "min_topk_jaccard": 0.7, # TopK stability threshold
     
     # System
     "device": "auto",
@@ -272,13 +272,13 @@ DEFAULT_CONFIG = {
 # =============================================================================
 # 
 # MODEL CONVENTION: A_model[i,j] = "j depends on i" (parent-in-column, child-in-row)
-#                   This is natural for SEM: x_j = Σ_i A[i,j] * x_i + noise_j
+# This is natural for SEM: x_j = Σ_i A[i,j] * x_i + noise_j
 # 
 # CAUSAL CONVENTION: A_causal[i,j] = "i causes j" (row causes column)
-#                    This is standard in most papers and libraries.
+# This is standard in most papers and libraries.
 #
 # SOLUTION: Convert ONCE at the boundary using to_causal_convention().
-#           All evaluation, saving, and reporting uses A_causal.
+# All evaluation, saving, and reporting uses A_causal.
 # =============================================================================
 
 def to_causal_convention(A_model: torch.Tensor) -> torch.Tensor:
@@ -311,7 +311,7 @@ def verify_convention_at_startup(verbose: bool = True) -> bool:
     """
     Sanity check: verify convention handling on a tiny 3-node DAG.
     
-    True DAG: 0 → 1 → 2
+    True DAG: 0 -> 1 -> 2
     A_true (causal convention): A[0,1]=1, A[1,2]=1
     A_model (SEM convention): A[1,0]=1, A[2,1]=1 (transposed)
     
@@ -319,23 +319,23 @@ def verify_convention_at_startup(verbose: bool = True) -> bool:
     """
     import torch
     
-    # Ground truth in CAUSAL convention: A[i,j]=1 means i→j
+    # Ground truth in CAUSAL convention: A[i,j]=1 means i->j
     A_true = torch.zeros(3, 3)
-    A_true[0, 1] = 1.0  # 0 → 1
-    A_true[1, 2] = 1.0  # 1 → 2
+    A_true[0, 1] = 1.0 # 0 -> 1
+    A_true[1, 2] = 1.0 # 1 -> 2
     
     # Model output in SEM convention: A[i,j]=1 means j depends on i
-    # For 0→1: x_1 depends on x_0, so A_model[0,1]=1... wait, that's the same!
+    # For 0->1: x_1 depends on x_0, so A_model[0,1]=1... wait, that's the same!
     # Actually the SEM is: x_j = Σ_i A[i,j] * x_i
-    # So for x_1 = A[0,1] * x_0 + noise, A[0,1]=1 means 0→1 (correct!)
+    # So for x_1 = A[0,1] * x_0 + noise, A[0,1]=1 means 0->1 (correct!)
     # 
     # BUT if model stores it as A_model[j,i] for "j depends on i", then:
-    # A_model[1,0]=1 means "x_1 depends on x_0" → 0→1
+    # A_model[1,0]=1 means "x_1 depends on x_0" -> 0->1
     # That's TRANSPOSED from causal convention!
     
     A_model = torch.zeros(3, 3)
-    A_model[1, 0] = 1.0  # Model says "1 depends on 0" → 0→1
-    A_model[2, 1] = 1.0  # Model says "2 depends on 1" → 1→2
+    A_model[1, 0] = 1.0 # Model says "1 depends on 0" -> 0->1
+    A_model[2, 1] = 1.0 # Model says "2 depends on 1" -> 1->2
     
     # After conversion, should match A_true
     A_converted = to_causal_convention(A_model)
@@ -345,12 +345,12 @@ def verify_convention_at_startup(verbose: bool = True) -> bool:
     
     if verbose:
         if match:
-            print("✅ Convention sanity check PASSED: to_causal_convention() works correctly")
+            print("[DONE] Convention sanity check PASSED: to_causal_convention() works correctly")
         else:
-            print("❌ Convention sanity check FAILED!")
-            print(f"   A_true:\n{A_true}")
-            print(f"   A_model (before conversion):\n{A_model}")
-            print(f"   A_converted (after conversion):\n{A_converted}")
+            print("[FAIL] Convention sanity check FAILED!")
+            print(f" A_true:\n{A_true}")
+            print(f" A_model (before conversion):\n{A_model}")
+            print(f" A_converted (after conversion):\n{A_converted}")
     
     return match
 
@@ -398,14 +398,14 @@ def get_temperature(
     epoch: int,
     total_epochs: int,
     config: Dict,
-    direction_stable: bool = True,  # NEW: Is model learning correct direction?
-    peakiness: Dict = None,  # V8.17: Peakiness metrics from previous epoch
+    direction_stable: bool = True, # NEW: Is model learning correct direction?
+    peakiness: Dict = None, # V8.17: Peakiness metrics from previous epoch
 ) -> float:
     """
     Get temperature with annealing schedule.
     
-    High temp early → soft edges (exploration)
-    Low temp late → sharp edges (exploitation)
+    High temp early -> soft edges (exploration)
+    Low temp late -> sharp edges (exploitation)
     
     V8.17: Data-adaptive temperature based on peakiness.
     If distribution is flat (gap~0, margins tiny), DECREASE temp faster to sharpen.
@@ -460,9 +460,9 @@ def get_loss_weights(
     epoch: int, 
     total_epochs: int, 
     config: Dict,
-    edge_sum: float = None,  # NEW: Current edge sum for collapse detection
-    frozen_lambda_budget: float = None,  # V8.16: Frozen budget after early_excellence
-    peakiness: Dict = None,  # V8.17: Peakiness metrics from previous epoch
+    edge_sum: float = None, # NEW: Current edge sum for collapse detection
+    frozen_lambda_budget: float = None, # V8.16: Frozen budget after early_excellence
+    peakiness: Dict = None, # V8.17: Peakiness metrics from previous epoch
 ) -> Dict[str, float]:
     """
     Get all loss weights with proper scheduling.
@@ -483,7 +483,7 @@ def get_loss_weights(
     weights = {}
     
     # Fixed weights
-    weights["lambda_recon"] = config.get("lambda_recon", 1.0)  # FIXED: was 50.0
+    weights["lambda_recon"] = config.get("lambda_recon", 1.0) # FIXED: was 50.0
     weights["lambda_miss"] = config.get("lambda_miss", 0.5)
     weights["lambda_hsic"] = config.get("lambda_hsic", 0.1)
     weights["lambda_inv"] = config.get("lambda_inv", 1.0)
@@ -504,7 +504,7 @@ def get_loss_weights(
     gap_threshold = config.get("peakiness_gap_threshold", 0.02)
     margin_threshold = config.get("peakiness_margin_threshold", 0.15)
     
-    peakiness_achieved = True  # Default: assume peaked (conservative)
+    peakiness_achieved = True # Default: assume peaked (conservative)
     if peakiness is not None:
         gap = peakiness.get("gap", 0.1)
         avg_margin = peakiness.get("avg_margin", 0.2)
@@ -512,22 +512,22 @@ def get_loss_weights(
     
     # ===========================================================================
     # CALIBRATION FIX: λs schedule with REFINE reduction
-    # - Discovery → PRUNE: ramp λs from init to final
+    # - Discovery -> PRUNE: ramp λs from init to final
     # - REFINE: reduce λs to prevent collapse (multiply by refine_sparse_factor)
     # V8.17: Gate λs ramp on peakiness (don't fight peak formation)
     # ===========================================================================
-    sparse_refine_factor = config.get("sparse_refine_factor", 0.5)  # Reduce to 50% in REFINE
-    min_edge_sum_for_sparse = config.get("min_edge_sum_for_sparse", 5.0)  # Collapse threshold
+    sparse_refine_factor = config.get("sparse_refine_factor", 0.5) # Reduce to 50% in REFINE
+    min_edge_sum_for_sparse = config.get("min_edge_sum_for_sparse", 5.0) # Collapse threshold
     
     if epoch <= prune_end:
-        # Normal ramp during Discovery → PRUNE
+        # Normal ramp during Discovery -> PRUNE
         base_sparse = get_scheduled_weight(
             epoch, total_epochs, sparse_init, sparse_final, 
             start_epoch=1, end_epoch=prune_end
         )
         # V8.17: If distribution is flat, keep λs tiny to allow peak formation
         if not peakiness_achieved:
-            base_sparse = min(base_sparse, sparse_init * 10)  # Cap at 10x init
+            base_sparse = min(base_sparse, sparse_init * 10) # Cap at 10x init
     else:
         # REFINE: reduce λs to prevent over-pruning
         base_sparse = sparse_final * sparse_refine_factor
@@ -560,7 +560,7 @@ def get_loss_weights(
     budget_final = config.get("lambda_budget_final", 0.5)
     budget_start = config.get("budget_start_epoch", 10)
     target_edges = config.get("target_edges", 13)
-    current_edge_sum = edge_sum if edge_sum is not None else target_edges  # Use passed edge_sum
+    current_edge_sum = edge_sum if edge_sum is not None else target_edges # Use passed edge_sum
     
     # V8.9: Budget floor to maintain direction pressure after sparsification
     budget_floor = config.get("lambda_budget_floor", 0.05)
@@ -774,7 +774,7 @@ def compute_mask_invariance_penalty(
     
     Strategy:
     1. Get adjacency A1 under original mask M
-    2. Randomly drop additional observations → M' (simulate MCAR perturbation)
+    2. Randomly drop additional observations -> M' (simulate MCAR perturbation)
     3. Get adjacency A2 under M'
     4. Penalize ||A1 - A2||_1 (encourage adjacency invariance to mask changes)
     
@@ -794,15 +794,15 @@ def compute_mask_invariance_penalty(
     
     # V8.21: Only apply on MNAR-prone datasets (> 10% missing, actual variance in patterns)
     missing_rate = 1.0 - (M.sum().item() / M.numel())
-    if missing_rate < 0.10:  # Skip if < 10% missing (MCAR-like or complete)
+    if missing_rate < 0.10: # Skip if < 10% missing (MCAR-like or complete)
         return torch.tensor(0.0, device=X.device)
     
     # Check if missingness pattern varies (MNAR indicator)
-    # If same rows/cols always missing → MNAR/bias. If uniform → MCAR.
-    M_row_missing = 1.0 - M.mean(dim=-1).mean()  # Avg missing per sample
-    M_col_missing = 1.0 - M.mean(dim=0).mean()   # Avg missing per variable
+    # If same rows/cols always missing -> MNAR/bias. If uniform -> MCAR.
+    M_row_missing = 1.0 - M.mean(dim=-1).mean() # Avg missing per sample
+    M_col_missing = 1.0 - M.mean(dim=0).mean() # Avg missing per variable
     missing_variance = M_row_missing.std().item() if M_row_missing.numel() > 1 else 0.0
-    if missing_variance < 0.01:  # Uniform missingness = MCAR, skip penalty
+    if missing_variance < 0.01: # Uniform missingness = MCAR, skip penalty
         return torch.tensor(0.0, device=X.device)
     
     device = X.device
@@ -813,7 +813,7 @@ def compute_mask_invariance_penalty(
     
     # Create perturbed mask: randomly drop additional observations (MCAR)
     M_pert = M.clone()
-    drop_rate = 0.2  # Drop 20% of currently-observed entries (symmetric across batch)
+    drop_rate = 0.2 # Drop 20% of currently-observed entries (symmetric across batch)
     if drop_rate > 0:
         # Sample which entries to drop uniformly
         drop_mask = torch.bernoulli(torch.full_like(M_pert, drop_rate))
@@ -920,7 +920,7 @@ def compute_mnar_shortcut_detector(
         # Compute missingness co-occurrence: do pairs of features have correlated missingness?
         # missing_corr[i,j] = correlation of missingness indicators between features i and j
         if M_np.ndim == 1:
-            # Reshape [B*T] → [B*T, d] (assume d known from X)
+            # Reshape [B*T] -> [B*T, d] (assume d known from X)
             M_np = M_np.reshape(-1, d)
         
         # For each pair (i,j), compute correlation of missingness
@@ -942,7 +942,7 @@ def compute_mnar_shortcut_detector(
     dir_total = 0
     try:
         X_np_centered = X_centered
-        for (i, j) in [(a // d, a % d) for a in pred_top_k if a // d != a % d][:10]:  # Sample
+        for (i, j) in [(a // d, a % d) for a in pred_top_k if a // d != a % d][:10]: # Sample
             if i >= d or j >= d:
                 continue
             # Residual of j after regressing on i
@@ -950,7 +950,7 @@ def compute_mnar_shortcut_detector(
             # Residual of i after regressing on j
             res_i_given_j = X_np_centered[:, i] - (X_np_centered[:, j] * np.corrcoef(X_np_centered[:, i], X_np_centered[:, j])[0, 1])
             
-            # If true direction is i→j, then res_j_given_i should have lower correlation with i
+            # If true direction is i->j, then res_j_given_i should have lower correlation with i
             if A_true_np[i, j] > 0:
                 corr_ji_with_i = np.abs(np.corrcoef(X_np_centered[:, i], res_j_given_i)[0, 1])
                 corr_ij_with_j = np.abs(np.corrcoef(X_np_centered[:, j], res_i_given_j)[0, 1])
@@ -958,7 +958,7 @@ def compute_mnar_shortcut_detector(
                     dir_aligned += 1
             dir_total += 1
     except:
-        pass  # Fallback if direction test fails
+        pass # Fallback if direction test fails
     
     dir_score = dir_aligned / max(dir_total, 1)
     
@@ -970,14 +970,14 @@ def compute_mnar_shortcut_detector(
         # Measure variance in mask patterns (0=uninformative, 1=highly informative)
         mask_density = M_np.mean()
         mask_std = M_np.std()
-        mask_informativeness = mask_std  # Higher std = more structure in missingness
+        mask_informativeness = mask_std # Higher std = more structure in missingness
     
     # === SIMPLIFIED Decision Logic (V8.18+) ===
     # Key insight: If true_overlap is high, the model found real structure
     # The mask-invariance penalty (λ_inv) prevents mask_overlap from being high
     # So: high true_overlap = good causation discovery (if mask_inv penalty is working)
     
-    causation_score = true_overlap - 0.5 * mask_overlap  # Penalize mask dependence more
+    causation_score = true_overlap - 0.5 * mask_overlap # Penalize mask dependence more
     correlation_score = corr_overlap
     
     # Decision: Simple and robust
@@ -989,7 +989,7 @@ def compute_mnar_shortcut_detector(
         diagnosis = "causation"
         confidence = min(1.0, true_overlap)
     elif mask_overlap > 0.5 and true_overlap > 0.7:
-        diagnosis = "mnar_shortcut"  # Explicit MNAR detection (high mask dependence but good structure)
+        diagnosis = "mnar_shortcut" # Explicit MNAR detection (high mask dependence but good structure)
         confidence = mask_overlap
     else:
         diagnosis = "correlation"
@@ -1250,7 +1250,7 @@ def compute_direction_on_confident_edges(
         if len(nonzero_vals) > 0:
             # Use 50th percentile of edge strengths
             t_conf_adaptive = np.percentile(nonzero_vals, 50)
-            t_conf = max(t_conf, t_conf_adaptive)  # Don't go below config
+            t_conf = max(t_conf, t_conf_adaptive) # Don't go below config
     
     # Find confident edges: upper triangle where max(A_ij, A_ji) > t_conf
     confident_pairs = []
@@ -1301,7 +1301,7 @@ def compute_direction_on_confident_edges(
         "dir_conf_total": true_edge_count,
         "dir_conf_ratio": float(dir_ratio),
         "dir_conf_threshold": float(t_conf),
-        "dir_conf_n_pairs": n_conf,  # Number of confident edge pairs
+        "dir_conf_n_pairs": n_conf, # Number of confident edge pairs
         "dir_conf_reversed": dir_reversed,
     }
 
@@ -1377,11 +1377,11 @@ def compute_nontopk_suppression_loss(
     # 1. L_tail: L1 penalty on non-TopK edges
     # Goal: push these toward 0
     nontopk_vals = A_flat * mask
-    L_tail = nontopk_vals.sum() / (n_edges - k)  # Mean over non-TopK
+    L_tail = nontopk_vals.sum() / (n_edges - k) # Mean over non-TopK
     
     # 2. L_margin: Margin between K-th and (K+1)-th edge
     # Goal: increase separation between TopK and rest
-    kth_edge = topk_vals[-1]  # Smallest of top K
+    kth_edge = topk_vals[-1] # Smallest of top K
     
     # Get max of non-TopK edges
     nontopk_max = (A_flat * mask).max()
@@ -1418,7 +1418,7 @@ def compute_antisymmetric_adjacency(
        P(edge exists) = sigmoid(S_ij / τ_skeleton)
        
     2. Direction (antisymmetric): D_ij = W_ij - W_ji
-       P(i→j | edge exists) = sigmoid(D_ij / τ_direction)
+       P(i->j | edge exists) = sigmoid(D_ij / τ_direction)
     
     Final adjacency: A_ij = skeleton_ij * direction_ij
     
@@ -1432,7 +1432,7 @@ def compute_antisymmetric_adjacency(
     Returns:
         A: Final adjacency [d, d]
         skeleton: Symmetric skeleton probabilities [d, d]
-        direction_probs: P(i→j | edge) for each pair [d, d]
+        direction_probs: P(i->j | edge) for each pair [d, d]
     """
     d = W.shape[0]
     device = W.device
@@ -1451,9 +1451,9 @@ def compute_antisymmetric_adjacency(
     direction_probs = torch.sigmoid(D / tau_direction)
     
     # Final adjacency: skeleton * direction
-    # A_ij = P(edge exists in pair) * P(direction is i→j)
+    # A_ij = P(edge exists in pair) * P(direction is i->j)
     A = skeleton * direction_probs
-    A = A * (1 - diag_mask)  # Ensure diagonal is zero
+    A = A * (1 - diag_mask) # Ensure diagonal is zero
     
     return A, skeleton, direction_probs
 
@@ -1467,7 +1467,7 @@ def compute_direction_loss(
     V8.11: Compute direction-specific loss on true edges.
     
     For each true edge (i,j), we want:
-    - D_ij = W_ij - W_ji > 0 (i.e., sigmoid(D_ij/τ) → 1)
+    - D_ij = W_ij - W_ji > 0 (i.e., sigmoid(D_ij/τ) -> 1)
     
     Loss = BCE(sigmoid(D_ij / τ), 1) for true edges (i,j)
     
@@ -1490,7 +1490,7 @@ def compute_direction_loss(
     D = W - W.T
     direction_probs = torch.sigmoid(D / tau_direction)
     
-    # For each true edge (i,j), we want direction_probs[i,j] → 1
+    # For each true edge (i,j), we want direction_probs[i,j] -> 1
     # BCE loss: -log(direction_probs) for true edges
     eps = 1e-8
     direction_loss = -torch.log(direction_probs + eps) * true_edges
@@ -1575,14 +1575,14 @@ def compute_cousin_mask(A_true: torch.Tensor) -> torch.Tensor:
     ancestors = [set() for _ in range(d)]
     
     # Use iterative approach to find all ancestors
-    for _ in range(d):  # At most d iterations for full propagation
+    for _ in range(d): # At most d iterations for full propagation
         changed = False
         for j in range(d):
             for i in range(d):
-                if A_np[i, j] > 0:  # i -> j
+                if A_np[i, j] > 0: # i -> j
                     if i not in ancestors[j]:
                         ancestors[j].add(i)
-                        ancestors[j] |= ancestors[i]  # j inherits i's ancestors
+                        ancestors[j] |= ancestors[i] # j inherits i's ancestors
                         changed = True
         if not changed:
             break
@@ -1706,7 +1706,7 @@ def compute_edge_discovery_losses(
             hard_neg_mask = hard_neg_mask * mask_upper
             
             # Upweight hard negatives (high-corr non-edges)
-            weights = weights + hard_neg_mask * 2.0  # Extra weight on hard negatives
+            weights = weights + hard_neg_mask * 2.0 # Extra weight on hard negatives
             metrics["n_hard_neg"] = int(hard_neg_mask.sum().item())
         
         L_presence = (bce_loss * weights).sum() / (weights.sum() + 1e-8)
@@ -1745,7 +1745,7 @@ def compute_edge_discovery_losses(
             min_outdeg = config.get("coverage_min_outdeg", 0.5)
             
             # Outgoing degree per node
-            out_degree = A_pred.sum(dim=1)  # [d]
+            out_degree = A_pred.sum(dim=1) # [d]
             
             # Penalize nodes with insufficient outgoing mass
             # ReLU(min_outdeg - outdeg_i) = 0 if outdeg >= min, else positive
@@ -1773,17 +1773,17 @@ def compute_edge_discovery_losses(
         A_min = torch.minimum(A_pred, A_pred.T)
         A_max = torch.maximum(A_pred, A_pred.T)
         symmetry_ratio = (A_min / (A_max + 1e-8)).mean()
-        metrics["symmetry_ratio"] = symmetry_ratio.item()  # 1.0 = fully symmetric (bad)
+        metrics["symmetry_ratio"] = symmetry_ratio.item() # 1.0 = fully symmetric (bad)
     
     # =========================================================================
     # 5. NON-TOPK SUPPRESSION (V8.15: push non-TopK edges toward zero)
     # Problem: Perfect TopK-F1 but fat tail of medium-confidence edges
-    #          (e.g., 146 @ 0.2 vs 13 @ 0.5) hurts interpretability
+    # (e.g., 146 @ 0.2 vs 13 @ 0.5) hurts interpretability
     # Solution: Explicitly penalize non-TopK edges
     # =========================================================================
     if config.get("use_nontopk_suppression", True):
         # Ramp up suppression over training (don't suppress early - need exploration)
-        suppression_start = config.get("nontopk_suppression_start", 0.2)  # Start at 20%
+        suppression_start = config.get("nontopk_suppression_start", 0.2) # Start at 20%
         lambda_suppress = config.get("lambda_nontopk_suppression", 0.5)
         suppress_margin = config.get("nontopk_margin", 0.1)
         target_edges = config.get("target_edges", 13)
@@ -1919,7 +1919,7 @@ def compute_topk_f1(
     A_true: torch.Tensor,
     k: Optional[int] = None,
     compute_transpose: bool = False,
-    stable_direction: bool = True,  # V8.9: Use margin-based direction selection
+    stable_direction: bool = True, # V8.9: Use margin-based direction selection
 ) -> Dict[str, float]:
     """
     Compute TopK metrics: predict top K edges vs true edges.
@@ -1961,7 +1961,7 @@ def compute_topk_f1(
         # Symmetrize for pair selection
         A_sym = np.maximum(A_pred_np, A_pred_np.T)
         np.fill_diagonal(A_sym, 0)
-        A_upper = np.triu(A_sym)  # Only upper triangle to avoid double-counting pairs
+        A_upper = np.triu(A_sym) # Only upper triangle to avoid double-counting pairs
         
         # V8.10: DETERMINISTIC TIE-BREAK
         # Sort by (score, -index) to ensure consistent ordering when ties exist.
@@ -1969,8 +1969,8 @@ def compute_topk_f1(
         flat_upper = A_upper.flatten()
         indices = np.arange(len(flat_upper))
         # Create (score, -index) tuples, sort descending by score, then ascending by index
-        sort_keys = np.lexsort((-indices, flat_upper))  # lexsort is stable, sorts by last key first
-        top_k_idx = sort_keys[-k:] if k > 0 else np.array([])  # Take top K
+        sort_keys = np.lexsort((-indices, flat_upper)) # lexsort is stable, sorts by last key first
+        top_k_idx = sort_keys[-k:] if k > 0 else np.array([]) # Take top K
         
         # Convert to (i, j) pairs
         pairs = []
@@ -1982,11 +1982,11 @@ def compute_topk_f1(
         # For each pair, predict direction using margin (no softmax, no τ)
         # V8.10: Use STRICT inequality so ties default to (i,j) for i<j determinism
         pred_edges = set()
-        margins = []  # Track margins for diagnostics
+        margins = [] # Track margins for diagnostics
         for i, j in pairs:
             margin = A_pred_np[i, j] - A_pred_np[j, i]
             margins.append(abs(margin))
-            if margin > 0:  # Strict > 0 for determinism
+            if margin > 0: # Strict > 0 for determinism
                 pred_edges.add((i, j))
             elif margin < 0:
                 pred_edges.add((j, i))
@@ -2040,7 +2040,7 @@ def compute_topk_f1(
         "topk_fp": FP,
         "topk_fn": FN,
         "k": k,
-        "avg_margin": avg_margin,  # V8.9: Track direction confidence
+        "avg_margin": avg_margin, # V8.9: Track direction confidence
         "min_margin": min_margin,
     }
     
@@ -2178,7 +2178,7 @@ def diagnose_correlation_vs_causation(
     avg_true_edge_corr = avg_edge_corr(true_edges)
     
     # Diagnosis (same logic as MNAR detector for consistency)
-    # If model beats correlation baseline OR finds enough true edges → causation
+    # If model beats correlation baseline OR finds enough true edges -> causation
     if (pred_true_overlap > 0.5 and (pred_true_overlap > pred_corr_overlap or pred_true_overlap > 0.8)) or \
        pred_true_overlap > pred_corr_overlap + 0.2:
         diagnosis = "causation"
@@ -2241,7 +2241,7 @@ def compute_health_metrics(
     if prev_topk_set is not None and len(prev_topk_set) > 0:
         jaccard = len(curr_topk & prev_topk_set) / max(len(curr_topk | prev_topk_set), 1)
     else:
-        jaccard = 1.0  # First epoch
+        jaccard = 1.0 # First epoch
     
     min_jaccard = config.get("min_topk_jaccard", 0.7)
     topk_stable = jaccard >= min_jaccard
@@ -2324,16 +2324,16 @@ def train_epoch(
     config: Dict,
     ddp: bool = False,
     dro_weights: Optional[Dict[int, float]] = None,
-    direction_stable: bool = True,  # NEW: Is model learning correct direction?
-    prev_edge_sum: float = None,    # NEW: Previous edge_sum for collapse detection
-    skeleton_mask: Optional[torch.Tensor] = None,  # V8.5: Frozen skeleton for Stage D
-    A_true: Optional[torch.Tensor] = None,  # V8.7: Ground truth for margin loss
-    skeleton_frozen: bool = False,  # V8.11: Skeleton is frozen, direction-only mode
-    W_frozen: Optional[torch.Tensor] = None,  # V8.11: Frozen W for skeleton restoration
-    direction_tau: float = 0.5,     # V8.11: τ for direction learning (lower = sharper)
-    lambda_direction_boost: float = 2.0,  # V8.11: Boost direction loss when frozen
-    frozen_lambda_budget: float = None,  # V8.16: Frozen budget after early_excellence
-    peakiness: Dict = None,  # V8.17: Peakiness metrics from previous epoch
+    direction_stable: bool = True, # NEW: Is model learning correct direction?
+    prev_edge_sum: float = None, # NEW: Previous edge_sum for collapse detection
+    skeleton_mask: Optional[torch.Tensor] = None, # V8.5: Frozen skeleton for Stage D
+    A_true: Optional[torch.Tensor] = None, # V8.7: Ground truth for margin loss
+    skeleton_frozen: bool = False, # V8.11: Skeleton is frozen, direction-only mode
+    W_frozen: Optional[torch.Tensor] = None, # V8.11: Frozen W for skeleton restoration
+    direction_tau: float = 0.5, # V8.11: τ for direction learning (lower = sharper)
+    lambda_direction_boost: float = 2.0, # V8.11: Boost direction loss when frozen
+    frozen_lambda_budget: float = None, # V8.16: Frozen budget after early_excellence
+    peakiness: Dict = None, # V8.17: Peakiness metrics from previous epoch
 ) -> Tuple[Dict[str, float], Optional[Dict[int, float]]]:
     """Train one epoch with all bells and whistles."""
     model.train()
@@ -2348,7 +2348,7 @@ def train_epoch(
         temperature = get_temperature(
             epoch, total_epochs, config, 
             direction_stable=direction_stable,
-            peakiness=peakiness,  # V8.17: Data-adaptive
+            peakiness=peakiness, # V8.17: Data-adaptive
         )
     base_model.graph_learner.set_temperature(temperature)
     
@@ -2359,13 +2359,13 @@ def train_epoch(
         epoch, total_epochs, config, 
         edge_sum=prev_edge_sum,
         frozen_lambda_budget=frozen_lambda_budget,
-        peakiness=peakiness,  # V8.17: Data-adaptive
+        peakiness=peakiness, # V8.17: Data-adaptive
     )
     
     # V8.16: Track λb for logging (so we can see when it's frozen)
     lambda_budget_used = loss_weights.get("lambda_budget", 0)
     lambda_budget_is_frozen = loss_weights.get("lambda_budget_frozen", False)
-    peakiness_gated = loss_weights.get("peakiness_gated", False)  # V8.17
+    peakiness_gated = loss_weights.get("peakiness_gated", False) # V8.17
     
     total_loss = 0.0
     metrics_sum = {}
@@ -2390,7 +2390,7 @@ def train_epoch(
             outputs, X, M, regime=e,
             epoch=epoch,
             total_epochs=total_epochs,
-            loss_weights=loss_weights,  # Pass scheduled weights
+            loss_weights=loss_weights, # Pass scheduled weights
         )
         
         # =====================================================================
@@ -2431,7 +2431,7 @@ def train_epoch(
         use_asymm = config.get("use_asymmetry_loss", True)
         two_stage = config.get("two_stage_training", True)
         stage2_end = config.get("stage2_end", 0.80)
-        in_stage_d = epoch >= stage2_end * total_epochs  # REFINE phase = Stage D
+        in_stage_d = epoch >= stage2_end * total_epochs # REFINE phase = Stage D
         
         # V8.5+V8.6: Only apply asymmetry loss in Stage D, on CONFIDENT edges
         if use_asymm and (in_stage_d if two_stage else epoch >= 0.35 * total_epochs):
@@ -2469,7 +2469,7 @@ def train_epoch(
             
             # =========================================================
             # V8.7: Direction Margin Loss (hinge-based)
-            # For TRUE edge i→j: enforce A_ij >= A_ji + margin
+            # For TRUE edge i->j: enforce A_ij >= A_ji + margin
             # Loss = max(0, A_ji - A_ij + margin) for each true directed edge
             # =========================================================
             use_margin = config.get("use_direction_margin", True)
@@ -2486,12 +2486,12 @@ def train_epoch(
                 # Get ground truth edges in MODEL convention
                 A_true_bin = (A_true_model_conv > 0.5).float()
                 
-                # For each true edge i→j (in MODEL convention), we want A_ij >= A_ji + margin
+                # For each true edge i->j (in MODEL convention), we want A_ij >= A_ji + margin
                 # Hinge loss: max(0, A_ji - A_ij + margin)
                 # Only for positions where A_true_model_conv[i,j] = 1
                 
                 # Compute violation: how much A_ji exceeds A_ij - margin
-                margin_violation = F.relu(A_soft.T - A_soft + margin)  # [d, d]
+                margin_violation = F.relu(A_soft.T - A_soft + margin) # [d, d]
                 
                 # Mask to only true edges AND confident edges
                 # This focuses direction learning on edges we're sure exist
@@ -2512,7 +2512,7 @@ def train_epoch(
             else:
                 # Fallback: soft asymmetry penalty (no ground truth available)
                 # For edge (i,j): if A[j,i] > A[i,j], this is wrong direction
-                asymm_penalty = F.relu(A_soft.T - A_soft)  # [d, d]
+                asymm_penalty = F.relu(A_soft.T - A_soft) # [d, d]
                 
                 # Only apply to masked edges
                 L_asymm = (edge_mask * asymm_penalty).sum() / (edge_mask.sum() + 1e-8)
@@ -2560,14 +2560,14 @@ def train_epoch(
                 inv_mask_penalty = compute_mask_invariance_penalty(
                     base_model, X, M, lambda_inv_mask=lambda_inv_mask
                 )
-                if inv_mask_penalty.item() > 0:  # Only add if penalty computed (MNAR detected)
+                if inv_mask_penalty.item() > 0: # Only add if penalty computed (MNAR detected)
                     loss = loss + inv_mask_penalty
                     batch_metrics["L_inv_mask"] = inv_mask_penalty.item()
         
         # =====================================================================
         # V8.8: Edge Discovery Losses (fix mode collapse to easy subgraph)
         # These losses directly target:
-        # 1. Missing hub fan-outs (10→{5,11,12}, 11→{0,2,12})
+        # 1. Missing hub fan-outs (10->{5,11,12}, 11->{0,2,12})
         # 2. Wrong high-corr cousin pairs (6-8, 10-8, 7-9)
         # =====================================================================
         use_edge_discovery = (
@@ -2636,7 +2636,7 @@ def train_epoch(
             W = base_model.graph_learner.W
             if W.grad is not None:
                 # Keep gradients only for skeleton edges (both directions for same pair)
-                skel_sym = skeleton_mask | skeleton_mask.T  # Allow learning either direction
+                skel_sym = skeleton_mask | skeleton_mask.T # Allow learning either direction
                 W.grad = W.grad * skel_sym.float()
         
         # Gradient clipping
@@ -2664,7 +2664,7 @@ def train_epoch(
     avg_metrics["lambda_bud_frozen"] = lambda_budget_is_frozen
     avg_metrics["lambda_sparse_used"] = loss_weights.get("lambda_sparse", 0)
     avg_metrics["temperature"] = temperature
-    avg_metrics["peakiness_gated"] = peakiness_gated  # V8.17
+    avg_metrics["peakiness_gated"] = peakiness_gated # V8.17
     
     # Update DRO weights
     if dro_weights is not None and regime_losses:
@@ -2707,13 +2707,13 @@ def validate(
         # - Saved adjacency matrices
         # - Confusion matrix TP/FP/FN/TN
         # ==================================================================
-        A_pred = to_causal_convention(A_pred)  # Convert once at boundary
+        A_pred = to_causal_convention(A_pred) # Convert once at boundary
         
         # ==================================================================
         # CRITICAL FIX: Hard Top-K projection during PRUNE/REFINE
         # Forces evaluation on exactly K edges, matching the metric
         #
-        # GOTCHA FIX: 2K→K schedule to avoid freezing wrong edges early
+        # GOTCHA FIX: 2K->K schedule to avoid freezing wrong edges early
         # - 35%-55%: project to 2*K (flexibility phase)
         # - 55%+: project to K (commitment phase)
         # ==================================================================
@@ -2724,7 +2724,7 @@ def validate(
         use_logits = config.get("topk_use_logits", True)
         
         if use_topk_proj and epoch >= topk_proj_start * total_epochs:
-            # Calculate K based on 2K→K schedule
+            # Calculate K based on 2K->K schedule
             proj_start = topk_proj_start * total_epochs
             proj_2k_end = topk_proj_2k_end * total_epochs
             
@@ -2888,13 +2888,13 @@ def train(
         if ddp:
             print(f"DDP: {get_world_size()} GPUs")
         print(f"Data: {data_dir}")
-        print(f"  X shape: {data['X'].shape}")
-        print(f"  Regimes: {n_regimes}")
-        print(f"  True edges: {int(A_true.sum()) if A_true is not None else 'N/A'}")
+        print(f" X shape: {data['X'].shape}")
+        print(f" Regimes: {n_regimes}")
+        print(f" True edges: {int(A_true.sum()) if A_true is not None else 'N/A'}")
         print(f"Epochs: {cfg['epochs']}, Batch: {cfg['batch_size']}, LR: {cfg['lr']}")
         print(f"GroupDRO: {use_groupdro}")
-        print(f"3-Stage: discovery→{int(cfg['stage1_end']*100)}%, "
-              f"pruning→{int(cfg['stage2_end']*100)}%, refinement→100%")
+        print(f"3-Stage: discovery->{int(cfg['stage1_end']*100)}%, "
+              f"pruning->{int(cfg['stage2_end']*100)}%, refinement->100%")
         print("=" * 70 + "\n")
     
     # Create model (use final lambda values - scheduling handled externally)
@@ -2912,7 +2912,7 @@ def train(
         lambda_causal=cfg["lambda_causal"],
         lambda_var_penalty=cfg["lambda_var_penalty"],
         # FIX E: Boost orientation penalty for direction learning
-        lambda_orientation=cfg.get("lambda_orientation", 0.5),  # Increased from 0.1
+        lambda_orientation=cfg.get("lambda_orientation", 0.5), # Increased from 0.1
     ).to(device)
     
     # Wrap with DDP
@@ -2931,7 +2931,7 @@ def train(
     # NOT the model's early predictions!
     # =========================================================================
     true_corr_baseline = None
-    corr_matrix = None  # V8.8: Cache correlation matrix for edge discovery losses
+    corr_matrix = None # V8.8: Cache correlation matrix for edge discovery losses
     
     if A_true is not None:
         true_corr_baseline = compute_correlation_baseline(data["X"], A_true)
@@ -2939,11 +2939,11 @@ def train(
             print(f"\n" + "=" * 60)
             print("TRUE CORRELATION BASELINE (from data, not model)")
             print("=" * 60)
-            print(f"  TopK-F1:    {true_corr_baseline['corr_baseline_f1']:.4f} "
+            print(f" TopK-F1: {true_corr_baseline['corr_baseline_f1']:.4f} "
                   f"(TP={true_corr_baseline['corr_baseline_tp']}/{int(A_true.sum().item())})")
-            print(f"  Skeleton-F1: {true_corr_baseline['corr_baseline_skel_f1']:.4f}")
-            print(f"  Reversed:   {true_corr_baseline['corr_baseline_reversed']} edges (right pair, wrong direction)")
-            print(f"  Corr max:   {true_corr_baseline['corr_max']:.3f}")
+            print(f" Skeleton-F1: {true_corr_baseline['corr_baseline_skel_f1']:.4f}")
+            print(f" Reversed: {true_corr_baseline['corr_baseline_reversed']} edges (right pair, wrong direction)")
+            print(f" Corr max: {true_corr_baseline['corr_max']:.3f}")
             print("=" * 60)
             print("Model must EXCEED this to claim causal learning!")
             print("=" * 60 + "\n")
@@ -2967,7 +2967,7 @@ def train(
                     corr_np[i, j] = abs(r) if not np.isnan(r) else 0
         
         corr_matrix = torch.from_numpy(corr_np).to(device)
-        base_model._corr_matrix = corr_matrix  # Cache on model for train_epoch access
+        base_model._corr_matrix = corr_matrix # Cache on model for train_epoch access
     
     # Optimizer with warm restarts
     optimizer = torch.optim.AdamW(
@@ -3006,61 +3006,61 @@ def train(
     # Solution: Track both guarded (for checkpoints) and overall (for reporting).
     
     # Pareto tracking - GUARDED (with budget guard, for checkpoint saving)
-    best_topk_sparse = (0.0, 0)    # Best TopK-F1 in budget window
-    best_skel_sparse = (0.0, 0)    # Best Skeleton-F1 in budget window
-    best_score_ckpt = (-float("inf"), 0)  # Best composite score
+    best_topk_sparse = (0.0, 0) # Best TopK-F1 in budget window
+    best_skel_sparse = (0.0, 0) # Best Skeleton-F1 in budget window
+    best_score_ckpt = (-float("inf"), 0) # Best composite score
     
     # V8.13: OVERALL best (no guard, for reporting true performance)
-    best_topk_overall = (0.0, 0)   # Best TopK-F1 ever seen
-    best_skel_overall = (0.0, 0)   # Best Skeleton-F1 ever seen
-    best_score_overall = (-float("inf"), 0)  # Best composite score ever
+    best_topk_overall = (0.0, 0) # Best TopK-F1 ever seen
+    best_skel_overall = (0.0, 0) # Best Skeleton-F1 ever seen
+    best_score_overall = (-float("inf"), 0) # Best composite score ever
     
     # V8.14: Early excellence tracking (allow save during DISC if model is good)
     # Track consecutive epochs where model meets high quality thresholds
     consecutive_excellent_epochs = 0
-    excellence_threshold_epochs = 5  # Must maintain excellence for N epochs
+    excellence_threshold_epochs = 5 # Must maintain excellence for N epochs
     
     # V8.16: Freeze λb after early_excellence to prevent unbounded loss growth
     # Once model has converged (TopK-F1=1.0 sustained), no need to keep ramping budget
-    frozen_lambda_budget = None  # Will be set when early_excellence triggers
-    lambda_budget_was_frozen_at_epoch = None  # For logging
+    frozen_lambda_budget = None # Will be set when early_excellence triggers
+    lambda_budget_was_frozen_at_epoch = None # For logging
     
     # V8.17: Peakiness tracking for data-adaptive scheduling
     # Track gap, margin, edges_90pct from previous epoch to guide temp/lambda
-    prev_peakiness = None  # Will be computed at end of each epoch
+    prev_peakiness = None # Will be computed at end of each epoch
     
     # V8.10: Track transpose wins (convention mismatch detection)
     transpose_wins_count = 0
     transpose_total_count = 0
-    transpose_best_f1 = 0.0  # Best F1 achieved with transpose
+    transpose_best_f1 = 0.0 # Best F1 achieved with transpose
     
     # For early stopping and backward compatibility
-    best_metric = 0             # TopK-F1 for reporting
+    best_metric = 0 # TopK-F1 for reporting
     best_epoch = 0
     patience_counter = 0
     history = []
     stage1_healthy = True
-    prev_topk_set = None  # For tracking TopK stability
+    prev_topk_set = None # For tracking TopK stability
     
     # NOTE: We now use true_corr_baseline (computed from data at start)
     # NOT the old "best during DISC phase" which was just model initialization noise
     
     # CALIBRATION FIX: Track direction stability and edge_sum for adaptive scheduling
-    direction_stable = False  # Start assuming unstable until we see F1 > F1_T
-    prev_edge_sum = None      # For collapse detection
+    direction_stable = False # Start assuming unstable until we see F1 > F1_T
+    prev_edge_sum = None # For collapse detection
     
     # V8.10: EMA smoothing for stable evaluation
     # A_ema = 0.9 * A_ema + 0.1 * A_current (reduces noise in TopK selection)
     A_ema = None
-    ema_alpha = cfg.get("ema_alpha", 0.1)  # How much to weight new A (0.1 = slow, 0.5 = fast)
+    ema_alpha = cfg.get("ema_alpha", 0.1) # How much to weight new A (0.1 = slow, 0.5 = fast)
     
     # V8.5: Skeleton mask for Stage D (frozen structure)
-    skeleton_mask = None  # Will be computed at end of Stage S (PRUNE)
+    skeleton_mask = None # Will be computed at end of Stage S (PRUNE)
     
     # V8.11: Skeleton freeze for direction-only training
     skeleton_frozen = False
-    skeleton_freeze_counter = 0  # Consecutive epochs with Skel >= threshold
-    W_frozen = None  # Frozen logits at time of skeleton freeze
+    skeleton_freeze_counter = 0 # Consecutive epochs with Skel >= threshold
+    W_frozen = None # Frozen logits at time of skeleton freeze
     skeleton_freeze_threshold = cfg.get("skeleton_freeze_threshold", 0.95)
     skeleton_freeze_patience = cfg.get("skeleton_freeze_patience", 5)
     direction_tau = cfg.get("direction_tau", 0.5)
@@ -3082,16 +3082,16 @@ def train(
             model, train_loader, optimizer, device,
             epoch, cfg["epochs"], cfg,
             ddp=ddp, dro_weights=dro_weights,
-            direction_stable=direction_stable,  # For temperature floor
-            prev_edge_sum=prev_edge_sum,        # For sparsity collapse protection
-            skeleton_mask=skeleton_mask,        # V8.5: Frozen skeleton for Stage D
-            A_true=A_true.to(device) if A_true is not None else None,  # V8.7: For margin loss
-            skeleton_frozen=skeleton_frozen,    # V8.11: Skeleton frozen mode
-            W_frozen=W_frozen,                  # V8.11: Frozen W for restoration
-            direction_tau=direction_tau,        # V8.11: τ for direction
-            lambda_direction_boost=lambda_direction_boost,  # V8.11: Boost factor
-            frozen_lambda_budget=frozen_lambda_budget,  # V8.16: Cap λb after convergence
-            peakiness=prev_peakiness,  # V8.17: Data-adaptive scheduling
+            direction_stable=direction_stable, # For temperature floor
+            prev_edge_sum=prev_edge_sum, # For sparsity collapse protection
+            skeleton_mask=skeleton_mask, # V8.5: Frozen skeleton for Stage D
+            A_true=A_true.to(device) if A_true is not None else None, # V8.7: For margin loss
+            skeleton_frozen=skeleton_frozen, # V8.11: Skeleton frozen mode
+            W_frozen=W_frozen, # V8.11: Frozen W for restoration
+            direction_tau=direction_tau, # V8.11: τ for direction
+            lambda_direction_boost=lambda_direction_boost, # V8.11: Boost factor
+            frozen_lambda_budget=frozen_lambda_budget, # V8.16: Cap λb after convergence
+            peakiness=prev_peakiness, # V8.17: Data-adaptive scheduling
         )
         
         scheduler.step()
@@ -3108,7 +3108,7 @@ def train(
             # Correlation vs causation diagnosis (every 10 epochs)
             if epoch % 10 == 0:
                 has_m = "M" in data
-                print(f"         | [PRE-DIAG] epoch={epoch} A_true_is_none={A_true is None} data_has_M={has_m}", flush=True)
+                print(f" | [PRE-DIAG] epoch={epoch} A_true_is_none={A_true is None} data_has_M={has_m}", flush=True)
             if epoch % 10 == 0 and A_true is not None:
                 X_sample = data["X"][:min(2000, len(data["X"]))].to(device)
                 M_sample = data.get("M", None)
@@ -3120,7 +3120,7 @@ def train(
                 # A_pred is in MODEL convention (A[i,j]="j depends on i")
                 # A_true is in CAUSAL convention (A[i,j]="i causes j")
                 # Must transpose A_pred to match A_true
-                A_pred = A_pred.T.contiguous()  # Convert to causal convention
+                A_pred = A_pred.T.contiguous() # Convert to causal convention
                 A_pred_np = A_pred.detach().cpu().numpy().copy()
                 A_true_np = (A_true.detach().cpu().numpy() > 0.5).astype(int)
                 
@@ -3148,7 +3148,7 @@ def train(
                     A_flat = A_pred_np.flatten()
                     flat_mask = np.ones(len(A_flat), dtype=bool)
                     for i in range(d):
-                        flat_mask[i * d + i] = False  # mask diagonal
+                        flat_mask[i * d + i] = False # mask diagonal
                     
                     # Get indices of top K in the FLAT directed space
                     flat_valid = np.where(flat_mask)[0]
@@ -3182,18 +3182,18 @@ def train(
                     true_un_sorted = sorted(true_edges_undirected)
                     inter_un_sorted = sorted(inter_undir)
                     
-                    print(f"         | [EDGESET DEBUG] epoch={epoch}:", flush=True)
-                    print(f"         |   DIR:   pred={pred_sample} true={true_sample}", flush=True)
-                    print(f"         |   SIZES: dir_pred={len(pred_edges_directed)} dir_true={len(true_edges_directed)}", flush=True)
-                    print(f"         |   SIZES: undir_pred={len(pred_edges_undirected)} undir_true={len(true_edges_undirected)}", flush=True)
-                    print(f"         |   UNDIR_PRED: {pred_un_sorted}", flush=True)
-                    print(f"         |   UNDIR_TRUE: {true_un_sorted}", flush=True)
-                    print(f"         |   UNDIR_INTER: {inter_un_sorted}", flush=True)
-                    print(f"         |   Overlap: DIR={dir_overlap:.4f} ({len(inter_dir)}/{len(true_edges_directed)}) | UNDIR={undir_overlap:.4f} ({len(inter_undir)}/{len(true_edges_undirected)})", flush=True)
-                    manual_true_overlap = undir_overlap  # Use undirected (skeleton) overlap
+                    print(f" | [EDGESET DEBUG] epoch={epoch}:", flush=True)
+                    print(f" | DIR: pred={pred_sample} true={true_sample}", flush=True)
+                    print(f" | SIZES: dir_pred={len(pred_edges_directed)} dir_true={len(true_edges_directed)}", flush=True)
+                    print(f" | SIZES: undir_pred={len(pred_edges_undirected)} undir_true={len(true_edges_undirected)}", flush=True)
+                    print(f" | UNDIR_PRED: {pred_un_sorted}", flush=True)
+                    print(f" | UNDIR_TRUE: {true_un_sorted}", flush=True)
+                    print(f" | UNDIR_INTER: {inter_un_sorted}", flush=True)
+                    print(f" | Overlap: DIR={dir_overlap:.4f} ({len(inter_dir)}/{len(true_edges_directed)}) | UNDIR={undir_overlap:.4f} ({len(inter_undir)}/{len(true_edges_undirected)})", flush=True)
+                    manual_true_overlap = undir_overlap # Use undirected (skeleton) overlap
                     
                 except Exception as e:
-                    print(f"         | [EDGESET ERROR] {type(e).__name__}: {e}", flush=True)
+                    print(f" | [EDGESET ERROR] {type(e).__name__}: {e}", flush=True)
                     manual_true_overlap = 0.0
                 
                 # Use the overlap that matches 1.0 (or closest to TopK-F1)
@@ -3203,23 +3203,23 @@ def train(
                 # Determine based on actual model performance, not heuristics
                 topk_f1 = val_metrics.get("topk_f1", 0.0)
                 skel_f1 = val_metrics.get("skeleton_f1", 0.0)
-                dir_conf = val_metrics.get("dir_conf_ratio", 0.0)  # V8.22: Fixed key name
+                dir_conf = val_metrics.get("dir_conf_ratio", 0.0) # V8.22: Fixed key name
                 
                 # Decision tree based on metrics:
                 if topk_f1 >= 0.9 and skel_f1 >= 0.9 and dir_conf >= 0.8:
-                    # All metrics strong → CAUSATION (recovered true graph)
+                    # All metrics strong -> CAUSATION (recovered true graph)
                     diagnosis = "causation"
                     reason = f"All strong: TopK={topk_f1:.2f}, Skel={skel_f1:.2f}, Dir={dir_conf:.2f}"
                 elif topk_f1 >= 0.8 and skel_f1 >= 0.9 and dir_conf < 0.7:
-                    # Found skeleton but directions wrong → SKELETON ONLY
+                    # Found skeleton but directions wrong -> SKELETON ONLY
                     diagnosis = "skeleton_only"
                     reason = f"Skel good ({skel_f1:.2f}) but Dir weak ({dir_conf:.2f})"
                 elif topk_f1 < 0.5:
-                    # TopK-F1 too low → CORRELATION
+                    # TopK-F1 too low -> CORRELATION
                     diagnosis = "correlation"
                     reason = f"TopK low: {topk_f1:.2f}"
                 elif manual_true_overlap >= 0.8:
-                    # High overlap with true edges → CAUSATION
+                    # High overlap with true edges -> CAUSATION
                     diagnosis = "causation"
                     reason = f"True overlap high: {manual_true_overlap:.2f}"
                 else:
@@ -3227,7 +3227,7 @@ def train(
                     diagnosis = "causation" if topk_f1 >= 0.7 else "correlation"
                     reason = f"TopK={topk_f1:.2f}, Overlap={manual_true_overlap:.2f}"
                 
-                print(f"         | [DIAGNOSIS] {diagnosis.upper()}: {reason}", flush=True)
+                print(f" | [DIAGNOSIS] {diagnosis.upper()}: {reason}", flush=True)
                 
                 val_metrics["diagnosis"] = diagnosis
                 val_metrics["_detector"] = "metric-driven"
@@ -3259,7 +3259,7 @@ def train(
                 # Get adjacency for proper edge counts
                 # V8.12: Apply convention fix HERE so all downstream uses correct convention
                 A_log = base_model.graph_learner.get_mean_adjacency()
-                A_log = to_causal_convention(A_log)  # Convert to causal convention
+                A_log = to_causal_convention(A_log) # Convert to causal convention
                 A_np_log = A_log.detach().cpu().numpy()
                 
                 # V8.10: Update EMA smoothed adjacency for stable metrics
@@ -3272,27 +3272,27 @@ def train(
                 # TopK stats (compute first for adaptive thresholding)
                 K = cfg["target_edges"]
                 flat_A = A_np_log.flatten()
-                sorted_A = np.sort(flat_A)[::-1]  # Descending
+                sorted_A = np.sort(flat_A)[::-1] # Descending
                 topk_vals = sorted_A[:K]
                 topk_mean = float(topk_vals.mean())
-                topk_min = float(topk_vals.min())  # threshold at rank K
+                topk_min = float(topk_vals.min()) # threshold at rank K
                 
                 # Compute gap to (K+1)th edge - measures ranking confidence
                 if len(sorted_A) > K:
-                    next_edge = float(sorted_A[K])  # (K+1)th largest
+                    next_edge = float(sorted_A[K]) # (K+1)th largest
                     gap = topk_min - next_edge
                 else:
                     gap = topk_min
                 
                 # Adaptive thresholding relative to topk_min (the decision boundary)
-                thr = topk_min  # The natural threshold that produces K edges
-                edges_90pct = int((A_np_log > 0.9 * thr).sum())   # slightly below boundary
-                edges_110pct = int((A_np_log > 1.1 * thr).sum())  # slightly above boundary  
-                edges_2x = int((A_np_log > 2.0 * thr).sum())      # well above boundary
+                thr = topk_min # The natural threshold that produces K edges
+                edges_90pct = int((A_np_log > 0.9 * thr).sum()) # slightly below boundary
+                edges_110pct = int((A_np_log > 1.1 * thr).sum()) # slightly above boundary 
+                edges_2x = int((A_np_log > 2.0 * thr).sum()) # well above boundary
                 
                 # V8.12 FIX: Compute edge_sum on TopK edges ONLY (matches evaluation)
-                # Previously used A.sum() (all 169 edges) → failed guard even when TopK-F1=1.0
-                # Now use sum of top K edges → aligns budget with what we evaluate
+                # Previously used A.sum() (all 169 edges) -> failed guard even when TopK-F1=1.0
+                # Now use sum of top K edges -> aligns budget with what we evaluate
                 A_topk = get_topk_adjacency(A_log, k=K)
                 edge_sum = float(A_topk.sum())
                 
@@ -3304,7 +3304,7 @@ def train(
                 topk_tp = val_metrics.get("topk_tp", 0)
                 
                 # V8.16: Show frozen state for λb
-                lambda_frozen_indicator = "🧊" if train_metrics.get("lambda_bud_frozen", False) else ""
+                lambda_frozen_indicator = "[FROZEN]" if train_metrics.get("lambda_bud_frozen", False) else ""
                 
                 print(f"[{stage}] Epoch {epoch:3d}/{cfg['epochs']} | "
                       f"loss={train_metrics['loss']:.4f} | "
@@ -3316,18 +3316,18 @@ def train(
                 # ===============================================================
                 # NEW: Clear edge count logging (ranked vs adaptive threshold)
                 # ===============================================================
-                print(f"         | 📐 TopK edges K={K}: TP={topk_tp}")
-                print(f"         | 📊 Edges: thr={thr:.3f} gap={gap:.3f} | @90%={edges_90pct} @110%={edges_110pct} @2x={edges_2x} | sum={edge_sum:.1f}")
+                print(f" | TopK edges K={K}: TP={topk_tp}")
+                print(f" | Edges: thr={thr:.3f} gap={gap:.3f} | @90%={edges_90pct} @110%={edges_110pct} @2x={edges_2x} | sum={edge_sum:.1f}")
                 
                 # V8.15: Show TopK gap (separation between TopK and non-TopK edges)
                 topk_gap = train_metrics.get("topk_gap", None)
                 nontopk_max = train_metrics.get("nontopk_max", None)
                 L_nontopk = train_metrics.get("L_nontopk", 0)
                 if topk_gap is not None:
-                    gap_status = "✓" if topk_gap > 0.1 else ("~" if topk_gap > 0 else "⚠️")
-                    print(f"         | 🧹 TopK gap: {topk_gap:.3f} [{gap_status}] | non-TopK max={nontopk_max:.3f} | L_suppress={L_nontopk:.4f}")
+                    gap_status = "[OK]" if topk_gap > 0.1 else ("~" if topk_gap > 0 else "[WARN]")
+                    print(f" | TopK gap: {topk_gap:.3f} [{gap_status}] | non-TopK max={nontopk_max:.3f} | L_suppress={L_nontopk:.4f}")
                 
-                print(f"         | 📈 A stats: max={A_max:.3f} mean={A_mean:.4f} topk_mean={topk_mean:.3f}")
+                print(f" | A stats: max={A_max:.3f} mean={A_mean:.4f} topk_mean={topk_mean:.3f}")
                 
                 # ===============================================================
                 # DIAGNOSTIC: Show transpose and skeleton F1 to detect direction issues
@@ -3353,14 +3353,14 @@ def train(
                 if topk_f1_T > 0 or skeleton_f1 > 0:
                     if convention_bug:
                         # This is the smoking gun - perfect skeleton but transpose wins
-                        print(f"         | 🚨 CONVENTION BUG DETECTED: F1(A)={topk_f1:.4f} < F1(A.T)={topk_f1_T:.4f}")
-                        print(f"         |    → Skeleton perfect ({skeleton_f1:.3f}) but directions are INVERTED")
-                        print(f"         |    → FIX: Use A.T for evaluation, or flip edge convention in data/model")
+                        print(f" | [ALERT] CONVENTION BUG DETECTED: F1(A)={topk_f1:.4f} < F1(A.T)={topk_f1_T:.4f}")
+                        print(f" | -> Skeleton perfect ({skeleton_f1:.3f}) but directions are INVERTED")
+                        print(f" | -> FIX: Use A.T for evaluation, or flip edge convention in data/model")
                     elif transpose_wins:
-                        print(f"         | ⚠️ DIR_MISMATCH: F1(A)={topk_f1:.4f} TP={topk_tp} | F1(A.T)={topk_f1_T:.4f} TP_T={topk_tp_T}")
+                        print(f" | [WARN] DIR_MISMATCH: F1(A)={topk_f1:.4f} TP={topk_tp} | F1(A.T)={topk_f1_T:.4f} TP_T={topk_tp_T}")
                     else:
                         skel_issue = " (EDGE_OK_DIR_WRONG)" if skeleton_f1 > topk_f1 + 0.1 else ""
-                        print(f"         | 🧭 Direction: F1={topk_f1:.4f} vs F1_T={topk_f1_T:.4f} | Skel={skeleton_f1:.4f}{skel_issue}")
+                        print(f" | Direction: F1={topk_f1:.4f} vs F1_T={topk_f1_T:.4f} | Skel={skeleton_f1:.4f}{skel_issue}")
                 
                 # ===============================================================
                 # V8.6: Direction accuracy on CONFIDENT edges only
@@ -3371,15 +3371,15 @@ def train(
                 dir_conf_t = val_metrics.get("dir_conf_threshold", 0.3)
                 dir_conf_n = val_metrics.get("dir_conf_n_pairs", 0)
                 if dir_conf_total > 0:
-                    dir_emoji = "✓" if dir_conf_ratio >= 0.7 else ("~" if dir_conf_ratio >= 0.5 else "✗")
-                    print(f"         | 🎯 DirConf: {dir_conf_correct}/{dir_conf_total} = {dir_conf_ratio:.2f} [{dir_emoji}] (t={dir_conf_t:.2f}, n_pairs={dir_conf_n})")
+                    dir_emoji = "[OK]" if dir_conf_ratio >= 0.7 else ("~" if dir_conf_ratio >= 0.5 else "[X]")
+                    print(f" | DirConf: {dir_conf_correct}/{dir_conf_total} = {dir_conf_ratio:.2f} [{dir_emoji}] (t={dir_conf_t:.2f}, n_pairs={dir_conf_n})")
                 
                 # ===============================================================
                 # CALIBRATION FIX: Update direction stability for next epoch
                 # Direction is stable when F1 > F1_T (learning causation, not anti-causal)
                 # ===============================================================
                 direction_stable = (topk_f1 >= topk_f1_T) or (topk_f1_T == 0)
-                prev_edge_sum = edge_sum  # Track for collapse detection
+                prev_edge_sum = edge_sum # Track for collapse detection
                 
                 # ===============================================================
                 # V8.17: Update peakiness metrics for next epoch
@@ -3395,12 +3395,12 @@ def train(
                 
                 # V8.17: Log peakiness gating status
                 if train_metrics.get("peakiness_gated", False):
-                    print(f"         | 🌡️ PEAKINESS WARMUP (gap={gap:.3f} <0.02 or margin<0.15): τ↓, λs/λb frozen")
+                    print(f" | PEAKINESS WARMUP (gap={gap:.3f} <0.02 or margin<0.15): τ↓, λs/λb frozen")
                 
                 if direction_stable:
-                    print(f"         | 🔒 Direction STABLE (τ floor released)")
+                    print(f" | [LOCK] Direction STABLE (τ floor released)")
                 else:
-                    print(f"         | ⚡ Direction UNSTABLE (τ floored at 0.8)")
+                    print(f" | Direction UNSTABLE (τ floored at 0.8)")
                 
                 # ===============================================================
                 # V8.9: Log margin and symmetry metrics
@@ -3410,8 +3410,8 @@ def train(
                 symmetry_ratio = train_metrics.get("symmetry_ratio", 0)
                 L_excl = train_metrics.get("L_excl", 0)
                 if avg_margin > 0 or symmetry_ratio > 0:
-                    margin_status = "✓" if min_margin > 0.01 else "⚠️"
-                    print(f"         | 📏 Margins: avg={avg_margin:.4f} min={min_margin:.4f} [{margin_status}] | sym={symmetry_ratio:.3f} L_excl={L_excl:.4f}")
+                    margin_status = "[OK]" if min_margin > 0.01 else "[WARN]"
+                    print(f" | Margins: avg={avg_margin:.4f} min={min_margin:.4f} [{margin_status}] | sym={symmetry_ratio:.3f} L_excl={L_excl:.4f}")
                 
                 # ===============================================================
                 # V8.11: Skeleton Freeze Logic
@@ -3425,16 +3425,16 @@ def train(
                             # FREEZE SKELETON!
                             skeleton_frozen = True
                             W_frozen = base_model.graph_learner.W_adj.data.clone()
-                            print(f"         | 🧊 SKELETON FROZEN @ epoch {epoch}!")
-                            print(f"         |    Skel-F1={skeleton_f1:.3f} >= {skeleton_freeze_threshold:.3f} for {skeleton_freeze_patience} epochs")
-                            print(f"         |    Now training DIRECTION only (τ_dir={direction_tau}, λ_dir×{lambda_direction_boost})")
+                            print(f" | [FROZEN] SKELETON FROZEN @ epoch {epoch}!")
+                            print(f" | Skel-F1={skeleton_f1:.3f} >= {skeleton_freeze_threshold:.3f} for {skeleton_freeze_patience} epochs")
+                            print(f" | Now training DIRECTION only (τ_dir={direction_tau}, λ_dir×{lambda_direction_boost})")
                     else:
-                        skeleton_freeze_counter = 0  # Reset if skeleton drops
+                        skeleton_freeze_counter = 0 # Reset if skeleton drops
                         
                 # If skeleton is frozen, restore symmetric part after each epoch
                 if skeleton_frozen and W_frozen is not None:
                     freeze_skeleton_parameters(base_model, set(), W_frozen)
-                    print(f"         | 🧊 Skeleton restored (direction-only training)")
+                    print(f" | [FROZEN] Skeleton restored (direction-only training)")
                 
                 # ===============================================================
                 # V8.10: EMA-smoothed TopK-F1 for stable progress tracking
@@ -3447,7 +3447,7 @@ def train(
                     ema_tp = ema_metrics["topk_tp"]
                     # Show if different from raw (indicates noise in raw)
                     if abs(ema_f1 - topk_f1) > 0.01:
-                        print(f"         | 🔄 EMA TopK-F1: {ema_f1:.4f} TP={ema_tp}/{K} (smoothed, raw={topk_f1:.4f})")
+                        print(f" | EMA TopK-F1: {ema_f1:.4f} TP={ema_tp}/{K} (smoothed, raw={topk_f1:.4f})")
                 
                 # Diagnosis
                 if "diagnosis" in val_metrics:
@@ -3455,9 +3455,9 @@ def train(
                     detector = val_metrics.get("_detector", "?")
                     diag_str = " | ".join([f"{k.replace('diag_','')}={v:.3f}" for k, v in sorted(diag_vals.items())]) if diag_vals else ""
                     if diag_str:
-                        print(f"         | 🔍 Learning: {val_metrics['diagnosis'].upper()} [{detector}] ({diag_str})")
+                        print(f" | Learning: {val_metrics['diagnosis'].upper()} [{detector}] ({diag_str})")
                     else:
-                        print(f"         | 🔍 Learning: {val_metrics['diagnosis'].upper()} [{detector}]")
+                        print(f" | Learning: {val_metrics['diagnosis'].upper()} [{detector}]")
         
         # STEP 3 FIX: Proper health check (not dense-is-healthy!)
         stage1_end = int(cfg["stage1_end"] * cfg["epochs"])
@@ -3470,22 +3470,22 @@ def train(
             if not health["edges_05_healthy"]:
                 stage1_healthy = False
                 if not sweep_mode:
-                    print(f"         | ⚠️ Stage 1 UNHEALTHY: edges@0.5={health['edges@0.5']} > {3*cfg['target_edges']} (too dense!)")
-                    print(f"         |    Graph is learning CORRELATION, not CAUSATION")
+                    print(f" | [WARN] Stage 1 UNHEALTHY: edges@0.5={health['edges@0.5']} > {3*cfg['target_edges']} (too dense!)")
+                    print(f" | Graph is learning CORRELATION, not CAUSATION")
             else:
                 if not sweep_mode:
-                    print(f"         | ✓ Stage 1 HEALTHY: edges@0.5={health['edges@0.5']} ≤ {3*cfg['target_edges']}")
+                    print(f" | [OK] Stage 1 HEALTHY: edges@0.5={health['edges@0.5']} ≤ {3*cfg['target_edges']}")
                     # V8.16: Check tail mass for interpretability
                     # Fat tail = many medium-confidence edges that hurt threshold-based eval
                     K = cfg['target_edges']
-                    tail_budget = 5 * K  # Allow up to 5x target at 0.2 threshold
+                    tail_budget = 5 * K # Allow up to 5x target at 0.2 threshold
                     edges_02 = health['edges@0.2']
                     edges_03 = health['edges@0.3']
                     if edges_02 > tail_budget:
-                        print(f"         |    ⚠️ FAT TAIL: edges@0.2={edges_02} > {tail_budget} (interpretability risk)")
-                        print(f"         |    Consider: V8.15 suppression to push non-TopK edges down")
+                        print(f" | [WARN] FAT TAIL: edges@0.2={edges_02} > {tail_budget} (interpretability risk)")
+                        print(f" | Consider: V8.15 suppression to push non-TopK edges down")
                     else:
-                        print(f"         |    edges@0.2={edges_02}, edges@0.3={edges_03} (tail OK)")
+                        print(f" | edges@0.2={edges_02}, edges@0.3={edges_03} (tail OK)")
         
         # Track TopK stability during PRUNE
         stage2_start = int(cfg["stage1_end"] * cfg["epochs"])
@@ -3496,14 +3496,14 @@ def train(
             prev_topk_set = health["curr_topk_set"]
             
             if not sweep_mode:
-                stable_icon = "✓" if health["topk_stable"] else "⚠️"
+                stable_icon = "[OK]" if health["topk_stable"] else "[WARN]"
                 # V8.16: Include tail mass in periodic check
                 K = cfg['target_edges']
                 tail_ratio = health['edges@0.2'] / max(health['edges@0.5'], 1)
-                tail_status = "✓" if tail_ratio <= 5 else "⚠️"
-                print(f"         | {stable_icon} TopK Jaccard={health['topk_jaccard']:.3f}, edges@0.5={health['edges@0.5']}, edge_sum={health['edge_sum']:.1f}")
+                tail_status = "[OK]" if tail_ratio <= 5 else "[WARN]"
+                print(f" | {stable_icon} TopK Jaccard={health['topk_jaccard']:.3f}, edges@0.5={health['edges@0.5']}, edge_sum={health['edge_sum']:.1f}")
                 if tail_ratio > 3:
-                    print(f"         |    {tail_status} Tail: @0.2={health['edges@0.2']} (@0.2/@0.5={tail_ratio:.1f}x)")
+                    print(f" | {tail_status} Tail: @0.2={health['edges@0.2']} (@0.2/@0.5={tail_ratio:.1f}x)")
         
         # Stage 3 = Stage D (Direction) - LR reduction and skeleton freeze
         stage3_start = int(cfg["stage2_end"] * cfg["epochs"])
@@ -3511,7 +3511,7 @@ def train(
             for param_group in optimizer.param_groups:
                 param_group["lr"] *= 0.5
             if is_main_process() and not sweep_mode:
-                print(f"         | 📉 Stage 3: LR reduced to {optimizer.param_groups[0]['lr']:.1e}")
+                print(f" | Stage 3: LR reduced to {optimizer.param_groups[0]['lr']:.1e}")
             
             # ================================================================
             # V8.5: SKELETON FREEZE - Extract and freeze skeleton at Stage S end
@@ -3537,11 +3537,11 @@ def train(
                 skeleton_mask = torch.from_numpy((A_sym >= skel_thresh).astype(np.float32)).to(device)
                 skeleton_mask = skeleton_mask.bool()
                 
-                skel_edge_count = int(skeleton_mask.sum().item()) // 2  # Undirected
+                skel_edge_count = int(skeleton_mask.sum().item()) // 2 # Undirected
                 
                 if is_main_process() and not sweep_mode:
-                    print(f"         | 🔒 STAGE D: Skeleton FROZEN with {skel_edge_count} undirected edges")
-                    print(f"         |    Threshold: {skel_thresh:.4f}, Now learning DIRECTION only")
+                    print(f" | [LOCK] STAGE D: Skeleton FROZEN with {skel_edge_count} undirected edges")
+                    print(f" | Threshold: {skel_thresh:.4f}, Now learning DIRECTION only")
                     
                     # Save skeleton for analysis
                     np.save(output_path / "skeleton_mask.npy", skeleton_mask.cpu().numpy())
@@ -3561,27 +3561,27 @@ def train(
             
             # Get current graph stats and convert to causal convention
             A_pred_check = base_model.graph_learner.get_mean_adjacency()
-            A_pred_check = to_causal_convention(A_pred_check)  # V8.12: Convert at boundary
+            A_pred_check = to_causal_convention(A_pred_check) # V8.12: Convert at boundary
             A_np_check = A_pred_check.detach().cpu().numpy()
             
             # Budget window parameters
             K = cfg.get("target_edges", 13)
             
             # V8.12 FIX: Use TopK edge sum for guard (matches evaluation)
-            # Previously used full matrix sum → failed guard even when TopK-F1=1.0
+            # Previously used full matrix sum -> failed guard even when TopK-F1=1.0
             A_topk_check = get_topk_adjacency(A_pred_check, k=K)
             edge_sum = float(A_topk_check.sum())
             max_edge = float(A_np_check.max())
             edges_at_02 = int((A_np_check > 0.2).sum())
             
             # Budget window parameters
-            tol = 0.5  # Allow +/- 50% (can tighten to 0.25 later)
-            min_sum = K * (1 - tol)  # e.g., 6.5 for K=13
-            max_sum = K * (1 + tol)  # e.g., 19.5 for K=13
+            tol = 0.5 # Allow +/- 50% (can tighten to 0.25 later)
+            min_sum = K * (1 - tol) # e.g., 6.5 for K=13
+            max_sum = K * (1 + tol) # e.g., 19.5 for K=13
             
             # Stage boundaries
             stage1_end = int(cfg["stage1_end"] * cfg["epochs"])
-            past_disc = epoch > stage1_end  # Must be in PRUNE or REFINE
+            past_disc = epoch > stage1_end # Must be in PRUNE or REFINE
             
             # V8.14: Check if model is demonstrably excellent
             # High quality: TopK-F1 ≥ 0.9, Skel-F1 ≥ 0.95, in budget window
@@ -3607,13 +3607,13 @@ def train(
                 frozen_lambda_budget = current_lambda_b
                 lambda_budget_was_frozen_at_epoch = epoch
                 if not sweep_mode:
-                    print(f"         | 🧊 V8.16: λb FROZEN at {frozen_lambda_budget:.3f} (epoch {epoch}, TopK-F1={topk_f1:.4f})")
+                    print(f" | [FROZEN] V8.16: λb FROZEN at {frozen_lambda_budget:.3f} (epoch {epoch}, TopK-F1={topk_f1:.4f})")
             
             # FLEXIBLE GUARD: Allow checkpoint if EITHER:
             # 1. Past DISC phase (original strict guard), OR
             # 2. Model demonstrates sustained excellence (prevents "solved but can't save")
             in_budget_window = (min_sum <= edge_sum <= max_sum)
-            has_confident = (max_edge > 0.1)  # At least one edge > 0.1
+            has_confident = (max_edge > 0.1) # At least one edge > 0.1
             graph_valid = (past_disc or early_excellence) and in_budget_window and has_confident
             
             # ================================================================
@@ -3625,7 +3625,7 @@ def train(
             
             # Log guard status (useful for debugging)
             if not sweep_mode and epoch % 10 == 0:
-                guard_status = "✓" if graph_valid else "✗"
+                guard_status = "[OK]" if graph_valid else "[X]"
                 reason = []
                 if not past_disc and not early_excellence:
                     if consecutive_excellent_epochs > 0:
@@ -3633,13 +3633,13 @@ def train(
                     else:
                         reason.append(f"DISC phase")
                 elif early_excellence and not past_disc:
-                    reason.append(f"✨ EARLY EXCELLENCE (F1={topk_f1:.2f}, sustained {consecutive_excellent_epochs} epochs)")
+                    reason.append(f" EARLY EXCELLENCE (F1={topk_f1:.2f}, sustained {consecutive_excellent_epochs} epochs)")
                 if not in_budget_window:
                     reason.append(f"budget [{min_sum:.1f},{max_sum:.1f}]")
                 if not has_confident:
                     reason.append(f"max={max_edge:.3f}<0.1")
                 reason_str = ", ".join(reason) if reason else "all checks passed"
-                print(f"         | 🔒 Guard: {guard_status} ({reason_str})")
+                print(f" | [LOCK] Guard: {guard_status} ({reason_str})")
             
             # ================================================================
             # COMPOSITE SCORE for model selection (V8.3)
@@ -3647,8 +3647,8 @@ def train(
             # - TopK-F1 (directed correctness)
             # - Skeleton F1 (undirected structure)
             # - Direction bonus/penalty:
-            #   * BONUS when TopK > TopK_T (getting direction right)
-            #   * PENALTY when Skeleton > TopK (found edge, wrong direction)
+            # * BONUS when TopK > TopK_T (getting direction right)
+            # * PENALTY when Skeleton > TopK (found edge, wrong direction)
             # - Budget penalty (deviation from target K)
             # 
             # The key insight: if Skeleton-F1 >> TopK-F1, model finds the 
@@ -3656,20 +3656,20 @@ def train(
             # This should be penalized to encourage true causal learning.
             # ================================================================
             topk = current_metric
-            skel = val_metrics.get("skeleton_f1", 0.0)  # Fixed: was "skel_f1" but key is "skeleton_f1"
+            skel = val_metrics.get("skeleton_f1", 0.0) # Fixed: was "skel_f1" but key is "skeleton_f1"
             f1_t = val_metrics.get("topk_f1_T", 0.0)
             
             # Direction correctness analysis
-            dir_bonus = max(0.0, topk - f1_t)  # Positive only if direction correct vs transpose
-            dir_penalty = max(0.0, skel - topk)  # Penalty when skeleton > directed (wrong directions)
+            dir_bonus = max(0.0, topk - f1_t) # Positive only if direction correct vs transpose
+            dir_penalty = max(0.0, skel - topk) # Penalty when skeleton > directed (wrong directions)
             
             # V8.12 FIX: Budget penalty on TopK edges (matches evaluation)
             # edge_sum now contains sum of top K edges only, not full matrix
             # Ideal: edge_sum ≈ K (each edge weight ≈ 1.0)
-            budget_pen = abs(edge_sum - K) / K  # 0 when perfect, 1 when 2× or 0×
+            budget_pen = abs(edge_sum - K) / K # 0 when perfect, 1 when 2× or 0×
             # edge_sum now contains sum of top K edges only, not full matrix
             # Ideal: edge_sum ≈ K (each edge weight ≈ 1.0)
-            budget_pen = abs(edge_sum - K) / K  # 0 when perfect, 1 when 2× or 0×
+            budget_pen = abs(edge_sum - K) / K # 0 when perfect, 1 when 2× or 0×
             
             # Direction ratio: topk/skel measures what fraction of found edges have correct direction
             # If skel=0.3077 and topk=0.0769, then dir_ratio = 0.25 (only 25% correct direction)
@@ -3688,9 +3688,9 @@ def train(
             if two_stage and not in_stage_d:
                 # Stage S: Focus on skeleton, light direction penalty
                 composite_score = (
-                    0.5 * topk +        # Some weight on directed
-                    1.0 * skel +        # PRIMARY: undirected structure
-                    0.3 * dir_bonus -   # Light bonus for direction
+                    0.5 * topk + # Some weight on directed
+                    1.0 * skel + # PRIMARY: undirected structure
+                    0.3 * dir_bonus - # Light bonus for direction
                     0.3 * dir_penalty - # Light penalty (don't fight sparsity)
                     0.5 * budget_pen
                 )
@@ -3699,16 +3699,16 @@ def train(
                 composite_score = (
                     1.0 * topk +
                     0.5 * skel +
-                    0.5 * dir_bonus -      # Bonus for beating transpose
-                    1.0 * dir_penalty -    # Strong penalty for skeleton >> directed
+                    0.5 * dir_bonus - # Bonus for beating transpose
+                    1.0 * dir_penalty - # Strong penalty for skeleton >> directed
                     0.5 * budget_pen
                 )
             
             # Log composite score components
             if not sweep_mode and epoch % 10 == 0:
-                dir_status = "✓" if dir_ratio > 0.7 else ("~" if dir_ratio > 0.4 else "✗")
-                print(f"         | 🎯 Score: {composite_score:.4f} = topk({topk:.3f}) + 0.5*skel({skel:.3f}) + 0.5*dirB({dir_bonus:.3f}) - 1.0*dirP({dir_penalty:.3f}) - 0.5*bpen({budget_pen:.2f})")
-                print(f"         |    Dir ratio: {dir_ratio:.2f} [{dir_status}] (topk/skel, want >0.7)")
+                dir_status = "[OK]" if dir_ratio > 0.7 else ("~" if dir_ratio > 0.4 else "[X]")
+                print(f" | Score: {composite_score:.4f} = topk({topk:.3f}) + 0.5*skel({skel:.3f}) + 0.5*dirB({dir_bonus:.3f}) - 1.0*dirP({dir_penalty:.3f}) - 0.5*bpen({budget_pen:.2f})")
+                print(f" | Dir ratio: {dir_ratio:.2f} [{dir_status}] (topk/skel, want >0.7)")
             
             # ================================================================
             # PARETO CHECKPOINTING - Save multiple "best" checkpoints
@@ -3735,7 +3735,7 @@ def train(
                     if is_main_process():
                         save_ckpt("topk_sparse", topk)
                         if not sweep_mode:
-                            print(f"         | 🏆 New best_topk_sparse: TopK-F1={topk:.4f} (guarded)")
+                            print(f" | New best_topk_sparse: TopK-F1={topk:.4f} (guarded)")
                 
                 # 2. Best Skeleton-F1 (sparse)
                 if skel > best_skel_sparse[0]:
@@ -3743,12 +3743,12 @@ def train(
                     if is_main_process():
                         save_ckpt("skel_sparse", skel)
                         if not sweep_mode:
-                            print(f"         | 🦴 New best_skel_sparse: Skel-F1={skel:.4f} (guarded)")
+                            print(f" | New best_skel_sparse: Skel-F1={skel:.4f} (guarded)")
                 
                 # 3. Best composite score
                 if composite_score > best_score_ckpt[0]:
                     best_score_ckpt = (composite_score, epoch)
-                    best_metric = topk  # For reporting
+                    best_metric = topk # For reporting
                     best_epoch = epoch
                     if is_main_process():
                         save_ckpt("score", composite_score, composite_score)
@@ -3763,14 +3763,14 @@ def train(
                         }, output_path / "best_model.pt")
                         np.save(output_path / "A_best.npy", A_np_check)
                         if not sweep_mode:
-                            print(f"         | ⭐ New best_score: {composite_score:.4f} (TopK={topk:.4f}, sum={edge_sum:.1f}) (guarded)")
+                            print(f" | * New best_score: {composite_score:.4f} (TopK={topk:.4f}, sum={edge_sum:.1f}) (guarded)")
             
             # V8.13: ALWAYS track OVERALL best (no guard, for reporting true performance)
             # This ensures we never lose information even when guard fails
             if topk > best_topk_overall[0]:
                 best_topk_overall = (topk, epoch)
                 if not graph_valid and not sweep_mode and is_main_process():
-                    print(f"         | 📊 New best_topk_overall: TopK-F1={topk:.4f} (unguarded)")
+                    print(f" | New best_topk_overall: TopK-F1={topk:.4f} (unguarded)")
             
             if skel > best_skel_overall[0]:
                 best_skel_overall = (skel, epoch)
@@ -3778,13 +3778,13 @@ def train(
             # Reset patience on overall improvement (unguarded)
             if composite_score > best_score_overall[0]:
                 best_score_overall = (composite_score, epoch)
-                patience_counter = 0  # Reset patience on any improvement
+                patience_counter = 0 # Reset patience on any improvement
             else:
                 patience_counter += 1
             
             if not graph_valid:
                 if not sweep_mode and is_main_process():
-                    print(f"         | ⚠️ score={composite_score:.4f} but guard failed (sum={edge_sum:.1f})")
+                    print(f" | [WARN] score={composite_score:.4f} but guard failed (sum={edge_sum:.1f})")
         
         # =====================================================================
         # V8.14 FIX: Disable early stopping until after DISC phase
@@ -3797,15 +3797,15 @@ def train(
         
         # Early stopping (only in PRUNE/REFINE, not DISC)
         if patience_counter >= cfg["patience"]:
-            if past_disc:  # Only allow early stop AFTER DISC phase completes
+            if past_disc: # Only allow early stop AFTER DISC phase completes
                 if is_main_process() and not sweep_mode:
-                    print(f"\n⏹️ Early stopping at epoch {epoch} (patience={cfg['patience']})")
+                    print(f"\n⏹ Early stopping at epoch {epoch} (patience={cfg['patience']})")
                 break
             else:
                 # Still in DISC phase - don't stop early
                 if is_main_process() and not sweep_mode and patience_counter == cfg["patience"]:
-                    print(f"         | 🛡️ Early stopping blocked (still in DISC phase: epoch {epoch}/{int(stage1_end * cfg['epochs'])}, patience reset)")
-                patience_counter = 0  # Reset patience in DISC, don't keep at threshold
+                    print(f" | Early stopping blocked (still in DISC phase: epoch {epoch}/{int(stage1_end * cfg['epochs'])}, patience reset)")
+                patience_counter = 0 # Reset patience in DISC, don't keep at threshold
     
     # Final summary
     if is_main_process():
@@ -3815,7 +3815,7 @@ def train(
         
         # Save final adjacency in CAUSAL convention
         A_final = base_model.graph_learner.get_mean_adjacency()
-        A_final = to_causal_convention(A_final)  # V8.12: Convert at boundary
+        A_final = to_causal_convention(A_final) # V8.12: Convert at boundary
         np.save(output_path / "A_final.npy", A_final.detach().cpu().numpy())
         
         if not sweep_mode:
@@ -3832,55 +3832,55 @@ def train(
             print("TRAINING COMPLETE (V8.12 - Causal Convention Fix)")
             print("=" * 70)
             print("CONVENTION INFO (for paper writeup):")
-            print("  Model output: A_model[i,j] = 'j depends on i' (SEM/dependency convention)")
-            print("  Evaluation:   A_causal[i,j] = 'i causes j' (standard causal convention)")
-            print("  Conversion:   A_causal = A_model.T (applied at all boundaries)")
-            print("  ✅ All metrics, saves, and confusion matrices use A_causal")
+            print(" Model output: A_model[i,j] = 'j depends on i' (SEM/dependency convention)")
+            print(" Evaluation: A_causal[i,j] = 'i causes j' (standard causal convention)")
+            print(" Conversion: A_causal = A_model.T (applied at all boundaries)")
+            print(" [DONE] All metrics, saves, and confusion matrices use A_causal")
             print("-" * 70)
             print("V8.11 FIXES:")
-            print("  1. Skeleton freeze: after Skel-F1>=0.95 for 5 epochs, freeze skeleton")
-            print("  2. Antisymmetric direction: D_ij = W_ij - W_ji (forces 1 winner per pair)")
-            print("  3. Direction-only training: only train direction after freeze")
-            print("  4. Fixed τ_dir=0.5 for stable direction learning")
+            print(" 1. Skeleton freeze: after Skel-F1>=0.95 for 5 epochs, freeze skeleton")
+            print(" 2. Antisymmetric direction: D_ij = W_ij - W_ji (forces 1 winner per pair)")
+            print(" 3. Direction-only training: only train direction after freeze")
+            print(" 4. Fixed τ_dir=0.5 for stable direction learning")
             if skeleton_frozen:
-                print(f"  ✅ Skeleton was frozen during training!")
+                print(f" [DONE] Skeleton was frozen during training!")
             else:
-                print(f"  ⚠️ Skeleton never reached freeze threshold ({skeleton_freeze_threshold:.2f})")
+                print(f" [WARN] Skeleton never reached freeze threshold ({skeleton_freeze_threshold:.2f})")
             print("-" * 70)
             K = cfg.get("target_edges", 13)
             tol = 0.5
             print(f"Guard: (past DISC OR excellent ≥5 epochs) & sum ∈ [{K*(1-tol):.1f},{K*(1+tol):.1f}] & max>0.1")
-            print(f"  Excellence = TopK-F1≥0.9 & Skel-F1≥0.95 & in budget window")
+            print(f" Excellence = TopK-F1≥0.9 & Skel-F1≥0.95 & in budget window")
             print("-" * 70)
             print("PARETO CHECKPOINTS (GUARDED - saved to disk):")
-            print(f"  🏆 best_topk_sparse (guarded):  TopK-F1={best_topk_sparse[0]:.4f} @ epoch {best_topk_sparse[1]}")
-            print(f"  🦴 best_skel_sparse (guarded):  Skel-F1={best_skel_sparse[0]:.4f} @ epoch {best_skel_sparse[1]}")
-            print(f"  ⭐ best_score (guarded):        score={best_score_ckpt[0]:.4f} @ epoch {best_score_ckpt[1]}")
+            print(f" best_topk_sparse (guarded): TopK-F1={best_topk_sparse[0]:.4f} @ epoch {best_topk_sparse[1]}")
+            print(f" best_skel_sparse (guarded): Skel-F1={best_skel_sparse[0]:.4f} @ epoch {best_skel_sparse[1]}")
+            print(f" * best_score (guarded): score={best_score_ckpt[0]:.4f} @ epoch {best_score_ckpt[1]}")
             print("-" * 70)
             print("OVERALL PERFORMANCE (NO GUARD - true model performance):")
-            print(f"  📊 best_topk_overall:  TopK-F1={best_topk_overall[0]:.4f} @ epoch {best_topk_overall[1]}")
-            print(f"  📊 best_skel_overall:  Skel-F1={best_skel_overall[0]:.4f} @ epoch {best_skel_overall[1]}")
-            print(f"  📊 best_score_overall: score={best_score_overall[0]:.4f} @ epoch {best_score_overall[1]}")
+            print(f" best_topk_overall: TopK-F1={best_topk_overall[0]:.4f} @ epoch {best_topk_overall[1]}")
+            print(f" best_skel_overall: Skel-F1={best_skel_overall[0]:.4f} @ epoch {best_skel_overall[1]}")
+            print(f" best_score_overall: score={best_score_overall[0]:.4f} @ epoch {best_score_overall[1]}")
             print("-" * 70)
             
             # Compute improvement over TRUE correlation baseline (computed from data)
             if true_corr_baseline is not None:
                 corr_f1 = true_corr_baseline['corr_baseline_f1']
-                print(f"  📊 TRUE Correlation:  TopK-F1={corr_f1:.4f} (computed from data, NOT model)")
+                print(f" TRUE Correlation: TopK-F1={corr_f1:.4f} (computed from data, NOT model)")
                 print("-" * 70)
                 if corr_f1 > 0 and best_topk_sparse[0] > 0:
                     improvement = (best_topk_sparse[0] - corr_f1) / corr_f1 * 100
                     if best_topk_sparse[0] > corr_f1:
-                        print(f"✅ CAUSAL IMPROVEMENT: +{improvement:.1f}% (model beat correlation!)")
+                        print(f"[DONE] CAUSAL IMPROVEMENT: +{improvement:.1f}% (model beat correlation!)")
                     elif abs(best_topk_sparse[0] - corr_f1) < 1e-4:
-                        print(f"⚠️  MATCHED correlation baseline (no causal gain)")
+                        print(f"[WARN] MATCHED correlation baseline (no causal gain)")
                     else:
-                        print(f"❌ BELOW correlation baseline: {improvement:.1f}%")
-                        print("   Model is WORSE than simple correlation-based graph.")
+                        print(f"[FAIL] BELOW correlation baseline: {improvement:.1f}%")
+                        print(" Model is WORSE than simple correlation-based graph.")
                 elif corr_f1 == 0:
-                    print("⚠️  Correlation baseline is 0 (degenerate dataset)")
+                    print("[WARN] Correlation baseline is 0 (degenerate dataset)")
             else:
-                print("  ⚠️  TRUE correlation baseline not computed (no A_true available)")
+                print(" [WARN] TRUE correlation baseline not computed (no A_true available)")
             
             # ===================================================================
             # V8.10: Convention mismatch diagnostic summary
@@ -3889,30 +3889,30 @@ def train(
                 transpose_win_rate = transpose_wins_count / transpose_total_count
                 print("-" * 70)
                 print(f"DIRECTION CONVENTION ANALYSIS:")
-                print(f"  Epochs where F1(A.T) > F1(A): {transpose_wins_count}/{transpose_total_count} ({transpose_win_rate*100:.0f}%)")
-                print(f"  Best F1 with A:    {best_topk_sparse[0]:.4f}")
-                print(f"  Best F1 with A.T:  {transpose_best_f1:.4f}")
+                print(f" Epochs where F1(A.T) > F1(A): {transpose_wins_count}/{transpose_total_count} ({transpose_win_rate*100:.0f}%)")
+                print(f" Best F1 with A: {best_topk_sparse[0]:.4f}")
+                print(f" Best F1 with A.T: {transpose_best_f1:.4f}")
                 
                 if transpose_win_rate > 0.7 and transpose_best_f1 > best_topk_sparse[0] + 0.1:
                     print("")
-                    print("  🚨 STRONG CONVENTION MISMATCH DETECTED!")
-                    print("  The model consistently predicts INVERTED directions.")
-                    print("  This suggests edge_index[0]→edge_index[1] vs A[i,j] convention differs.")
+                    print(" [ALERT] STRONG CONVENTION MISMATCH DETECTED!")
+                    print(" The model consistently predicts INVERTED directions.")
+                    print(" This suggests edge_index[0]->edge_index[1] vs A[i,j] convention differs.")
                     print("")
-                    print("  RECOMMENDED FIXES (pick one):")
-                    print("    1. QUICK: Set 'use_transpose_for_eval: true' in config")
-                    print("    2. DATA FIX: Check A_true construction (parent→child vs child→parent)")
-                    print("    3. MODEL FIX: Transpose A before loss computation in SEM")
+                    print(" RECOMMENDED FIXES (pick one):")
+                    print(" 1. QUICK: Set 'use_transpose_for_eval: true' in config")
+                    print(" 2. DATA FIX: Check A_true construction (parent->child vs child->parent)")
+                    print(" 3. MODEL FIX: Transpose A before loss computation in SEM")
                     print("")
-                    print(f"  If you use A.T, expected F1: ~{transpose_best_f1:.4f} (vs {best_topk_sparse[0]:.4f})")
+                    print(f" If you use A.T, expected F1: ~{transpose_best_f1:.4f} (vs {best_topk_sparse[0]:.4f})")
                 elif transpose_win_rate > 0.5:
-                    print(f"  ⚠️ Possible convention issue (transpose wins >50% of epochs)")
+                    print(f" [WARN] Possible convention issue (transpose wins >50% of epochs)")
                 else:
-                    print(f"  ✓ Direction convention looks correct (A wins most epochs)")
+                    print(f" [OK] Direction convention looks correct (A wins most epochs)")
                 
             if best_topk_sparse[1] == 0:
-                print("⚠️  No causal checkpoint saved (guard never passed)")
-                print("   Check: DISC ended early? Budget window too narrow? No confident edges?")
+                print("[WARN] No causal checkpoint saved (guard never passed)")
+                print(" Check: DISC ended early? Budget window too narrow? No confident edges?")
             print(f"Final graph: edge_sum={final_edge_sum:.2f}, @0.2={final_edges_02}")
             print(f"Output: {output_path}")
             print("=" * 70)
@@ -3991,7 +3991,7 @@ def main():
     
     # V8.12: Verify convention handling at startup
     if not verify_convention_at_startup(verbose=True):
-        print("❌ FATAL: Convention sanity check failed! Fix to_causal_convention() before proceeding.")
+        print("[FAIL] FATAL: Convention sanity check failed! Fix to_causal_convention() before proceeding.")
         return
     
     # Build config from args

@@ -100,7 +100,7 @@ def hsic_loss(z1: torch.Tensor, z2: torch.Tensor) -> torch.Tensor:
 # =============================================================================
 
 class DisentangledEncoder(nn.Module):
-    """Two-pathway encoder: X → (z_signal, z_corrupt)"""
+    """Two-pathway encoder: X -> (z_signal, z_corrupt)"""
     
     def __init__(
         self,
@@ -226,7 +226,7 @@ class CausalGraphLearner(nn.Module):
         if env_idx is None or self.n_regimes == 1:
             logits = self.W_adj / tau
             A = torch.sigmoid(logits)
-            A = A * (1 - torch.eye(self.d, device=A.device))  # Zero diagonal
+            A = A * (1 - torch.eye(self.d, device=A.device)) # Zero diagonal
             return A, self.W_adj
         
         # Per-environment adjacency
@@ -353,7 +353,7 @@ class RCGNN(nn.Module):
     Complete model for causal discovery under compound sensor corruptions.
     
     Key components:
-    1. DisentangledEncoder: X → (z_signal, z_corrupt)
+    1. DisentangledEncoder: X -> (z_signal, z_corrupt)
     2. CausalGraphLearner: learns A with per-environment deltas
     3. MissingnessHead: P(M|X) for MAR/MNAR
     4. Robust Decoder: Student-t likelihood
@@ -568,7 +568,7 @@ class RCGNN(nn.Module):
         # 4. Decode
         if self.use_env_decoder and regime is not None:
             mu, sigma, per_env_mu = self.decoder(z_signal, z_corrupt, A_base, regime)
-            nu = torch.full_like(mu, 4.0)  # Fixed nu for env-specific decoder
+            nu = torch.full_like(mu, 4.0) # Fixed nu for env-specific decoder
         else:
             mu, sigma, nu = self.decoder(z_signal, z_corrupt, A_base, regime)
             per_env_mu = None
@@ -614,7 +614,7 @@ class RCGNN(nn.Module):
         epoch: int = 1,
         total_epochs: int = 50,
         compute_causal_prior: bool = True,
-        compute_necessity: bool = False,  # Expensive, do every N epochs
+        compute_necessity: bool = False, # Expensive, do every N epochs
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """Compute total loss with causal priors."""
         device = X.device
@@ -676,7 +676,7 @@ class RCGNN(nn.Module):
         # 8. V4: Causal prior loss
         L_causal = torch.tensor(0.0, device=device)
         causal_metrics = {}
-        if compute_causal_prior and epoch > 5:  # Start after warmup
+        if compute_causal_prior and epoch > 5: # Start after warmup
             decoder_fn = self._make_decoder_fn(A_for_acy) if compute_necessity else None
             
             L_causal, causal_metrics = self.causal_prior(

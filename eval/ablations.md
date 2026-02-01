@@ -10,16 +10,16 @@ Ablation studies isolate each major component to understand its contribution to 
 
 | Component | Role | Default | How Disabled |
 |-----------|------|---------|--------------|
-| **3-Stage Schedule** | DISC→PRUNE→REFINE phases with temperature annealing | ✓ Yes | All phases equal weight |
-| **Signal Encoder** | Learns signal latent z_s from masked X | ✓ Yes | Replace with PCA/identity |
-| **Noise Encoder** | Learns noise latent z_n from residuals | ✓ Yes | Replace with zero/unit noise |
-| **Bias Encoder** | Learns bias latent z_b for systematic corruption | ✓ Yes | Remove (set z_b = 0) |
-| **Direction Learning** | 3rd phase refines edge directionality | ✓ Yes | Disable after PRUNE |
-| **Sparsity Penalty** | L1 on adjacency to prevent dense graphs | ✓ Yes | Set lambda_sparsity = 0 |
-| **DAG Penalty** | h(A) acyclicity constraint | ✓ Yes | Set lambda_dag = 0 |
-| **GroupDRO** | Environment-weighted resampling for robustness | ✓ Yes | Uniform sampling |
-| **Corruption Model** | MNAR + bias terms in generation | ✓ Yes | Assume MCAR |
-| **Multi-Regime** | Separate A_delta per environment | ✓ Yes | Force A = A_base (no deltas) |
+| **3-Stage Schedule** | DISC->PRUNE->REFINE phases with temperature annealing | [OK] Yes | All phases equal weight |
+| **Signal Encoder** | Learns signal latent z_s from masked X | [OK] Yes | Replace with PCA/identity |
+| **Noise Encoder** | Learns noise latent z_n from residuals | [OK] Yes | Replace with zero/unit noise |
+| **Bias Encoder** | Learns bias latent z_b for systematic corruption | [OK] Yes | Remove (set z_b = 0) |
+| **Direction Learning** | 3rd phase refines edge directionality | [OK] Yes | Disable after PRUNE |
+| **Sparsity Penalty** | L1 on adjacency to prevent dense graphs | [OK] Yes | Set lambda_sparsity = 0 |
+| **DAG Penalty** | h(A) acyclicity constraint | [OK] Yes | Set lambda_dag = 0 |
+| **GroupDRO** | Environment-weighted resampling for robustness | [OK] Yes | Uniform sampling |
+| **Corruption Model** | MNAR + bias terms in generation | [OK] Yes | Assume MCAR |
+| **Multi-Regime** | Separate A_delta per environment | [OK] Yes | Force A = A_base (no deltas) |
 
 ---
 
@@ -30,12 +30,12 @@ Ablation studies isolate each major component to understand its contribution to 
 **Configuration:**
 ```yaml
 model:
-  stage_config:
-    use_stages: false  # All phases weighted equally
-    disc_weight: 0.25
-    prune_weight: 0.25
-    refine_weight: 0.25
-    other_weight: 0.25
+ stage_config:
+ use_stages: false # All phases weighted equally
+ disc_weight: 0.25
+ prune_weight: 0.25
+ refine_weight: 0.25
+ other_weight: 0.25
 ```
 
 **Expected Result:**
@@ -52,9 +52,9 @@ model:
 **Configuration:**
 ```yaml
 model:
-  encoder_signal:
-    enabled: false  # Use PCA(16) instead
-    fallback: "pca"
+ encoder_signal:
+ enabled: false # Use PCA(16) instead
+ fallback: "pca"
 ```
 
 **Expected Result:**
@@ -71,8 +71,8 @@ model:
 **Configuration:**
 ```yaml
 model:
-  encoder_noise:
-    enabled: false  # Use diagonal noise covariance
+ encoder_noise:
+ enabled: false # Use diagonal noise covariance
 ```
 
 **Expected Result:**
@@ -89,8 +89,8 @@ model:
 **Configuration:**
 ```yaml
 model:
-  encoder_bias:
-    enabled: false  # Set z_b = 0 (no bias learning)
+ encoder_bias:
+ enabled: false # Set z_b = 0 (no bias learning)
 ```
 
 **Expected Result:**
@@ -107,7 +107,7 @@ model:
 **Configuration:**
 ```yaml
 train:
-  refine_epochs: 0  # Skip REFINE phase
+ refine_epochs: 0 # Skip REFINE phase
 ```
 
 **Expected Result:**
@@ -124,7 +124,7 @@ train:
 **Configuration:**
 ```yaml
 train:
-  lambda_sparsity: 0.0
+ lambda_sparsity: 0.0
 ```
 
 **Expected Result:**
@@ -142,7 +142,7 @@ train:
 **Configuration:**
 ```yaml
 train:
-  lambda_dag: 0.0
+ lambda_dag: 0.0
 ```
 
 **Expected Result:**
@@ -159,8 +159,8 @@ train:
 **Configuration:**
 ```yaml
 train:
-  use_group_dro: false
-  sampling_strategy: "uniform"
+ use_group_dro: false
+ sampling_strategy: "uniform"
 ```
 
 **Expected Result:**
@@ -177,8 +177,8 @@ train:
 **Configuration:**
 ```yaml
 model:
-  corruption_model: "mcar"  # Instead of "mnar"
-  missingness_learner: disabled
+ corruption_model: "mcar" # Instead of "mnar"
+ missingness_learner: disabled
 ```
 
 **Expected Result:**
@@ -195,9 +195,9 @@ model:
 **Configuration:**
 ```yaml
 model:
-  structure:
-    n_envs: 1  # Only A_base, no A_delta
-    use_env_deltas: false
+ structure:
+ n_envs: 1 # Only A_base, no A_delta
+ use_env_deltas: false
 ```
 
 **Expected Result:**
@@ -267,71 +267,71 @@ from src.dataio.loaders import load_synth
 from train_rcgnn_unified import train_and_eval
 
 ABLATIONS = {
-    'full': {},
-    'no_3stage': {'use_stages': False},
-    'no_signal_enc': {'encoder_signal_enabled': False},
-    'no_noise_enc': {'encoder_noise_enabled': False},
-    'no_bias_enc': {'encoder_bias_enabled': False},
-    'no_direction': {'refine_epochs': 0},
-    'no_sparsity': {'lambda_sparsity': 0.0},
-    'no_dag': {'lambda_dag': 0.0},
-    'no_groupdro': {'use_group_dro': False},
-    'mcar': {'corruption_model': 'mcar'},
-    'single_env': {'n_envs': 1},
+ 'full': {},
+ 'no_3stage': {'use_stages': False},
+ 'no_signal_enc': {'encoder_signal_enabled': False},
+ 'no_noise_enc': {'encoder_noise_enabled': False},
+ 'no_bias_enc': {'encoder_bias_enabled': False},
+ 'no_direction': {'refine_epochs': 0},
+ 'no_sparsity': {'lambda_sparsity': 0.0},
+ 'no_dag': {'lambda_dag': 0.0},
+ 'no_groupdro': {'use_group_dro': False},
+ 'mcar': {'corruption_model': 'mcar'},
+ 'single_env': {'n_envs': 1},
 }
 
 def run_ablation_study(dataset='extreme', n_seeds=5):
-    results = {}
-    for ablation_name, config_changes in ABLATIONS.items():
-        print(f"\n{'='*60}")
-        print(f"Ablation: {ablation_name}")
-        print(f"{'='*60}")
-        
-        ablation_results = []
-        for seed in range(n_seeds):
-            # Load data
-            ds_train, ds_val, ds_test = load_synth(
-                root='data/interim/synth_small',
-                split='train',
-                seed=seed,
-            )
-            
-            # Train with ablation config
-            metrics = train_and_eval(
-                ds_train, ds_val, ds_test,
-                config_changes=config_changes,
-                seed=seed,
-            )
-            ablation_results.append(metrics)
-        
-        # Aggregate
-        results[ablation_name] = {
-            'directed_f1_mean': np.mean([r['directed_f1'] for r in ablation_results]),
-            'directed_f1_std': np.std([r['directed_f1'] for r in ablation_results]),
-            'skeleton_f1_mean': np.mean([r['skeleton_f1'] for r in ablation_results]),
-            'skeleton_f1_std': np.std([r['skeleton_f1'] for r in ablation_results]),
-            'shd_mean': np.mean([r['shd'] for r in ablation_results]),
-            'shd_std': np.std([r['shd'] for r in ablation_results]),
-        }
-    
-    return results
+ results = {}
+ for ablation_name, config_changes in ABLATIONS.items():
+ print(f"\n{'='*60}")
+ print(f"Ablation: {ablation_name}")
+ print(f"{'='*60}")
+
+ ablation_results = []
+ for seed in range(n_seeds):
+ # Load data
+ ds_train, ds_val, ds_test = load_synth(
+ root='data/interim/synth_small',
+ split='train',
+ seed=seed,
+ )
+
+ # Train with ablation config
+ metrics = train_and_eval(
+ ds_train, ds_val, ds_test,
+ config_changes=config_changes,
+ seed=seed,
+ )
+ ablation_results.append(metrics)
+
+ # Aggregate
+ results[ablation_name] = {
+ 'directed_f1_mean': np.mean([r['directed_f1'] for r in ablation_results]),
+ 'directed_f1_std': np.std([r['directed_f1'] for r in ablation_results]),
+ 'skeleton_f1_mean': np.mean([r['skeleton_f1'] for r in ablation_results]),
+ 'skeleton_f1_std': np.std([r['skeleton_f1'] for r in ablation_results]),
+ 'shd_mean': np.mean([r['shd'] for r in ablation_results]),
+ 'shd_std': np.std([r['shd'] for r in ablation_results]),
+ }
+
+ return results
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', default='extreme')
-    parser.add_argument('--n_seeds', type=int, default=5)
-    parser.add_argument('--output_dir', default='artifacts/ablations')
-    args = parser.parse_args()
-    
-    results = run_ablation_study(args.dataset, args.n_seeds)
-    
-    # Save results
-    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    import json
-    with open(f'{args.output_dir}/results_{args.dataset}.json', 'w') as f:
-        json.dump(results, f, indent=2)
-    
-    print(f"\nResults saved to {args.output_dir}/results_{args.dataset}.json")
+ parser = argparse.ArgumentParser()
+ parser.add_argument('--dataset', default='extreme')
+ parser.add_argument('--n_seeds', type=int, default=5)
+ parser.add_argument('--output_dir', default='artifacts/ablations')
+ args = parser.parse_args()
+
+ results = run_ablation_study(args.dataset, args.n_seeds)
+
+ # Save results
+ Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+ import json
+ with open(f'{args.output_dir}/results_{args.dataset}.json', 'w') as f:
+ json.dump(results, f, indent=2)
+
+ print(f"\nResults saved to {args.output_dir}/results_{args.dataset}.json")
 ```
 
 ---

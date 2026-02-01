@@ -52,7 +52,7 @@ def compute_correlation_matrix(X: np.ndarray, method: str = "pearson") -> np.nda
     for i in range(d):
         for j in range(d):
             if i == j:
-                corr_matrix[i, j] = 0  # No self-loops
+                corr_matrix[i, j] = 0 # No self-loops
                 continue
             
             # Get valid pairs (both non-NaN)
@@ -60,13 +60,13 @@ def compute_correlation_matrix(X: np.ndarray, method: str = "pearson") -> np.nda
             xi = X[valid_mask, i]
             xj = X[valid_mask, j]
             
-            if len(xi) < 10:  # Too few valid samples
+            if len(xi) < 10: # Too few valid samples
                 corr_matrix[i, j] = 0
                 continue
             
             if method == "pearson":
                 corr, _ = stats.pearsonr(xi, xj)
-            else:  # spearman
+            else: # spearman
                 corr, _ = stats.spearmanr(xi, xj)
             
             corr_matrix[i, j] = abs(corr) if not np.isnan(corr) else 0
@@ -87,7 +87,7 @@ def topk_edges_from_matrix(A: np.ndarray, k: int) -> set:
     edges = set()
     for idx in top_indices:
         i, j = idx // d, idx % d
-        if flat[idx] > 0:  # Only non-zero
+        if flat[idx] > 0: # Only non-zero
             edges.add((i, j))
     
     return edges
@@ -161,7 +161,7 @@ def main():
     print("CORRELATION BASELINE COMPUTATION")
     print("=" * 70)
     print(f"Dataset: {data_dir.name}")
-    print(f"Method:  {args.method}")
+    print(f"Method: {args.method}")
     
     # Load data
     X = np.load(data_dir / "X.npy")
@@ -184,9 +184,9 @@ def main():
     corr_matrix = compute_correlation_matrix(X, args.method)
     
     print(f"Correlation matrix stats:")
-    print(f"  Max:  {corr_matrix.max():.4f}")
-    print(f"  Mean: {corr_matrix.mean():.4f}")
-    print(f"  Min (non-zero): {corr_matrix[corr_matrix > 0].min():.4f}" if (corr_matrix > 0).any() else "  No positive correlations")
+    print(f" Max: {corr_matrix.max():.4f}")
+    print(f" Mean: {corr_matrix.mean():.4f}")
+    print(f" Min (non-zero): {corr_matrix[corr_matrix > 0].min():.4f}" if (corr_matrix > 0).any() else " No positive correlations")
     
     # Get top-K edges
     pred_edges = topk_edges_from_matrix(corr_matrix, k)
@@ -199,9 +199,9 @@ def main():
     results = evaluate_against_truth(pred_edges, A_true, k)
     
     print(f"\n*** CORRELATION BASELINE TopK-F1 = {results['topk_f1']:.4f} ***")
-    print(f"    Skeleton-F1 = {results['skeleton_f1']:.4f}")
-    print(f"    TP = {results['tp']}/{n_true_edges}")
-    print(f"    Reversed direction = {results['reversed_direction']}")
+    print(f" Skeleton-F1 = {results['skeleton_f1']:.4f}")
+    print(f" TP = {results['tp']}/{n_true_edges}")
+    print(f" Reversed direction = {results['reversed_direction']}")
     
     print(f"\nTrue edges: {results['true_edge_list']}")
     print(f"\nTop-{k} correlation edges: {results['pred_edge_list']}")
@@ -217,10 +217,10 @@ def main():
     print(f"\n" + "=" * 70)
     print("SUMMARY (for comparison with model)")
     print("=" * 70)
-    print(f"Dataset:           {data_dir.name}")
+    print(f"Dataset: {data_dir.name}")
     print(f"Correlation TopK-F1: {results['topk_f1']:.4f}")
     print(f"Correlation Skel-F1: {results['skeleton_f1']:.4f}")
-    print(f"True Positives:      {results['tp']}/{n_true_edges}")
+    print(f"True Positives: {results['tp']}/{n_true_edges}")
     print("=" * 70)
     
     return results

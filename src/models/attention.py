@@ -18,7 +18,7 @@ def topk_sparse(logits, k):
     top_values, _ = torch.topk(logits, k=k, dim=-1)
     
     # Get kth value per row for thresholding
-    kth_values = top_values[..., -1:]  # [B,H,L,1]
+    kth_values = top_values[..., -1:] # [B,H,L,1]
     
     # Zero out entries below threshold
     sparse_weights = torch.where(
@@ -106,7 +106,7 @@ class LowRankSparseAttention(nn.Module):
         
         Args:
             q: Query tensor [B,L,D]
-            k: Key tensor [B,S,D]  
+            k: Key tensor [B,S,D] 
             v: Value tensor [B,S,D]
             mask: Optional attention mask [B,L,S]
             return_attn: Return attention weights
@@ -123,12 +123,12 @@ class LowRankSparseAttention(nn.Module):
         V = self.W_v(v).view(batch_size, -1, self.n_heads, self.d_head)
         
         # Transpose for attention calculation
-        Q = Q.transpose(1, 2)  # [B,H,L,R]
-        K = K.transpose(1, 2)  # [B,H,S,R] 
-        V = V.transpose(1, 2)  # [B,H,S,D]
+        Q = Q.transpose(1, 2) # [B,H,L,R]
+        K = K.transpose(1, 2) # [B,H,S,R] 
+        V = V.transpose(1, 2) # [B,H,S,D]
         
         # Compute attention scores
-        scores = torch.matmul(Q, K.transpose(-2, -1))  # [B,H,L,S]
+        scores = torch.matmul(Q, K.transpose(-2, -1)) # [B,H,L,S]
         scores = scores / (self.rank ** 0.5)
         
         # Add learned position bias
@@ -137,7 +137,7 @@ class LowRankSparseAttention(nn.Module):
         # Apply mask if provided
         if mask is not None:
             scores = scores.masked_fill(
-                ~mask.unsqueeze(1),  # Add heads dim
+                ~mask.unsqueeze(1), # Add heads dim
                 float('-inf')
             )
             
@@ -153,10 +153,10 @@ class LowRankSparseAttention(nn.Module):
         attn_weights = self.attn_dropout(attn_weights)
         
         # Compute attended values
-        out = torch.matmul(attn_weights, V)  # [B,H,L,D]
+        out = torch.matmul(attn_weights, V) # [B,H,L,D]
         
         # Transpose and reshape
-        out = out.transpose(1, 2).contiguous()  # [B,L,H,D]
+        out = out.transpose(1, 2).contiguous() # [B,L,H,D]
         out = out.view(batch_size, -1, self.d_model)
         
         # Final output projection

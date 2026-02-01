@@ -100,7 +100,7 @@ def hsic_loss(z1: torch.Tensor, z2: torch.Tensor) -> torch.Tensor:
 # =============================================================================
 
 class DisentangledEncoder(nn.Module):
-    """Two-pathway encoder: X → (z_signal, z_corrupt)"""
+    """Two-pathway encoder: X -> (z_signal, z_corrupt)"""
     
     def __init__(
         self,
@@ -226,7 +226,7 @@ class CausalGraphLearner(nn.Module):
         if env_idx is None or self.n_regimes == 1:
             logits = self.W_adj / tau
             A = torch.sigmoid(logits)
-            A = A * (1 - torch.eye(self.d, device=A.device))  # Zero diagonal
+            A = A * (1 - torch.eye(self.d, device=A.device)) # Zero diagonal
             return A, self.W_adj
         
         # Per-environment adjacency
@@ -292,8 +292,8 @@ class CausalGraphLearner(nn.Module):
         
         if use_logits:
             # BEST PRACTICE: Rank edges by logit magnitude (stable across temperatures)
-            W_masked = self.W_adj * (1 - diag_mask)  # Zero diagonal
-            flat = W_masked.flatten()  # Use raw logits, not sigmoid(W)
+            W_masked = self.W_adj * (1 - diag_mask) # Zero diagonal
+            flat = W_masked.flatten() # Use raw logits, not sigmoid(W)
         else:
             # Fallback: rank by A (less stable as τ changes)
             tau = self.current_temp
@@ -439,7 +439,7 @@ class HeteroscedasticDecoder(nn.Module):
         latent_dim: int = 32,
         hidden_dim: int = 64,
         min_sigma: float = 0.01,
-        max_sigma: float = 5.0,  # Cap variance to prevent inflation gaming
+        max_sigma: float = 5.0, # Cap variance to prevent inflation gaming
         min_nu: float = 2.1,
         corrupt_dropout: float = 0.5,
     ):
@@ -491,7 +491,7 @@ class HeteroscedasticDecoder(nn.Module):
         z_corrupt: torch.Tensor,
         A: torch.Tensor,
         regime: Optional[torch.Tensor] = None,
-        M_probs: Optional[torch.Tensor] = None,  # Kept for interface, but NOT used
+        M_probs: Optional[torch.Tensor] = None, # Kept for interface, but NOT used
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict]:
         """
         Forward pass with heteroscedastic variance (NO M_probs dependence).
@@ -513,13 +513,13 @@ class HeteroscedasticDecoder(nn.Module):
         z_agg = torch.bmm(
             A.unsqueeze(0).expand(B * T, -1, -1).transpose(-1, -2),
             z_s_flat
-        )  # [B*T, d, L]
+        ) # [B*T, d, L]
         
-        h_signal = self.signal_proj(z_agg)  # [B*T, d, hidden]
+        h_signal = self.signal_proj(z_agg) # [B*T, d, hidden]
         
         # Corruption encoding
         z_c_flat = z_corrupt.reshape(B * T, d, L)
-        h_corrupt = self.corrupt_proj(z_c_flat)  # [B*T, d, hidden]
+        h_corrupt = self.corrupt_proj(z_c_flat) # [B*T, d, hidden]
         
         # Dropout on corruption (encourage signal pathway)
         if self.training and self.corrupt_dropout > 0:
@@ -527,24 +527,24 @@ class HeteroscedasticDecoder(nn.Module):
             h_corrupt = h_corrupt * drop_mask
         
         # Combined hidden state (no M_probs!)
-        h_combined = torch.cat([h_signal, h_corrupt], dim=-1)  # [B*T, d, 2*hidden]
+        h_combined = torch.cat([h_signal, h_corrupt], dim=-1) # [B*T, d, 2*hidden]
         
         # =====================================================================
         # 1. Mean prediction
         # =====================================================================
-        mu = self.mu_head(h_combined).squeeze(-1)  # [B*T, d]
+        mu = self.mu_head(h_combined).squeeze(-1) # [B*T, d]
         
         # =====================================================================
         # 2. Signal variance (from latent state only, NOT M_probs)
         # =====================================================================
-        signal_var = self.signal_var_head(h_combined).squeeze(-1)  # [B*T, d]
+        signal_var = self.signal_var_head(h_combined).squeeze(-1) # [B*T, d]
         signal_var = signal_var.clamp_min(self.min_sigma ** 2)
         
         # =====================================================================
         # 3. Add bias variance
         # =====================================================================
         bias_var = F.softplus(self.bias_var).clamp_min(self.min_sigma ** 2)
-        bias_var = bias_var.unsqueeze(0).expand(B * T, -1)  # [B*T, d]
+        bias_var = bias_var.unsqueeze(0).expand(B * T, -1) # [B*T, d]
         
         total_var = signal_var + bias_var
         
@@ -554,7 +554,7 @@ class HeteroscedasticDecoder(nn.Module):
         # =====================================================================
         # 4. Degrees of freedom (nu) for Student-t
         # =====================================================================
-        nu = self.nu_head(h_combined).squeeze(-1) + self.min_nu  # [B*T, d]
+        nu = self.nu_head(h_combined).squeeze(-1) + self.min_nu # [B*T, d]
         
         # Reshape to [B, T, d]
         mu = mu.reshape(B, T, d)
@@ -588,7 +588,7 @@ class RCGNN(nn.Module):
     Complete model for causal discovery under compound sensor corruptions.
     
     Key components:
-    1. DisentangledEncoder: X → (z_signal, z_corrupt)
+    1. DisentangledEncoder: X -> (z_signal, z_corrupt)
     2. CausalGraphLearner: learns A with per-environment deltas
     3. MissingnessHead: P(M|X*) for true MNAR (X* = mu from decoder)
     4. Robust Decoder: Student-t likelihood
@@ -617,14 +617,14 @@ class RCGNN(nn.Module):
         lambda_necessity: float = 0.05,
         lambda_mechanism: float = 0.1,
         # GUARDRAIL: Variance inflation penalty
-        lambda_var_penalty: float = 0.01,  # beta * mean(log(var))
+        lambda_var_penalty: float = 0.01, # beta * mean(log(var))
         # Options
         use_env_specific_decoder: bool = True,
-        mnar_detach: bool = True,  # Detach mu for stable MNAR training
+        mnar_detach: bool = True, # Detach mu for stable MNAR training
         # Selection model options (with guardrails)
-        use_ipw: bool = True,  # Inverse probability weighting for MNAR
-        ipw_clip: float = 5.0,  # GUARDRAIL: tighter clip to prevent explosion
-        ipw_start_epoch: float = 0.3,  # GUARDRAIL: Phase training - start IPW at 30%
+        use_ipw: bool = True, # Inverse probability weighting for MNAR
+        ipw_clip: float = 5.0, # GUARDRAIL: tighter clip to prevent explosion
+        ipw_start_epoch: float = 0.3, # GUARDRAIL: Phase training - start IPW at 30%
     ):
         super().__init__()
         self.d = d
@@ -633,7 +633,7 @@ class RCGNN(nn.Module):
         self.mnar_detach = mnar_detach
         self.use_ipw = use_ipw
         self.ipw_clip = ipw_clip
-        self.ipw_start_epoch = ipw_start_epoch  # Fraction of total_epochs
+        self.ipw_start_epoch = ipw_start_epoch # Fraction of total_epochs
         
         # Standard loss weights
         self.lambda_recon = lambda_recon
@@ -748,10 +748,10 @@ class RCGNN(nn.Module):
         Forward pass with dual MNAR modeling:
         
         1. Selection model: P(M|X*) predicts missingness from imputed values
-           → Used for inverse probability weighting (IPW)
+           -> Used for inverse probability weighting (IPW)
         
         2. Variance scaling: σ² increases when P(missing) is high
-           → Captures uncertainty from MNAR mechanism
+           -> Captures uncertainty from MNAR mechanism
         
         GUARDRAIL: Variance depends on latent state only, NOT on M_probs.
         This prevents shortcut learning where the model games both selection
@@ -777,7 +777,7 @@ class RCGNN(nn.Module):
         # 3. Decode (single pass - no M_probs dependence per GUARDRAIL)
         if self.use_env_decoder and regime is not None:
             mu, sigma, per_env_mu = self.decoder(z_signal, z_corrupt, A_base, regime)
-            nu = torch.full_like(mu, 4.0)  # Fixed nu for env-specific decoder
+            nu = torch.full_like(mu, 4.0) # Fixed nu for env-specific decoder
             var_components = None
         else:
             # Heteroscedastic decoder - variance from latent state only
@@ -793,7 +793,7 @@ class RCGNN(nn.Module):
             X_star = mu
         
         miss_logits = self.miss_head(X_star, regime)
-        M_probs = torch.sigmoid(miss_logits)  # P(observed | X*)
+        M_probs = torch.sigmoid(miss_logits) # P(observed | X*)
         
         return {
             "z_signal": z_signal,
@@ -802,7 +802,7 @@ class RCGNN(nn.Module):
             "A_base": A_base,
             "W_adj": W_adj,
             "miss_logits": miss_logits,
-            "M_probs": M_probs,  # Propensity scores for IPW
+            "M_probs": M_probs, # Propensity scores for IPW
             "mu": mu,
             "sigma": sigma,
             "nu": nu,
@@ -840,8 +840,8 @@ class RCGNN(nn.Module):
         epoch: int = 1,
         total_epochs: int = 50,
         compute_causal_prior: bool = True,
-        compute_necessity: bool = False,  # Expensive, do every N epochs
-        loss_weights: Optional[Dict[str, float]] = None,  # Override scheduled weights
+        compute_necessity: bool = False, # Expensive, do every N epochs
+        loss_weights: Optional[Dict[str, float]] = None, # Override scheduled weights
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
         Compute total loss with MNAR handling and GUARDRAILS.
@@ -882,7 +882,7 @@ class RCGNN(nn.Module):
         if use_ipw_now:
             # Stabilized weights: w = p_bar / p_hat
             # This centers weights around 1 and prevents explosion
-            p_bar = propensity.mean().detach()  # Marginal probability
+            p_bar = propensity.mean().detach() # Marginal probability
             
             # Stabilized IPW: w = p_bar / p_hat (bounded)
             ipw_weights = p_bar / (propensity + 1e-6)
@@ -959,7 +959,7 @@ class RCGNN(nn.Module):
         
         # Keep old L_sparse for monitoring (but use logit version in loss)
         L_sparse_A = A_for_acy.abs().sum() / (self.d * self.d)
-        L_sparse = L_sparse_logits  # Use logit-based sparsity
+        L_sparse = L_sparse_logits # Use logit-based sparsity
         
         if loss_weights and "lambda_sparse" in loss_weights:
             lambda_sparse_used = loss_weights["lambda_sparse"]
@@ -1012,7 +1012,7 @@ class RCGNN(nn.Module):
         # 8. V4: Causal prior loss
         L_causal = torch.tensor(0.0, device=device)
         causal_metrics = {}
-        if compute_causal_prior and epoch > 5:  # Start after warmup
+        if compute_causal_prior and epoch > 5: # Start after warmup
             decoder_fn = self._make_decoder_fn(A_for_acy) if compute_necessity else None
             
             L_causal, causal_metrics = self.causal_prior(
@@ -1036,8 +1036,8 @@ class RCGNN(nn.Module):
             + lambda_budget_used * L_budget
             + lambda_inv * L_inv
             + lambda_causal * L_causal
-            + lambda_var_penalty * L_var_penalty  # GUARDRAIL 2
-            + lambda_binary * L_binary  # Binarization penalty for edge confidence
+            + lambda_var_penalty * L_var_penalty # GUARDRAIL 2
+            + lambda_binary * L_binary # Binarization penalty for edge confidence
         )
         
         # Metrics with full guardrail tracking
@@ -1050,9 +1050,9 @@ class RCGNN(nn.Module):
             "h_A_raw": h_A_raw.item(),
             "lambda_acy_used": lambda_acy_used,
             "L_sparse": L_sparse.item(),
-            "L_sparse_A": L_sparse_A.item(),  # Sparsity on adjacency (for monitoring)
-            "L_sparse_logits": L_sparse_logits.item(),  # Sparsity on logits (used in loss)
-            "L_binary": L_binary.item(),  # Binarization penalty
+            "L_sparse_A": L_sparse_A.item(), # Sparsity on adjacency (for monitoring)
+            "L_sparse_logits": L_sparse_logits.item(), # Sparsity on logits (used in loss)
+            "L_binary": L_binary.item(), # Binarization penalty
             "lambda_sparse_used": lambda_sparse_used,
             "lambda_binary": lambda_binary,
             "L_budget": L_budget.item(),
@@ -1061,8 +1061,8 @@ class RCGNN(nn.Module):
             "target_edges": self.target_edges,
             "A_mean": A_for_acy.mean().item(),
             "A_max": A_for_acy.max().item(),
-            "A_min": A_for_acy[A_for_acy > 0].min().item() if (A_for_acy > 0).any() else 0.0,  # Min non-zero
-            "W_logits_mean": W_logits_masked.mean().item(),  # Logits stats
+            "A_min": A_for_acy[A_for_acy > 0].min().item() if (A_for_acy > 0).any() else 0.0, # Min non-zero
+            "W_logits_mean": W_logits_masked.mean().item(), # Logits stats
             "W_logits_min": W_logits_masked.min().item(),
             "W_logits_max": W_logits_masked.max().item(),
             "temperature": self.graph_learner.get_temperature(),

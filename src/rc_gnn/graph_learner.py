@@ -44,7 +44,7 @@ def notears_h(A: torch.Tensor) -> torch.Tensor:
         # Truncated series: exp(A) ≈ Σ_{k=0}^{K} A^k / k!
         exp_A = torch.eye(d, device=A.device, dtype=A.dtype)
         A_power = torch.eye(d, device=A.device, dtype=A.dtype)
-        for k in range(1, 10):  # 10 terms is usually sufficient
+        for k in range(1, 10): # 10 terms is usually sufficient
             A_power = A_power @ A_sq / k
             exp_A = exp_A + A_power
     
@@ -77,7 +77,7 @@ def notears_h_poly(A: torch.Tensor, power: int = 10) -> torch.Tensor:
         exp //= 2
     
     h = torch.trace(result) - d
-    return F.relu(h)  # Ensure non-negative
+    return F.relu(h) # Ensure non-negative
 
 
 class CausalGraphLearner(nn.Module):
@@ -100,7 +100,7 @@ class CausalGraphLearner(nn.Module):
         d: int,
         latent_dim: Optional[int] = None,
         hidden_dim: int = 64,
-        method: str = "direct",  # "direct", "attention", "bilinear"
+        method: str = "direct", # "direct", "attention", "bilinear"
         n_envs: int = 1,
         temperature: float = 1.0,
     ):
@@ -168,11 +168,11 @@ class CausalGraphLearner(nn.Module):
             if z.dim() == 2:
                 z = z.unsqueeze(0)
             
-            Q = self.query(z)  # [B, d, hidden]
-            K = self.key(z)    # [B, d, hidden]
+            Q = self.query(z) # [B, d, hidden]
+            K = self.key(z) # [B, d, hidden]
             
             # Attention scores
-            logits = torch.bmm(Q, K.transpose(-1, -2)) / self.scale  # [B, d, d]
+            logits = torch.bmm(Q, K.transpose(-1, -2)) / self.scale # [B, d, d]
             
         elif self.method == "bilinear":
             if z.dim() == 2:
@@ -180,8 +180,8 @@ class CausalGraphLearner(nn.Module):
             
             # z: [B, d, latent_dim]
             # logits_ij = z_i^T W z_j
-            z_W = torch.matmul(z, self.bilinear)  # [B, d, latent_dim]
-            logits = torch.bmm(z_W, z.transpose(-1, -2))  # [B, d, d]
+            z_W = torch.matmul(z, self.bilinear) # [B, d, latent_dim]
+            logits = torch.bmm(z_W, z.transpose(-1, -2)) # [B, d, d]
         
         # Add environment-specific deltas
         if env_idx is not None and self.env_deltas is not None:
@@ -244,7 +244,7 @@ class CausalGraphLearner(nn.Module):
             h: Acyclicity penalty
         """
         if A.dim() == 3:
-            A = A.mean(dim=0)  # Average over batch
+            A = A.mean(dim=0) # Average over batch
         
         if method == "notears":
             return notears_h(A)

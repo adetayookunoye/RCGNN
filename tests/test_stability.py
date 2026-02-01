@@ -79,15 +79,15 @@ def test_temporal_stability(sample_temporal):
     
     # Earlier lags should matter more
     temporal3 = [
-        temporal1[0],  # Same first lag
-        [(3,4), (4,5)],  # Different later lags
+        temporal1[0], # Same first lag
+        [(3,4), (4,5)], # Different later lags
         [(4,5)]
     ]
     stability_early_match = compute_temporal_stability(temporal1, temporal3)
     
     temporal4 = [
-        [(3,4), (4,5)],  # Different first lag
-        temporal1[1],  # Same later lags
+        [(3,4), (4,5)], # Different first lag
+        temporal1[1], # Same later lags
         temporal1[2]
     ]
     stability_late_match = compute_temporal_stability(temporal1, temporal4)
@@ -113,7 +113,7 @@ def test_aggregate_metrics(sample_edges):
     assert 'critical_level' in metrics
     assert 'degradation_rate' in metrics
     assert metrics['auc'] > 0
-    assert metrics['degradation_rate'] < 0  # Should decrease
+    assert metrics['degradation_rate'] < 0 # Should decrease
 
 def test_temporal_metrics():
     """Test computation of temporal stability metrics."""

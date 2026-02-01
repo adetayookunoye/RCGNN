@@ -30,14 +30,14 @@ def test_env_risk_computation(sample_data):
     
     # Create synthetic data
     X, M, e = sample_data
-    A = torch.rand(8, d, d)  # Random adjacency
-    logits = torch.randn(8, d, d)  # Random logits
+    A = torch.rand(8, d, d) # Random adjacency
+    logits = torch.randn(8, d, d) # Random logits
     
     # Compute risks
     risks, grad_penalty = invariance.compute_env_risk(A, logits, X, M, e)
     
     assert len(risks) == n_envs
-    assert grad_penalty.ndim == 0  # Scalar
+    assert grad_penalty.ndim == 0 # Scalar
     assert torch.all(risks >= 0)
     assert grad_penalty >= 0
 
@@ -58,8 +58,8 @@ def test_structure_variance(sample_data):
         
     var_penalty = invariance.structure_variance(A, None, e)
     
-    assert var_penalty.ndim == 0  # Scalar output
-    assert var_penalty > 0  # Should detect structure differences
+    assert var_penalty.ndim == 0 # Scalar output
+    assert var_penalty > 0 # Should detect structure differences
     
     # Test with identical structures - should have zero variance
     A_same = torch.eye(d).unsqueeze(0).expand(8, -1, -1)
@@ -92,7 +92,7 @@ def test_env_consistency(sample_data):
     """Test consistency of invariance penalties across environments."""
     d = 5
     n_envs = 4
-    invariance = IRMStructureInvariance(d, n_envs, gamma=1.0)  # Higher gamma for testing
+    invariance = IRMStructureInvariance(d, n_envs, gamma=1.0) # Higher gamma for testing
     
     X, M, e = sample_data
     
@@ -125,9 +125,9 @@ def test_batch_handling():
     invariance = IRMStructureInvariance(d, n_envs)
     
     # Test with minimal batch
-    X_min = torch.randn(2, 10, d)  # Just 2 samples
+    X_min = torch.randn(2, 10, d) # Just 2 samples
     M_min = torch.ones(2, 10, d, dtype=torch.bool)
-    e_min = torch.tensor([0, 1])  # 2 environments
+    e_min = torch.tensor([0, 1]) # 2 environments
     A_min = torch.rand(2, d, d)
     logits_min = torch.randn(2, d, d)
     

@@ -9,7 +9,7 @@ def test_logits_grad_flow():
 
     # Create dummy adjacency and logits that require grad
     logits = torch.randn(2, d, d, requires_grad=True)
-    A = torch.sigmoid(logits).detach()  # A derived from logits in real pipeline
+    A = torch.sigmoid(logits).detach() # A derived from logits in real pipeline
 
     # Create simple X, M, e
     B, T = 2, 5

@@ -194,7 +194,7 @@ def compute_temporal_stability(
         # Compare edges at each lag
         lag_score = compute_edge_stability(temporal1[l], temporal2[l])
         # Weight earlier lags more heavily
-        weight = np.exp(-l)  # Exponential decay
+        weight = np.exp(-l) # Exponential decay
         lag_scores.append(weight * lag_score)
         
     return np.sum(lag_scores) / np.sum([np.exp(-l) for l in range(n_lags)])
@@ -292,7 +292,7 @@ def adjacency_to_edges(adj: torch.Tensor) -> List[Tuple[int, int]]:
         List of (source, target) edge tuples
     """
     if adj.dim() == 3:
-        adj = adj.mean(0)  # Average over batch
+        adj = adj.mean(0) # Average over batch
         
     edges = []
     d = adj.shape[0]

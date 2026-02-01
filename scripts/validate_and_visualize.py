@@ -263,7 +263,7 @@ def save_pr_curve(A_true, A_pred, path="artifacts/pr_curve.png"):
     y_true = (A_true[mask].ravel() > 0.5).astype(int)
     
     if y_true.sum() == 0 or np.ptp(y_score) <= 1e-12:
-        print("⚠️  Skipping PR curve: no positive edges or constant scores")
+        print("[WARN] Skipping PR curve: no positive edges or constant scores")
         return
     
     P, R, _ = precision_recall_curve(y_true, y_score)
@@ -281,7 +281,7 @@ def save_pr_curve(A_true, A_pred, path="artifacts/pr_curve.png"):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(path, dpi=300, bbox_inches="tight")
     plt.close()
-    print(f"✅ Saved PR curve to {path}")
+    print(f"[DONE] Saved PR curve to {path}")
 
 
 def save_edge_list(A_pred, node_names=None, path="artifacts/edge_list.csv"):
@@ -315,7 +315,7 @@ def save_edge_list(A_pred, node_names=None, path="artifacts/edge_list.csv"):
     
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False, float_format='%.6f')
-    print(f"✅ Saved ranked edge list to {path} ({len(df)} edges)")
+    print(f"[DONE] Saved ranked edge list to {path} ({len(df)} edges)")
 
 
 def dag_sanity(A_pred, thr=0.5):
@@ -335,7 +335,7 @@ def dag_sanity(A_pred, thr=0.5):
         return {}
     
     A_bin = (A_pred > thr).astype(int)
-    np.fill_diagonal(A_bin, 0)  # Remove self-loops
+    np.fill_diagonal(A_bin, 0) # Remove self-loops
     
     G = nx.from_numpy_array(A_bin, create_using=nx.DiGraph)
     cycles = list(nx.simple_cycles(G))
@@ -397,7 +397,7 @@ def plot_adjacency_matrices(A_true, A_pred, output_path='artifacts/adjacency_com
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"✅ Saved adjacency comparison to {output_path}")
+    print(f"[DONE] Saved adjacency comparison to {output_path}")
 
 
 def plot_edge_strength_distribution(A_pred, output_path='artifacts/edge_strength_dist.png', threshold=0.5):
@@ -453,7 +453,7 @@ def plot_edge_strength_distribution(A_pred, output_path='artifacts/edge_strength
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"✅ Saved edge strength distribution to {output_path}")
+    print(f"[DONE] Saved edge strength distribution to {output_path}")
 
 
 def plot_graph_network(A_pred, node_names=None, output_path='artifacts/causal_graph_network.png', 
@@ -471,7 +471,7 @@ def plot_graph_network(A_pred, node_names=None, output_path='artifacts/causal_gr
     try:
         import networkx as nx
     except ImportError:
-        print("⚠️  NetworkX not installed. Skipping network visualization.")
+        print("[WARN] NetworkX not installed. Skipping network visualization.")
         return
     
     n = A_pred.shape[0]
@@ -498,7 +498,7 @@ def plot_graph_network(A_pred, node_names=None, output_path='artifacts/causal_gr
     top_edges = edges_with_strength[:top_k_edges]
     
     if len(top_edges) == 0:
-        print("⚠️  No edges to visualize in network graph.")
+        print("[WARN] No edges to visualize in network graph.")
         return
     
     # Add edges
@@ -545,7 +545,7 @@ def plot_graph_network(A_pred, node_names=None, output_path='artifacts/causal_gr
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"✅ Saved network visualization to {output_path}")
+    print(f"[DONE] Saved network visualization to {output_path}")
 
 
 def main():
@@ -578,7 +578,7 @@ def main():
     # Load learned adjacency
     A_pred_path = args.adjacency
     if not os.path.exists(A_pred_path):
-        print(f"❌ Learned adjacency not found at {A_pred_path}")
+        print(f"[FAIL] Learned adjacency not found at {A_pred_path}")
         return
     
     A_pred = np.load(A_pred_path)
@@ -589,16 +589,16 @@ def main():
     mask = _offdiag_mask(n)
     offdiag = A_pred[mask].ravel()
     
-    print(f"✅ Loaded predicted adjacency: shape {A_pred.shape}")
-    print(f"   Min: {offdiag.min():.6f}, Max: {offdiag.max():.6f}, Mean: {offdiag.mean():.6f}")
-    print(f"   Sparsity (off-diag): {(offdiag == 0).sum() / len(offdiag) * 100:.1f}% zeros\n")
+    print(f"[DONE] Loaded predicted adjacency: shape {A_pred.shape}")
+    print(f" Min: {offdiag.min():.6f}, Max: {offdiag.max():.6f}, Mean: {offdiag.mean():.6f}")
+    print(f" Sparsity (off-diag): {(offdiag == 0).sum() / len(offdiag) * 100:.1f}% zeros\n")
     
     # Parse node names
     node_names = None
     if args.node_names:
         node_names = [s.strip() for s in args.node_names.split(',')]
         if len(node_names) != n:
-            print(f"⚠️  Warning: {len(node_names)} node names provided but adjacency has {n} nodes. Using defaults.")
+            print(f"[WARN] Warning: {len(node_names)} node names provided but adjacency has {n} nodes. Using defaults.")
             node_names = None
     
     # Try to load ground truth
@@ -607,10 +607,10 @@ def main():
         A_true_path = os.path.join(args.data_root, "A_true.npy")
         if os.path.exists(A_true_path):
             A_true = np.load(A_true_path)
-            print(f"✅ Loaded ground truth adjacency from {A_true_path}")
-            print(f"   Shape: {A_true.shape}, Non-zero edges (off-diag): {(A_true[mask] > 0).sum()}\n")
+            print(f"[DONE] Loaded ground truth adjacency from {A_true_path}")
+            print(f" Shape: {A_true.shape}, Non-zero edges (off-diag): {(A_true[mask] > 0).sum()}\n")
         else:
-            print(f"⚠️  Ground truth not found at {A_true_path}\n")
+            print(f"[WARN] Ground truth not found at {A_true_path}\n")
     else:
         # Auto-detect from common locations
         A_true_paths = [
@@ -621,12 +621,12 @@ def main():
         for path in A_true_paths:
             if os.path.exists(path):
                 A_true = np.load(path)
-                print(f"✅ Loaded ground truth adjacency from {path}")
-                print(f"   Shape: {A_true.shape}, Non-zero edges (off-diag): {(A_true[mask] > 0).sum()}\n")
+                print(f"[DONE] Loaded ground truth adjacency from {path}")
+                print(f" Shape: {A_true.shape}, Non-zero edges (off-diag): {(A_true[mask] > 0).sum()}\n")
                 break
     
     if A_true is None:
-        print("⚠️  No ground truth adjacency found. Using structure statistics only.\n")
+        print("[WARN] No ground truth adjacency found. Using structure statistics only.\n")
     
     # Compute metrics
     print("-" * 80)
@@ -635,40 +635,40 @@ def main():
     metrics = compute_metrics(A_true, A_pred, threshold=args.threshold)
     
     if A_true is not None:
-        print(f"\n🎯 Binary Metrics @ threshold={metrics['threshold']:.2f}:")
-        print(f"   Precision:  {metrics['precision']:.4f}")
-        print(f"   Recall:     {metrics['recall']:.4f}")
-        print(f"   F1-Score:   {metrics['f1']:.4f}")
-        print(f"   SHD (directed):   {metrics['shd']}")
-        print(f"   SHD (skeleton):   {metrics['shd_skeleton']}")
+        print(f"\n Binary Metrics @ threshold={metrics['threshold']:.2f}:")
+        print(f" Precision: {metrics['precision']:.4f}")
+        print(f" Recall: {metrics['recall']:.4f}")
+        print(f" F1-Score: {metrics['f1']:.4f}")
+        print(f" SHD (directed): {metrics['shd']}")
+        print(f" SHD (skeleton): {metrics['shd_skeleton']}")
         
         if 'auprc' in metrics:
-            print(f"\n🎯 Threshold-Free Metrics:")
-            print(f"   AUPRC:           {metrics['auprc']:.4f}")
-            print(f"   Best F1 (PR):    {metrics['best_f1_over_PR']:.4f} @ thr={metrics['best_thr_over_PR']:.4f}")
+            print(f"\n Threshold-Free Metrics:")
+            print(f" AUPRC: {metrics['auprc']:.4f}")
+            print(f" Best F1 (PR): {metrics['best_f1_over_PR']:.4f} @ thr={metrics['best_thr_over_PR']:.4f}")
             if 'roc_auc' in metrics:
-                print(f"   ROC-AUC:         {metrics['roc_auc']:.4f}")
+                print(f" ROC-AUC: {metrics['roc_auc']:.4f}")
         
         if 'topk_f1' in metrics:
-            print(f"\n🎯 Top-k Metrics (k={metrics['k']} edges in GT):")
-            print(f"   Top-k Precision: {metrics['topk_precision']:.4f}")
-            print(f"   Top-k Recall:    {metrics['topk_recall']:.4f}")
-            print(f"   Top-k F1:        {metrics['topk_f1']:.4f}")
+            print(f"\n Top-k Metrics (k={metrics['k']} edges in GT):")
+            print(f" Top-k Precision: {metrics['topk_precision']:.4f}")
+            print(f" Top-k Recall: {metrics['topk_recall']:.4f}")
+            print(f" Top-k F1: {metrics['topk_f1']:.4f}")
     else:
-        print(f"\n📊 Structure Statistics:")
-        print(f"   Edges predicted @ thr={args.threshold}: {metrics['n_edges_pred@thr']}")
-        print(f"   Mean score:      {metrics['mean_score']:.6f}")
-        print(f"   Median score:    {metrics['median_score']:.6f}")
-        print(f"   Sparsity @ thr:  {metrics['sparsity@thr(%)']:.1f}%")
+        print(f"\n Structure Statistics:")
+        print(f" Edges predicted @ thr={args.threshold}: {metrics['n_edges_pred@thr']}")
+        print(f" Mean score: {metrics['mean_score']:.6f}")
+        print(f" Median score: {metrics['median_score']:.6f}")
+        print(f" Sparsity @ thr: {metrics['sparsity@thr(%)']:.1f}%")
     
     # DAG sanity checks
     dag_stats = dag_sanity(A_pred, thr=args.threshold)
     if dag_stats:
-        print(f"\n🔍 DAG Sanity Checks @ threshold={args.threshold}:")
-        print(f"   Edges:          {dag_stats['n_edges@thr']}")
-        print(f"   Cycles:         {dag_stats['n_cycles@thr']}")
-        print(f"   Max cycle len:  {dag_stats['max_cycle_len']}")
-        print(f"   Is DAG:         {'✅ Yes' if dag_stats['is_dag@thr'] else '❌ No'}")
+        print(f"\n DAG Sanity Checks @ threshold={args.threshold}:")
+        print(f" Edges: {dag_stats['n_edges@thr']}")
+        print(f" Cycles: {dag_stats['n_cycles@thr']}")
+        print(f" Max cycle len: {dag_stats['max_cycle_len']}")
+        print(f" Is DAG: {'[DONE] Yes' if dag_stats['is_dag@thr'] else '[FAIL] No'}")
     
     print("\n" + "-" * 80)
     print("GENERATING VISUALIZATIONS AND EXPORTS")
@@ -698,15 +698,15 @@ def main():
     save_edge_list(A_pred, node_names=node_names, path=f"{args.export}/edge_list.csv")
     
     print("\n" + "=" * 80)
-    print("✅ VALIDATION AND VISUALIZATION COMPLETE")
+    print("[DONE] VALIDATION AND VISUALIZATION COMPLETE")
     print("=" * 80)
-    print(f"\n📁 Output files in {args.export}/:")
-    print(f"   • adjacency_comparison.png - Side-by-side adjacency heatmaps")
-    print(f"   • edge_strength_dist.png   - Edge strength distribution")
-    print(f"   • causal_graph_network.png - Network graph (top 25 edges)")
+    print(f"\n Output files in {args.export}/:")
+    print(f" • adjacency_comparison.png - Side-by-side adjacency heatmaps")
+    print(f" • edge_strength_dist.png - Edge strength distribution")
+    print(f" • causal_graph_network.png - Network graph (top 25 edges)")
     if A_true is not None:
-        print(f"   • pr_curve.png             - Precision-Recall curve")
-    print(f"   • edge_list.csv            - Ranked edge list for inspection")
+        print(f" • pr_curve.png - Precision-Recall curve")
+    print(f" • edge_list.csv - Ranked edge list for inspection")
     print()
 
 

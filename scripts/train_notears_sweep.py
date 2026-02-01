@@ -16,7 +16,7 @@ from src.models.utils import evaluate_adjacency, best_threshold_f1
 def impute_mean(X, M):
     """Simple mean imputation for missing values."""
     X_imp = X.copy()
-    for i in range(X.shape[2]):  # For each feature
+    for i in range(X.shape[2]): # For each feature
         feature_data = X[:, :, i]
         observed = M[:, :, i] == 1
         if observed.sum() > 0:
@@ -88,9 +88,9 @@ def main():
     print("=" * 60)
     print("RESULTS")
     print("=" * 60)
-    print(f"F1:       {results['f1']:.3f}")
-    print(f"AUPRC:    {results['auprc']:.3f}")
-    print(f"SHD:      {results['shd']}")
+    print(f"F1: {results['f1']:.3f}")
+    print(f"AUPRC: {results['auprc']:.3f}")
+    print(f"SHD: {results['shd']}")
     print()
     print(f"Saved to: {output_file}")
 

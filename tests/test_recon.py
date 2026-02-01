@@ -71,8 +71,8 @@ def test_uncertainty_components():
     high_miss = torch.ones_like(M_probs) * 0.9
     _, unc3, comp3 = recon(S_hat, ZB, high_miss)
     
-    assert torch.all(unc2 >= comp1['base_unc'])  # Total unc >= base
-    assert torch.all(unc3 >= unc2)  # Higher missingness -> higher unc
+    assert torch.all(unc2 >= comp1['base_unc']) # Total unc >= base
+    assert torch.all(unc3 >= unc2) # Higher missingness -> higher unc
 
 def test_nll_loss(sample_data):
     """Test negative log likelihood loss computation."""
@@ -94,9 +94,9 @@ def test_nll_loss(sample_data):
     loss3 = recon.nll_loss(X, X_mu, unc, reduction='sum')
     
     assert loss1.shape == (B, T, d)
-    assert loss2.ndim == 0  # Scalar
+    assert loss2.ndim == 0 # Scalar
     assert loss3.ndim == 0
-    assert torch.all(loss1 >= 0)  # NLL should be positive
+    assert torch.all(loss1 >= 0) # NLL should be positive
 
 def test_mnar_integration(sample_data):
     """Test integration with MNAR missingness model."""

@@ -63,7 +63,7 @@ def plot_adjacency_matrices(A_true, A_pred, output_path, threshold=0.5):
         figsize=(16 if A_true is not None else 11, 5)
     )
     if A_true is None:
-        axes = [axes[0], axes[1]]  # Make iterable
+        axes = [axes[0], axes[1]] # Make iterable
     
     # Predicted (continuous)
     ax = axes[1] if A_true is not None else axes[0]
@@ -93,7 +93,7 @@ def plot_adjacency_matrices(A_true, A_pred, output_path, threshold=0.5):
     
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    print(f"✅ Saved adjacency comparison to {output_path}")
+    print(f"[DONE] Saved adjacency comparison to {output_path}")
     plt.close()
 
 
@@ -139,7 +139,7 @@ def plot_edge_distribution(A_pred, output_path):
     
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    print(f"✅ Saved edge distribution to {output_path}")
+    print(f"[DONE] Saved edge distribution to {output_path}")
     plt.close()
 
 
@@ -148,7 +148,7 @@ def plot_network_graph(A_pred, output_path, top_k=25):
     try:
         import networkx as nx
     except ImportError:
-        print("⚠️  NetworkX not installed. Skipping network visualization.")
+        print("[WARN] NetworkX not installed. Skipping network visualization.")
         return
     
     G = nx.DiGraph()
@@ -197,7 +197,7 @@ def plot_network_graph(A_pred, output_path, top_k=25):
     
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    print(f"✅ Saved network graph to {output_path}")
+    print(f"[DONE] Saved network graph to {output_path}")
     plt.close()
 
 
@@ -283,23 +283,23 @@ def main():
     # Load best adjacency
     A_pred = np.load("artifacts/adjacency/A_mean.npy")
     
-    print(f"✅ Best adjacency learned:")
-    print(f"   Shape: {A_pred.shape}")
-    print(f"   Min: {A_pred.min():.6f}, Max: {A_pred.max():.6f}, Mean: {A_pred.mean():.6f}")
-    print(f"   Sparsity: {(A_pred == 0).sum() / A_pred.size * 100:.1f}% zeros")
-    print(f"   Non-zero edges: {(A_pred != 0).sum()}/{A_pred.size}\n")
+    print(f"[DONE] Best adjacency learned:")
+    print(f" Shape: {A_pred.shape}")
+    print(f" Min: {A_pred.min():.6f}, Max: {A_pred.max():.6f}, Mean: {A_pred.mean():.6f}")
+    print(f" Sparsity: {(A_pred == 0).sum() / A_pred.size * 100:.1f}% zeros")
+    print(f" Non-zero edges: {(A_pred != 0).sum()}/{A_pred.size}\n")
     
     if A_true is not None:
-        print(f"✅ Ground truth adjacency:")
-        print(f"   Shape: {A_true.shape}")
-        print(f"   Non-zero edges: {(A_true > 0).sum()}/{A_true.size}\n")
+        print(f"[DONE] Ground truth adjacency:")
+        print(f" Shape: {A_true.shape}")
+        print(f" Non-zero edges: {(A_true > 0).sum()}/{A_true.size}\n")
         
         metrics = compute_metrics(A_true, A_pred, threshold=0.5)
         print(f"Evaluation Metrics (threshold=0.5):")
-        print(f"  Precision: {metrics['precision']:.4f}")
-        print(f"  Recall: {metrics['recall']:.4f}")
-        print(f"  F1-Score: {metrics['f1']:.4f}")
-        print(f"  SHD: {metrics['shd']}")
+        print(f" Precision: {metrics['precision']:.4f}")
+        print(f" Recall: {metrics['recall']:.4f}")
+        print(f" F1-Score: {metrics['f1']:.4f}")
+        print(f" SHD: {metrics['shd']}")
     
     print("\n" + "-" * 80)
     print("VISUALIZATION")
@@ -311,14 +311,14 @@ def main():
     plot_network_graph(A_pred, "artifacts/causal_graph_network.png", top_k=25)
     
     print("\n" + "=" * 80)
-    print("✅ TRAINING, VALIDATION & VISUALIZATION COMPLETE")
+    print("[DONE] TRAINING, VALIDATION & VISUALIZATION COMPLETE")
     print("=" * 80)
     print(f"\nOutput files:")
-    print(f"  📊 artifacts/adjacency_comparison.png")
-    print(f"  📊 artifacts/edge_strength_dist.png")
-    print(f"  📊 artifacts/causal_graph_network.png")
-    print(f"  💾 artifacts/checkpoints/rcgnn_best.pt")
-    print(f"  💾 artifacts/adjacency/A_mean.npy")
+    print(f" artifacts/adjacency_comparison.png")
+    print(f" artifacts/edge_strength_dist.png")
+    print(f" artifacts/causal_graph_network.png")
+    print(f" artifacts/checkpoints/rcgnn_best.pt")
+    print(f" artifacts/adjacency/A_mean.npy")
 
 
 if __name__ == "__main__":

@@ -78,10 +78,10 @@ def load_synth(root, split="train", seed=1337):
         return SynthDataset(X, M, e, S, A_true)
     
     # Otherwise, load full arrays and split
-    X = np.load(root / "X.npy")  # [N, T, d]
-    M = np.load(root / "M.npy")  # [N, T, d]
-    e = np.load(root / "e.npy")  # [N]
-    S = np.load(root / "S.npy")  # [N, 1]
+    X = np.load(root / "X.npy") # [N, T, d]
+    M = np.load(root / "M.npy") # [N, T, d]
+    e = np.load(root / "e.npy") # [N]
+    S = np.load(root / "S.npy") # [N, 1]
     
     A_true = None
     if (root / "A_true.npy").exists():
@@ -103,7 +103,7 @@ def load_synth(root, split="train", seed=1337):
             indices = np.arange(0, split_idx)
         elif split == "val":
             indices = np.arange(split_idx, val_split_idx)
-        else:  # test
+        else: # test
             indices = np.arange(val_split_idx, N)
     else:
         # Multiple regimes: split by regime
@@ -115,7 +115,7 @@ def load_synth(root, split="train", seed=1337):
             indices = np.where(np.isin(e, train_regimes))[0]
         elif split == "val":
             indices = np.where(np.isin(e, val_regimes))[0]
-        else:  # test
+        else: # test
             indices = np.where(np.isin(e, test_regimes))[0]
     
     X_split = X[indices]

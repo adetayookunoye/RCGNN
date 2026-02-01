@@ -49,9 +49,9 @@ try:
     HAS_NETWORKX = True
 except ImportError:
     HAS_NETWORKX = False
-    print("⚠️  networkx not installed, graph network plots disabled")
+    print("[WARN] networkx not installed, graph network plots disabled")
 
-import path_helper  # noqa: F401
+import path_helper # noqa: F401
 
 from src.training.baselines import (
     notears_lite, notears_linear, granger_causality,
@@ -196,17 +196,17 @@ AIR_QUALITY_DOMAIN_KNOWLEDGE = {
     # Known causal relationships in air quality
     "expected_edges": [
         # Temperature affects chemistry
-        (3, 1),  # Temp → PM2.5
-        (3, 2),  # Temp → O3
+        (3, 1), # Temp -> PM2.5
+        (3, 2), # Temp -> O3
         # Humidity affects particulates
-        (4, 1),  # Humidity → PM2.5
+        (4, 1), # Humidity -> PM2.5
         # Chemistry produces secondary pollutants
-        (0, 2),  # NO2 → O3 (precursor)
+        (0, 2), # NO2 -> O3 (precursor)
     ],
     "forbidden_edges": [
         # Reverse causality
-        (1, 3),  # PM2.5 shouldn't cause temperature
-        (2, 3),  # O3 shouldn't cause temperature
+        (1, 3), # PM2.5 shouldn't cause temperature
+        (2, 3), # O3 shouldn't cause temperature
     ],
     "domain_description": "UCI Air Quality: NOx precursors affect ozone formation; temperature/humidity modulate transport"
 }
@@ -515,7 +515,7 @@ def calibrate_threshold(validation_corruption, results_by_corruption, metric='f1
         validation_sensitivity: full sensitivity curve
     """
     if validation_corruption not in results_by_corruption:
-        print(f"⚠️  Validation corruption '{validation_corruption}' not found, skipping calibration")
+        print(f"[WARN] Validation corruption '{validation_corruption}' not found, skipping calibration")
         return None, None
     
     artifact_data = results_by_corruption[validation_corruption]
@@ -526,7 +526,7 @@ def calibrate_threshold(validation_corruption, results_by_corruption, metric='f1
     A_true = artifact_data['A_true']
     
     print(f"\n{'='*80}")
-    print(f"📏 CALIBRATION PROTOCOL: Finding optimal K on validation corruption '{validation_corruption}'")
+    print(f" CALIBRATION PROTOCOL: Finding optimal K on validation corruption '{validation_corruption}'")
     print(f"{'─'*80}")
     
     sensitivity = compute_sensitivity_curve(A_rc_gnn, A_true)
@@ -535,11 +535,11 @@ def calibrate_threshold(validation_corruption, results_by_corruption, metric='f1
     if metric == 'f1':
         optimal_k = max(sensitivity.keys(), key=lambda k: sensitivity[k]['f1'])
         best_value = sensitivity[optimal_k]['f1']
-        print(f"✅ Optimal K = {optimal_k} (max F1 = {best_value:.4f})")
-    else:  # minimize SHD
+        print(f"[DONE] Optimal K = {optimal_k} (max F1 = {best_value:.4f})")
+    else: # minimize SHD
         optimal_k = min(sensitivity.keys(), key=lambda k: sensitivity[k]['shd'])
         best_value = sensitivity[optimal_k]['shd']
-        print(f"✅ Optimal K = {optimal_k} (min SHD = {best_value:.1f})")
+        print(f"[DONE] Optimal K = {optimal_k} (min SHD = {best_value:.1f})")
     
     print(f"Applying K={optimal_k} unchanged to all test corruptions\n")
     
@@ -593,10 +593,10 @@ def plot_recovered_graph(A_pred, A_true, corruption_name, output_dir,
     
     # Check if already sparse (has ~top_k edges) or needs sparsification
     current_edges = int(np.sum(np.abs(A_pred) > 0.01))
-    if current_edges > top_k * 2:  # Dense matrix, needs sparsification
+    if current_edges > top_k * 2: # Dense matrix, needs sparsification
         A_sparse = select_topk_edges(A_pred.copy(), top_k)
     else:
-        A_sparse = A_pred.copy()  # Already sparse
+        A_sparse = A_pred.copy() # Already sparse
     
     actual_edges = int(np.sum(np.abs(A_sparse) > 0.01))
     
@@ -634,13 +634,13 @@ def plot_recovered_graph(A_pred, A_true, corruption_name, output_dir,
     
     # Create RGB image for difference
     diff_img = np.zeros((d, d, 3))
-    tp_mask = (A_pred_bin > 0) & (A_true_bin > 0)  # True positive: green
-    fp_mask = (A_pred_bin > 0) & (A_true_bin == 0)  # False positive: red
-    fn_mask = (A_pred_bin == 0) & (A_true_bin > 0)  # False negative: blue
+    tp_mask = (A_pred_bin > 0) & (A_true_bin > 0) # True positive: green
+    fp_mask = (A_pred_bin > 0) & (A_true_bin == 0) # False positive: red
+    fn_mask = (A_pred_bin == 0) & (A_true_bin > 0) # False negative: blue
     
-    diff_img[tp_mask] = [0.2, 0.8, 0.2]  # Green
-    diff_img[fp_mask] = [0.9, 0.2, 0.2]  # Red
-    diff_img[fn_mask] = [0.2, 0.4, 0.9]  # Blue
+    diff_img[tp_mask] = [0.2, 0.8, 0.2] # Green
+    diff_img[fp_mask] = [0.9, 0.2, 0.2] # Red
+    diff_img[fn_mask] = [0.2, 0.4, 0.9] # Blue
     
     axes[2].imshow(diff_img)
     axes[2].set_title('Edge Accuracy', fontsize=12, fontweight='bold')
@@ -662,7 +662,7 @@ def plot_recovered_graph(A_pred, A_true, corruption_name, output_dir,
     heatmap_file = output_dir / f'graph_heatmap_{corruption_name}.png'
     plt.savefig(heatmap_file, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"   📊 Heatmap saved: {heatmap_file}")
+    print(f" Heatmap saved: {heatmap_file}")
     
     # -------------------------------------------------------------------------
     # 2. NETWORK DIAGRAM (if networkx available)
@@ -717,7 +717,7 @@ def plot_recovered_graph(A_pred, A_true, corruption_name, output_dir,
         network_file = output_dir / f'graph_network_{corruption_name}.png'
         plt.savefig(network_file, dpi=150, bbox_inches='tight')
         plt.close()
-        print(f"   🔗 Network diagram saved: {network_file}")
+        print(f" Network diagram saved: {network_file}")
     
     return heatmap_file
 
@@ -776,11 +776,11 @@ def load_artifact(artifact_dir, data_root=None):
             X_data = np.load(X_file)
             results['X'] = X_data
         except Exception as e:
-            print(f"⚠️  Could not load X from {X_file}: {e}")
+            print(f"[WARN] Could not load X from {X_file}: {e}")
     else:
         # Fallback: generate synthetic X if not found (for calibration to work)
         if 'A_best' in results and 'A_true' in results:
-            print(f"⚠️  X.npy not found in {data_root}, generating synthetic data for calibration...")
+            print(f"[WARN] X.npy not found in {data_root}, generating synthetic data for calibration...")
             d = results['A_best'].shape[0]
             T = 1000
             results['X'] = np.random.randn(T, d)
@@ -805,7 +805,7 @@ def main():
         version_prefix = "unified_v9_"
     
     if not artifact_dirs:
-        print(f"❌ No artifacts found in {artifacts_dir}")
+        print(f"[FAIL] No artifacts found in {artifacts_dir}")
         return
     
     print(f"Found {len(artifact_dirs)} trained models ({version_prefix[:-1]})")
@@ -834,7 +834,7 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
 3. SENSITIVITY ANALYSIS:
    • Plot: F1-score vs K across sweep range
    • Objective: Show RC-GNN dominates across wide K range
-   • Robustness metric: F1 variation < 0.1 → Highly stable
+   • Robustness metric: F1 variation < 0.1 -> Highly stable
    
 4. BASELINE FAIRNESS:
    • All methods sparsified to same K (equal comparison)
@@ -852,7 +852,7 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
     # ========================================================================
     # 1. GROUND TRUTH EVALUATION
     # ========================================================================
-    print("📊 GROUND TRUTH COMPARISON (SHD + F1 Metrics)")
+    print(" GROUND TRUTH COMPARISON (SHD + F1 Metrics)")
     print(f"{'─'*80}")
     
     ground_truth_results = []
@@ -914,7 +914,7 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
                 result_row[f'Ablation_{comp}'] = impact
         
         ground_truth_results.append(result_row)
-        print(f"✅ {corruption:25s} | SHD={shd:3d} | Skel-F1={skel_f1:.3f} | Dir-F1={dir_f1:.3f}")
+        print(f"[DONE] {corruption:25s} | SHD={shd:3d} | Skel-F1={skel_f1:.3f} | Dir-F1={dir_f1:.3f}")
     
     gt_df = pd.DataFrame(ground_truth_results)
     print(f"\n{gt_df.to_string(index=False)}\n")
@@ -923,33 +923,33 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
     # 3. INVARIANCE ACROSS REGIMES
     # ========================================================================
     print(f"\n{'='*80}")
-    print(f"🔄 INVARIANCE ACROSS CORRUPTION TYPES")
+    print(f" INVARIANCE ACROSS CORRUPTION TYPES")
     print(f"{'─'*80}")
     
     invariance = compute_invariance_score(results_by_corruption)
     print(f"Jaccard Similarity (Edge Consistency): {invariance:.3f}")
     print(f"Interpretation: {invariance:.1%} of edges are consistent across corruptions")
     if invariance > 0.5:
-        print("✅ STRONG INVARIANCE - Structure is stable across corruptions")
+        print("[DONE] STRONG INVARIANCE - Structure is stable across corruptions")
     elif invariance > 0.3:
-        print("⚠️  MODERATE INVARIANCE - Structure shows some variation")
+        print("[WARN] MODERATE INVARIANCE - Structure shows some variation")
     else:
-        print("❌ WEAK INVARIANCE - Structure varies significantly")
+        print("[FAIL] WEAK INVARIANCE - Structure varies significantly")
     
     # ========================================================================
     # 4b. CALIBRATION PROTOCOL: Find optimal K on validation corruption
     # ========================================================================
     print(f"\n{'='*80}")
-    print(f"📊 CALIBRATION PROTOCOL: SENSITIVITY ANALYSIS")
+    print(f" CALIBRATION PROTOCOL: SENSITIVITY ANALYSIS")
     print(f"{'─'*80}")
     
     # Use compound_full as validation corruption if available
     validation_corruption = 'compound_full' if 'compound_full' in results_by_corruption else list(results_by_corruption.keys())[0]
     
     calibration_data = results_by_corruption[validation_corruption]
-    print(f"🔍 DEBUG: Available keys in {validation_corruption}: {list(calibration_data.keys())}")
-    print(f"   Required keys: ['X', 'A_true', 'A_best']")
-    print(f"   Has X: {'X' in calibration_data}, Has A_true: {'A_true' in calibration_data}, Has A_best: {'A_best' in calibration_data}")
+    print(f" DEBUG: Available keys in {validation_corruption}: {list(calibration_data.keys())}")
+    print(f" Required keys: ['X', 'A_true', 'A_best']")
+    print(f" Has X: {'X' in calibration_data}, Has A_true: {'A_true' in calibration_data}, Has A_best: {'A_best' in calibration_data}")
     
     if 'X' in calibration_data and 'A_true' in calibration_data and 'A_best' in calibration_data:
         X_val = calibration_data['X']
@@ -959,7 +959,7 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
         ground_truth_k = int(A_true_val.sum())
         print(f"Validation corruption: {validation_corruption}")
         print(f"Ground truth edge count (K): {ground_truth_k}")
-        print(f"\n📈 Sweeping threshold K from 5 to {int(3*ground_truth_k)} edges...")
+        print(f"\n Sweeping threshold K from 5 to {int(3*ground_truth_k)} edges...")
         
         # Compute sensitivity curve
         k_range = list(range(5, int(3*ground_truth_k) + 1, max(1, (3*ground_truth_k - 5)//20)))
@@ -969,62 +969,62 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
         optimal_k = max(sensitivity_dict.keys(), key=lambda k: sensitivity_dict[k]['f1'])
         optimal_metrics = sensitivity_dict[optimal_k]
         
-        print(f"\n✅ OPTIMAL K FOUND: {optimal_k}")
-        print(f"   F1-Score: {optimal_metrics['f1']:.4f}")
-        print(f"   SHD: {optimal_metrics['shd']}")
-        print(f"   Precision: {optimal_metrics['precision']:.4f}")
-        print(f"   Recall: {optimal_metrics['recall']:.4f}")
-        print(f"\n💡 Methodology: K selected from validation corruption, applied unchanged to all test corruptions")
+        print(f"\n[DONE] OPTIMAL K FOUND: {optimal_k}")
+        print(f" F1-Score: {optimal_metrics['f1']:.4f}")
+        print(f" SHD: {optimal_metrics['shd']}")
+        print(f" Precision: {optimal_metrics['precision']:.4f}")
+        print(f" Recall: {optimal_metrics['recall']:.4f}")
+        print(f"\n Methodology: K selected from validation corruption, applied unchanged to all test corruptions")
         
         # Generate sensitivity plot
         try:
             plot_file = Path(args.output).parent / f"sensitivity_curve_{validation_corruption}.png"
             plot_sensitivity_curve(sensitivity_dict, validation_corruption, output_file=str(plot_file))
-            print(f"✅ Sensitivity curve saved to {plot_file}")
+            print(f"[DONE] Sensitivity curve saved to {plot_file}")
         except Exception as e:
-            print(f"⚠️  Could not save sensitivity plot: {e}")
+            print(f"[WARN] Could not save sensitivity plot: {e}")
         
         # Show sensitivity around optimal K
-        print(f"\n📊 F1-Score robustness (K ± 5 edges from optimal):")
+        print(f"\n F1-Score robustness (K ± 5 edges from optimal):")
         for k in sorted(sensitivity_dict.keys()):
             if optimal_k - 5 <= k <= optimal_k + 5:
                 f1 = sensitivity_dict[k]['f1']
                 shd = sensitivity_dict[k]['shd']
-                marker = "🟢" if k == optimal_k else "  "
-                print(f"   {marker} K={k:2d}: F1={f1:.4f}, SHD={shd:3d}")
+                marker = "[OK]" if k == optimal_k else " "
+                print(f" {marker} K={k:2d}: F1={f1:.4f}, SHD={shd:3d}")
         
         # Determine if robust (F1 stays high across range)
         f1_values = [sensitivity_dict[k]['f1'] for k in sensitivity_dict.keys()]
         f1_range = max(f1_values) - min(f1_values)
         if f1_range < 0.1:
-            print(f"✅ ROBUST: F1 varies only {f1_range:.4f} across K range (highly stable)")
+            print(f"[DONE] ROBUST: F1 varies only {f1_range:.4f} across K range (highly stable)")
         elif f1_range < 0.2:
-            print(f"⚠️  MODERATE: F1 varies {f1_range:.4f} across K range (some sensitivity)")
+            print(f"[WARN] MODERATE: F1 varies {f1_range:.4f} across K range (some sensitivity)")
         else:
-            print(f"❌ SENSITIVE: F1 varies {f1_range:.4f} across K range (threshold-dependent)")
+            print(f"[FAIL] SENSITIVE: F1 varies {f1_range:.4f} across K range (threshold-dependent)")
     else:
-        print(f"❌ CALIBRATION PROTOCOL SKIPPED")
-        print(f"   Reason: Missing required data in {validation_corruption}")
-        print(f"   Missing keys: {[k for k in ['X', 'A_true', 'A_best'] if k not in calibration_data]}")
-        print(f"   Using ground truth K for baseline comparison instead")
+        print(f"[FAIL] CALIBRATION PROTOCOL SKIPPED")
+        print(f" Reason: Missing required data in {validation_corruption}")
+        print(f" Missing keys: {[k for k in ['X', 'A_true', 'A_best'] if k not in calibration_data]}")
+        print(f" Using ground truth K for baseline comparison instead")
         optimal_k = None
     
     # ========================================================================
     # 5. MULTI-METHOD BASELINE COMPARISON (ALL 6 BASELINES ON ALL CORRUPTIONS)
     # ========================================================================
     print(f"\n{'='*80}")
-    print(f"🔍 MULTI-METHOD BASELINE COMPARISON - ALL METHODS ON ALL CORRUPTIONS")
+    print(f" MULTI-METHOD BASELINE COMPARISON - ALL METHODS ON ALL CORRUPTIONS")
     print(f"{'─'*80}")
     
     # Use calibrated K if available, otherwise use ground truth
     if optimal_k is None:
-        print(f"⚠️  Using ground truth K for baseline comparison")
+        print(f"[WARN] Using ground truth K for baseline comparison")
     else:
-        print(f"✅ Using calibrated K={optimal_k} for all baseline comparisons")
+        print(f"[DONE] Using calibrated K={optimal_k} for all baseline comparisons")
     
     baseline_comparison = []
     
-    for corruption in sorted(results_by_corruption.keys()):  # ALL corruptions for fair comparison
+    for corruption in sorted(results_by_corruption.keys()): # ALL corruptions for fair comparison
         artifact_data = results_by_corruption[corruption]
         
         if 'X' not in artifact_data or 'A_true' not in artifact_data:
@@ -1037,7 +1037,7 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
         print(f"\n{corruption.upper()}:")
         print(f"{'─'*80}")
         
-        # ✅ KEY FIX: Apply top-K sparsification to RC-GNN for fair comparison
+        # [DONE] KEY FIX: Apply top-K sparsification to RC-GNN for fair comparison
         # Use calibrated K if available, otherwise use ground truth
         k_edges = optimal_k if optimal_k is not None else int(A_true.sum())
         A_rc_gnn_sparse = select_topk_edges(A_rc_gnn, k_edges)
@@ -1088,7 +1088,7 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
             
             graph_output_dir = Path(args.output).parent / "graphs"
             plot_recovered_graph(
-                A_pred=A_rc_gnn_sparse,  # Use sparse version for consistency
+                A_pred=A_rc_gnn_sparse, # Use sparse version for consistency
                 A_true=A_true,
                 corruption_name=corruption,
                 output_dir=graph_output_dir,
@@ -1097,7 +1097,7 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
             )
         except Exception as e:
             import traceback
-            print(f"   ⚠️  Could not plot graph for {corruption}: {e}")
+            print(f" [WARN] Could not plot graph for {corruption}: {e}")
             traceback.print_exc()
     
     # ========================================================================
@@ -1126,7 +1126,7 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
         json.dump(report, f, indent=2)
     
     print(f"\n{'='*80}")
-    print(f"✅ Comprehensive evaluation saved to {output_file}")
+    print(f"[DONE] Comprehensive evaluation saved to {output_file}")
     print(f"{'='*80}\n")
 
 if __name__ == "__main__":

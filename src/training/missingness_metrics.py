@@ -92,7 +92,7 @@ def missingness_pattern_analysis(M_pred, X, feature_names=None):
     # Temporal patterns
     temp_autocorr = torch.zeros(M_pred.shape[-1])
     for j in range(M_pred.shape[-1]):
-        series = M_pred[...,j].mean(0)  # Average over batch
+        series = M_pred[...,j].mean(0) # Average over batch
         temp_autocorr[j] = torch.corrcoef(torch.stack([
             series[:-1], series[1:]
         ]))[0,1]

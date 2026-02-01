@@ -4,7 +4,7 @@ Advanced validation with publication-grade analysis.
 
 This is the COMPLETE version with all improvements:
 1. Off-diagonal metrics (no self-loops)
-2. Chance baseline reporting  
+2. Chance baseline reporting 
 3. Orientation accuracy & skeleton metrics
 4. DAG repair with greedy cycle removal
 5. Calibration curves & isotonic regression
@@ -322,7 +322,7 @@ def save_calibration_curve(A_true, A_pred, path="artifacts/calibration_curve.png
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"✅ Saved calibration curve to {path}")
+    print(f"[DONE] Saved calibration curve to {path}")
 
 
 def save_score_distribution(A_pred, path="artifacts/score_distribution.png"):
@@ -356,7 +356,7 @@ def save_score_distribution(A_pred, path="artifacts/score_distribution.png"):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"✅ Saved score distribution to {path}")
+    print(f"[DONE] Saved score distribution to {path}")
 
 
 def print_metrics_report(metrics):
@@ -366,61 +366,61 @@ def print_metrics_report(metrics):
     print("=" * 80)
     
     if "prevalence" in metrics:
-        print(f"\n📊 CHANCE BASELINE:")
-        print(f"   Prevalence (pos rate):  {metrics['prevalence']:.4f}")
-        print(f"   Chance AUPRC:           {metrics['chance_auprc']:.4f}")
+        print(f"\n CHANCE BASELINE:")
+        print(f" Prevalence (pos rate): {metrics['prevalence']:.4f}")
+        print(f" Chance AUPRC: {metrics['chance_auprc']:.4f}")
         if "auprc" in metrics:
-            print(f"   Model AUPRC:            {metrics['auprc']:.4f}")
-            print(f"   Improvement vs chance:  {metrics['auprc_vs_chance']*100:+.1f}%")
+            print(f" Model AUPRC: {metrics['auprc']:.4f}")
+            print(f" Improvement vs chance: {metrics['auprc_vs_chance']*100:+.1f}%")
             if "auprc_ci_low" in metrics:
-                print(f"   AUPRC 95% CI:           [{metrics['auprc_ci_low']:.4f}, {metrics['auprc_ci_high']:.4f}]")
+                print(f" AUPRC 95% CI: [{metrics['auprc_ci_low']:.4f}, {metrics['auprc_ci_high']:.4f}]")
     
-    print(f"\n🎯 BINARY METRICS @ threshold={metrics.get('threshold', 0.5):.2f}:")
-    print(f"   Precision:       {metrics.get('precision', 0):.4f}")
-    print(f"   Recall:          {metrics.get('recall', 0):.4f}")
-    print(f"   F1:              {metrics.get('f1', 0):.4f}")
-    print(f"   SHD (directed):  {metrics.get('shd', '-')}")
-    print(f"   SHD (skeleton):  {metrics.get('shd_skeleton', '-')}")
-    print(f"   Edges pred/true: {metrics.get('n_edges_pred@thr', 0)}/{metrics.get('n_edges_true', 0)}")
-    print(f"   Density @ thr:   {metrics.get('density@thr', 0):.4f}")
+    print(f"\n BINARY METRICS @ threshold={metrics.get('threshold', 0.5):.2f}:")
+    print(f" Precision: {metrics.get('precision', 0):.4f}")
+    print(f" Recall: {metrics.get('recall', 0):.4f}")
+    print(f" F1: {metrics.get('f1', 0):.4f}")
+    print(f" SHD (directed): {metrics.get('shd', '-')}")
+    print(f" SHD (skeleton): {metrics.get('shd_skeleton', '-')}")
+    print(f" Edges pred/true: {metrics.get('n_edges_pred@thr', 0)}/{metrics.get('n_edges_true', 0)}")
+    print(f" Density @ thr: {metrics.get('density@thr', 0):.4f}")
     
     if "tp" in metrics:
-        print(f"\n📈 CONFUSION MATRIX:")
-        print(f"   TP: {metrics['tp']:4d}  FP: {metrics['fp']:4d}")
-        print(f"   FN: {metrics['fn']:4d}  TN: {metrics['tn']:4d}")
+        print(f"\n CONFUSION MATRIX:")
+        print(f" TP: {metrics['tp']:4d} FP: {metrics['fp']:4d}")
+        print(f" FN: {metrics['fn']:4d} TN: {metrics['tn']:4d}")
     
     if "skeleton_precision" in metrics:
-        print(f"\n🔀 SKELETON METRICS:")
-        print(f"   Skeleton Precision: {metrics['skeleton_precision']:.4f}")
-        print(f"   Skeleton Recall:    {metrics['skeleton_recall']:.4f}")
-        print(f"   Skeleton F1:        {metrics['skeleton_f1']:.4f}")
+        print(f"\n SKELETON METRICS:")
+        print(f" Skeleton Precision: {metrics['skeleton_precision']:.4f}")
+        print(f" Skeleton Recall: {metrics['skeleton_recall']:.4f}")
+        print(f" Skeleton F1: {metrics['skeleton_f1']:.4f}")
         if not np.isnan(metrics.get('orientation_acc', np.nan)):
-            print(f"   Orientation Acc:    {metrics['orientation_acc']:.4f} ({metrics['orientation_correct']}/{metrics['orientation_total']})")
+            print(f" Orientation Acc: {metrics['orientation_acc']:.4f} ({metrics['orientation_correct']}/{metrics['orientation_total']})")
     
     if "best_f1_over_PR" in metrics:
-        print(f"\n🎯 THRESHOLD-FREE METRICS:")
-        print(f"   Best F1 (over PR):  {metrics['best_f1_over_PR']:.4f} @ thr={metrics.get('best_thr_over_PR', 0):.4f}")
+        print(f"\n THRESHOLD-FREE METRICS:")
+        print(f" Best F1 (over PR): {metrics['best_f1_over_PR']:.4f} @ thr={metrics.get('best_thr_over_PR', 0):.4f}")
         if "best_f1_ci_low" in metrics:
-            print(f"   Best F1 95% CI:     [{metrics['best_f1_ci_low']:.4f}, {metrics['best_f1_ci_high']:.4f}]")
+            print(f" Best F1 95% CI: [{metrics['best_f1_ci_low']:.4f}, {metrics['best_f1_ci_high']:.4f}]")
         if "roc_auc" in metrics:
-            print(f"   ROC-AUC:            {metrics['roc_auc']:.4f}")
+            print(f" ROC-AUC: {metrics['roc_auc']:.4f}")
     
     if "topk_f1" in metrics:
-        print(f"\n🏆 TOP-K METRICS (k={metrics['k']}):")
-        print(f"   Top-k Precision: {metrics['topk_precision']:.4f}")
-        print(f"   Top-k Recall:    {metrics['topk_recall']:.4f}")
-        print(f"   Top-k F1:        {metrics['topk_f1']:.4f}")
+        print(f"\n TOP-K METRICS (k={metrics['k']}):")
+        print(f" Top-k Precision: {metrics['topk_precision']:.4f}")
+        print(f" Top-k Recall: {metrics['topk_recall']:.4f}")
+        print(f" Top-k F1: {metrics['topk_f1']:.4f}")
     
     if "dag_repair_f1" in metrics:
-        print(f"\n🔧 DAG REPAIR (greedy cycle removal):")
-        print(f"   Edges removed:   {metrics['dag_repair_edges_removed']}")
-        print(f"   Precision:       {metrics['dag_repair_precision']:.4f}")
-        print(f"   Recall:          {metrics['dag_repair_recall']:.4f}")
-        print(f"   F1:              {metrics['dag_repair_f1']:.4f}")
-        print(f"   SHD:             {metrics['dag_repair_shd']}")
+        print(f"\n DAG REPAIR (greedy cycle removal):")
+        print(f" Edges removed: {metrics['dag_repair_edges_removed']}")
+        print(f" Precision: {metrics['dag_repair_precision']:.4f}")
+        print(f" Recall: {metrics['dag_repair_recall']:.4f}")
+        print(f" F1: {metrics['dag_repair_f1']:.4f}")
+        print(f" SHD: {metrics['dag_repair_shd']}")
         if 'f1' in metrics:
             delta = metrics['dag_repair_f1'] - metrics['f1']
-            print(f"   ΔF1 vs original: {delta:+.4f}")
+            print(f" ΔF1 vs original: {delta:+.4f}")
 
 
 def main():
@@ -440,13 +440,13 @@ def main():
     # Load adjacency
     A_pred = np.load(args.adjacency)
     A_pred = np.nan_to_num(A_pred, nan=0.0, posinf=1.0, neginf=0.0)
-    print(f"\n✅ Loaded adjacency: {A_pred.shape}")
+    print(f"\n[DONE] Loaded adjacency: {A_pred.shape}")
     
     # Load ground truth
     A_true = None
     if args.data_root and os.path.exists(os.path.join(args.data_root, "A_true.npy")):
         A_true = np.load(os.path.join(args.data_root, "A_true.npy"))
-        print(f"✅ Loaded ground truth: {A_true.shape}")
+        print(f"[DONE] Loaded ground truth: {A_true.shape}")
     
     # Parse node names
     node_names = None
@@ -471,10 +471,10 @@ def main():
     import json
     with open(f"{args.export}/metrics.json", 'w') as f:
         json.dump(metrics, f, indent=2)
-    print(f"\n✅ Saved metrics to {args.export}/metrics.json")
+    print(f"\n[DONE] Saved metrics to {args.export}/metrics.json")
     
     print("\n" + "=" * 80)
-    print("✅ ADVANCED VALIDATION COMPLETE")
+    print("[DONE] ADVANCED VALIDATION COMPLETE")
     print("=" * 80)
 
 

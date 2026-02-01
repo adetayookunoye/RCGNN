@@ -27,7 +27,7 @@ from src.training.optim import make_optimizer, compute_total_loss
 from src.training.loop import train_epoch, eval_epoch
 
 print("\n" + "=" * 80)
-print("🚀 FULL RC-GNN TRAINING + ANALYSIS PIPELINE")
+print(" FULL RC-GNN TRAINING + ANALYSIS PIPELINE")
 print("=" * 80)
 
 # Load configs
@@ -42,8 +42,8 @@ with open("configs/train.yaml") as f:
 dataset_dir = dc.get("dataset", "uci_air")
 root = os.path.join(dc["paths"]["root"], "interim", dataset_dir)
 
-print(f"\n📊 Loading UCI Air Quality dataset...")
-print(f"   Path: {root}")
+print(f"\n Loading UCI Air Quality dataset...")
+print(f" Path: {root}")
 
 train_ds = load_synth(root, "train", seed=tc["seed"])
 val_ds = load_synth(root, "val", seed=tc["seed"] + 1)
@@ -52,10 +52,10 @@ train_ld = DataLoader(train_ds, batch_size=tc["batch_size"], shuffle=True)
 val_ld = DataLoader(val_ds, batch_size=1, shuffle=False)
 
 d = train_ds.X.shape[-1]
-print(f"✅ Dataset: {d} features, {len(train_ds)} train, {len(val_ds)} val samples")
+print(f"[DONE] Dataset: {d} features, {len(train_ds)} train, {len(val_ds)} val samples")
 
 # Initialize model
-print(f"\n🏗️  Initializing RC-GNN model...")
+print(f"\n Initializing RC-GNN model...")
 device = tc["device"]
 model = RCGNN(
     d=d,
@@ -65,7 +65,7 @@ model = RCGNN(
     sparsify_method=mc.get("sparsify_method", "topk"),
     device=device
 )
-print(f"✅ Model on {device}")
+print(f"[DONE] Model on {device}")
 
 opt = make_optimizer(
     model,
@@ -76,15 +76,15 @@ best_shd = 1e9
 best_adjacency = None
 
 # Load ground truth
-print(f"\n📋 Loading ground truth...")
+print(f"\n Loading ground truth...")
 A_true_tensor = None
 try:
     A_true = np.load(os.path.join(root, "A_true.npy"))
     A_true_tensor = torch.FloatTensor(A_true)
-    print(f"✅ Ground truth: {(A_true > 0).sum()} edges")
+    print(f"[DONE] Ground truth: {(A_true > 0).sum()} edges")
 except FileNotFoundError:
     A_true = None
-    print("⚠️  A_true.npy not found")
+    print("[WARN] A_true.npy not found")
 
 # STEP 1: TRAINING
 print("\n" + "=" * 80)
@@ -147,13 +147,13 @@ for ep in range(tc["epochs"]):
         torch.save(model.state_dict(), "artifacts/checkpoints/rcgnn_best.pt")
         os.makedirs("artifacts/adjacency", exist_ok=True)
         np.save("artifacts/adjacency/A_mean.npy", best_adjacency)
-        print(f"   ⭐ New best SHD: {best_shd:.1f}")
+        print(f" * New best SHD: {best_shd:.1f}")
 
 elapsed = time.time() - start_time
-print(f"\n✅ Training complete! Best SHD: {best_shd if best_shd != 1e9 else 'N/A'}")
-print(f"   Time: {elapsed:.1f}s")
-print(f"   Checkpoint: artifacts/checkpoints/rcgnn_best.pt")
-print(f"   Adjacency: artifacts/adjacency/A_mean.npy")
+print(f"\n[DONE] Training complete! Best SHD: {best_shd if best_shd != 1e9 else 'N/A'}")
+print(f" Time: {elapsed:.1f}s")
+print(f" Checkpoint: artifacts/checkpoints/rcgnn_best.pt")
+print(f" Adjacency: artifacts/adjacency/A_mean.npy")
 
 # Save final metrics
 os.makedirs("artifacts", exist_ok=True)
@@ -177,9 +177,9 @@ try:
                    "--data-root", root,
                    "--export", "artifacts"],
                    check=False, timeout=60)
-    print("✅ Threshold optimization complete!")
+    print("[DONE] Threshold optimization complete!")
 except Exception as e:
-    print(f"⚠️  Threshold optimization skipped: {e}")
+    print(f"[WARN] Threshold optimization skipped: {e}")
 
 # STEP 3: ENVIRONMENT STRUCTURE ANALYSIS
 print("\n" + "=" * 80)
@@ -193,9 +193,9 @@ try:
                    "--config-model", "configs/model.yaml",
                    "--export", "artifacts"],
                    check=False, timeout=60)
-    print("✅ Environment analysis complete!")
+    print("[DONE] Environment analysis complete!")
 except Exception as e:
-    print(f"⚠️  Environment analysis skipped: {e}")
+    print(f"[WARN] Environment analysis skipped: {e}")
 
 # STEP 4: BASELINE COMPARISON
 print("\n" + "=" * 80)
@@ -208,9 +208,9 @@ try:
                    "--adjacency", "artifacts/adjacency/A_mean.npy",
                    "--export", "artifacts"],
                    check=False, timeout=60)
-    print("✅ Baseline comparison complete!")
+    print("[DONE] Baseline comparison complete!")
 except Exception as e:
-    print(f"⚠️  Baseline comparison skipped: {e}")
+    print(f"[WARN] Baseline comparison skipped: {e}")
 
 # STEP 6: RUN ORIGINAL TRAINING SCRIPT (if available)
 print("\n" + "=" * 80)
@@ -230,16 +230,16 @@ exec(open('scripts/train_and_visualize.py').read())
         check=False, timeout=300, capture_output=True, text=True
     )
     if result.returncode == 0:
-        print("✅ Original training script completed!")
+        print("[DONE] Original training script completed!")
         original_script_run = True
         # Save original script outputs
         if os.path.exists("artifacts/checkpoints/rcgnn_best.pt"):
             os.rename("artifacts/checkpoints/rcgnn_best.pt", "artifacts/checkpoints/rcgnn_best_original.pt")
-            print("   Saved original checkpoint as rcgnn_best_original.pt")
+            print(" Saved original checkpoint as rcgnn_best_original.pt")
     else:
-        print(f"⚠️  Original script error: {result.stderr[:200]}")
+        print(f"[WARN] Original script error: {result.stderr[:200]}")
 except Exception as e:
-    print(f"⚠️  Original script skipped: {e}")
+    print(f"[WARN] Original script skipped: {e}")
 
 # STEP 5: SUMMARY
 print("\n" + "=" * 80)
@@ -294,18 +294,18 @@ if original_script_run and os.path.exists("artifacts/checkpoints/rcgnn_best_orig
 with open("artifacts/pipeline_summary.json", "w") as f:
     json.dump(summary, f, indent=2)
 
-print(f"\n📊 Summary saved to: artifacts/pipeline_summary.json")
+print(f"\n Summary saved to: artifacts/pipeline_summary.json")
 
 print("\n" + "=" * 80)
-print("✅ FULL PIPELINE COMPLETE!")
+print("[DONE] FULL PIPELINE COMPLETE!")
 print("=" * 80)
 print("\nGenerated outputs:")
 for path in summary["outputs"]:
     if os.path.exists(path):
         size_mb = os.path.getsize(path) / (1024**2)
-        print(f"  ✓ {path} ({size_mb:.2f} MB)")
+        print(f" [OK] {path} ({size_mb:.2f} MB)")
     else:
-        print(f"  - {path} (not generated)")
+        print(f" - {path} (not generated)")
 
 print(f"\nTotal time: {elapsed:.1f}s")
 print("\nNext steps:")

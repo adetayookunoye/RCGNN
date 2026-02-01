@@ -18,7 +18,7 @@ import seaborn as sns
 import torch
 from pathlib import Path
 
-import path_helper  # noqa: F401
+import path_helper # noqa: F401
 from src.models.rcgnn import RCGNN
 from src.dataio.loaders import load_synth
 import yaml
@@ -42,7 +42,7 @@ def extract_structures(model, val_loader, device='cpu'):
             )
             
             # Get adjacency matrix for each sample
-            A = out["A"].cpu().numpy()  # [B, d, d]
+            A = out["A"].cpu().numpy() # [B, d, d]
             B = A.shape[0]
             
             # Extract environment info
@@ -100,7 +100,7 @@ def plot_environment_comparison(A_per_env, output_path='artifacts/environment_st
     plt.tight_layout()
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    print(f"✅ Saved environment comparison: {output_path}")
+    print(f"[DONE] Saved environment comparison: {output_path}")
     plt.close()
 
 
@@ -130,7 +130,7 @@ def plot_delta_analysis(A_per_env, output_path='artifacts/environment_deltas.png
     plt.tight_layout()
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    print(f"✅ Saved delta analysis: {output_path}")
+    print(f"[DONE] Saved delta analysis: {output_path}")
     plt.close()
 
 
@@ -189,7 +189,7 @@ def plot_structure_variation(A_per_env, output_path='artifacts/structure_variati
     plt.tight_layout()
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    print(f"✅ Saved structure variation analysis: {output_path}")
+    print(f"[DONE] Saved structure variation analysis: {output_path}")
     plt.close()
 
 
@@ -223,12 +223,12 @@ def save_structure_report(A_per_env, output_path='artifacts/environment_structur
         delta_norm = np.linalg.norm(delta, 'fro')
         
         report.append(f"\nEnvironment {env_idx}:")
-        report.append(f"  Min: {A_env.min():.6f}")
-        report.append(f"  Max: {A_env.max():.6f}")
-        report.append(f"  Mean: {A_env.mean():.6f}")
-        report.append(f"  Non-zero edges: {(A_env > 0).sum()}/{A_env.size} ({(A_env > 0).sum()/A_env.size*100:.1f}%)")
-        report.append(f"  Delta norm (from global): {delta_norm:.6f}")
-        report.append(f"  Max change in any edge: {np.abs(delta).max():.6f}")
+        report.append(f" Min: {A_env.min():.6f}")
+        report.append(f" Max: {A_env.max():.6f}")
+        report.append(f" Mean: {A_env.mean():.6f}")
+        report.append(f" Non-zero edges: {(A_env > 0).sum()}/{A_env.size} ({(A_env > 0).sum()/A_env.size*100:.1f}%)")
+        report.append(f" Delta norm (from global): {delta_norm:.6f}")
+        report.append(f" Max change in any edge: {np.abs(delta).max():.6f}")
     
     report.append("")
     report.append("## STRUCTURE VARIATION")
@@ -249,14 +249,14 @@ def save_structure_report(A_per_env, output_path='artifacts/environment_structur
     
     total_variation = np.std([np.linalg.norm(A_per_env[e] - A_mean) for e in range(n_envs)])
     if total_variation < 0.01:
-        report.append("✅ Minimal variation across environments")
-        report.append("   → Base causal structure is robust to environmental shifts")
+        report.append("[DONE] Minimal variation across environments")
+        report.append(" -> Base causal structure is robust to environmental shifts")
     elif total_variation < 0.05:
-        report.append("✅ Moderate variation across environments")
-        report.append("   → Model adapts structure moderately per environment")
+        report.append("[DONE] Moderate variation across environments")
+        report.append(" -> Model adapts structure moderately per environment")
     else:
-        report.append("⚠️  High variation across environments")
-        report.append("   → Model learns environment-specific causal structures")
+        report.append("[WARN] High variation across environments")
+        report.append(" -> Model learns environment-specific causal structures")
     
     report.append("")
     report.append("=" * 80)
@@ -265,7 +265,7 @@ def save_structure_report(A_per_env, output_path='artifacts/environment_structur
     with open(output_path, 'w') as f:
         f.write('\n'.join(report))
     
-    print(f"✅ Saved structure report: {output_path}")
+    print(f"[DONE] Saved structure report: {output_path}")
     print("\n" + '\n'.join(report))
 
 
@@ -288,7 +288,7 @@ def main():
     
     # Load model
     if not os.path.exists(args.checkpoint):
-        print(f"❌ Error: Checkpoint not found at {args.checkpoint}")
+        print(f"[FAIL] Error: Checkpoint not found at {args.checkpoint}")
         sys.exit(1)
     
     with open(args.config_data) as f:
@@ -314,7 +314,7 @@ def main():
     
     # Load checkpoint to determine n_envs (checkpoints typically trained with n_envs=1)
     checkpoint = torch.load(args.checkpoint, map_location=args.device)
-    n_envs_ckpt = 1  # Default: most checkpoints use n_envs=1
+    n_envs_ckpt = 1 # Default: most checkpoints use n_envs=1
     if "structure_learner.A_deltas.0" in checkpoint:
         # Count how many deltas exist
         delta_keys = [k for k in checkpoint.keys() if "A_deltas." in k]
@@ -332,7 +332,7 @@ def main():
     )
     model.load_state_dict(checkpoint)
     model.to(args.device)
-    print(f"✅ Loaded model from {args.checkpoint} (n_envs={n_envs_ckpt})")
+    print(f"[DONE] Loaded model from {args.checkpoint} (n_envs={n_envs_ckpt})")
     
     # Extract structures
     print("\n" + "=" * 80)
@@ -340,13 +340,13 @@ def main():
     print("=" * 80)
     
     structures = extract_structures(model, val_ld, args.device)
-    print(f"✅ Extracted {len(structures)} structures")
+    print(f"[DONE] Extracted {len(structures)} structures")
     
     A_per_env = compute_average_structure_by_env(structures, n_envs_ckpt)
-    print(f"✅ Computed average structures for {len(A_per_env)} environments")
+    print(f"[DONE] Computed average structures for {len(A_per_env)} environments")
     
     # Generate visualizations
-    print("\n📊 Generating visualizations...")
+    print("\n Generating visualizations...")
     plot_environment_comparison(A_per_env, 
                                os.path.join(args.export, 'environment_structures.png'))
     plot_delta_analysis(A_per_env, 
@@ -358,7 +358,7 @@ def main():
     save_structure_report(A_per_env, 
                          os.path.join(args.export, 'environment_structures_report.txt'))
     
-    print("\n✅ Environment-specific analysis complete!")
+    print("\n[DONE] Environment-specific analysis complete!")
 
 
 if __name__ == "__main__":

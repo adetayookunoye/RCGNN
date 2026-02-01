@@ -34,7 +34,7 @@ from sklearn.metrics import (
     precision_recall_curve
 )
 
-import path_helper  # noqa: F401
+import path_helper # noqa: F401
 from src.training.baselines import (
     notears_lite, notears_linear, granger_causality, 
     pcmci_plus, dag_gnn_simple
@@ -220,28 +220,28 @@ def compare_methods(X, A_true, A_rcgnn, threshold=0.5, include_all=True):
     A_rcgnn_clean = np.nan_to_num(A_rcgnn, nan=0.0, posinf=1.0, neginf=0.0)
     methods['RC-GNN'] = A_rcgnn_clean
     
-    # ✅ 1. Correlation
+    # [DONE] 1. Correlation
     print("\n[1/6] Computing Correlation baseline...")
     methods['Correlation'] = compute_correlation_adjacency(X)
     
-    # ✅ 2. NOTears-lite
+    # [DONE] 2. NOTears-lite
     print("[2/6] Computing NOTears-lite baseline...")
     methods['NOTears-lite'] = compute_notears_lite_adjacency(X, threshold=0.1)
     
     if include_all:
-        # ✅ 3. Full NOTears
+        # [DONE] 3. Full NOTears
         print("[3/6] Computing Full NOTears (Lagrangian)...")
         try:
             if X.ndim == 3:
-                X_avg = X.mean(axis=1)  # Average over time for NOTears
+                X_avg = X.mean(axis=1) # Average over time for NOTears
             else:
                 X_avg = X
             methods['NOTears'] = notears_linear(X_avg, lambda1=0.1, lambda2=5.0, max_iter=100)
         except Exception as e:
-            print(f"  ⚠️  NOTears failed: {e}")
-            methods['NOTears'] = methods['NOTears-lite']  # Fallback
+            print(f" [WARN] NOTears failed: {e}")
+            methods['NOTears'] = methods['NOTears-lite'] # Fallback
         
-        # ✅ 4. Granger Causality
+        # [DONE] 4. Granger Causality
         print("[4/6] Computing Granger Causality...")
         try:
             if X.ndim == 2:
@@ -253,10 +253,10 @@ def compare_methods(X, A_true, A_rcgnn, threshold=0.5, include_all=True):
                 X_ts = X
             methods['Granger'] = granger_causality(X_ts, max_lag=2, significance=0.05)
         except Exception as e:
-            print(f"  ⚠️  Granger failed: {e}")
-            methods['Granger'] = methods['Correlation']  # Fallback
+            print(f" [WARN] Granger failed: {e}")
+            methods['Granger'] = methods['Correlation'] # Fallback
         
-        # ✅ 5. PCMCI+
+        # [DONE] 5. PCMCI+
         print("[5/6] Computing PCMCI+...")
         try:
             if X.ndim == 2:
@@ -267,16 +267,16 @@ def compare_methods(X, A_true, A_rcgnn, threshold=0.5, include_all=True):
                 X_ts = X
             methods['PCMCI+'] = pcmci_plus(X_ts, significance=0.05, max_lag=2)
         except Exception as e:
-            print(f"  ⚠️  PCMCI+ failed: {e}")
-            methods['PCMCI+'] = methods['Correlation']  # Fallback
+            print(f" [WARN] PCMCI+ failed: {e}")
+            methods['PCMCI+'] = methods['Correlation'] # Fallback
         
-        # ✅ 6. DAG-GNN
+        # [DONE] 6. DAG-GNN
         print("[6/6] Computing DAG-GNN...")
         try:
             methods['DAG-GNN'] = dag_gnn_simple(X, hidden_dim=64, num_layers=2)
         except Exception as e:
-            print(f"  ⚠️  DAG-GNN failed: {e}")
-            methods['DAG-GNN'] = methods['Correlation']  # Fallback
+            print(f" [WARN] DAG-GNN failed: {e}")
+            methods['DAG-GNN'] = methods['Correlation'] # Fallback
     
     # Compute metrics for each
     results = {}
@@ -285,17 +285,17 @@ def compare_methods(X, A_true, A_rcgnn, threshold=0.5, include_all=True):
         metrics = compute_metrics(A_pred, A_true, threshold)
         results[name] = metrics
         
-        print(f"📊 {name}:")
-        print(f"   Precision:       {metrics['precision']:.4f}")
-        print(f"   Recall:          {metrics['recall']:.4f}")
-        print(f"   F1 Score:        {metrics['f1']:.4f}")
-        print(f"   SHD (directed):  {metrics['shd']}")
-        print(f"   SHD (skeleton):  {metrics['shd_skeleton']}")
+        print(f" {name}:")
+        print(f" Precision: {metrics['precision']:.4f}")
+        print(f" Recall: {metrics['recall']:.4f}")
+        print(f" F1 Score: {metrics['f1']:.4f}")
+        print(f" SHD (directed): {metrics['shd']}")
+        print(f" SHD (skeleton): {metrics['shd_skeleton']}")
         if 'auprc' in metrics:
-            print(f"   AUPRC:           {metrics['auprc']:.4f}")
+            print(f" AUPRC: {metrics['auprc']:.4f}")
         if 'topk_f1' in metrics:
-            print(f"   Top-k F1:        {metrics['topk_f1']:.4f} (k={metrics['k']})")
-        print(f"   TP/FP/FN/TN:     {metrics['tp']}/{metrics['fp']}/{metrics['fn']}/{metrics['tn']}")
+            print(f" Top-k F1: {metrics['topk_f1']:.4f} (k={metrics['k']})")
+        print(f" TP/FP/FN/TN: {metrics['tp']}/{metrics['fp']}/{metrics['fn']}/{metrics['tn']}")
     
     return results, methods
     
@@ -305,17 +305,17 @@ def compare_methods(X, A_true, A_rcgnn, threshold=0.5, include_all=True):
         metrics = compute_metrics(A_pred, A_true, threshold)
         results[name] = metrics
         
-        print(f"\n📊 {name}:")
-        print(f"   Precision:       {metrics['precision']:.4f}")
-        print(f"   Recall:          {metrics['recall']:.4f}")
-        print(f"   F1 Score:        {metrics['f1']:.4f}")
-        print(f"   SHD (directed):  {metrics['shd']}")
-        print(f"   SHD (skeleton):  {metrics['shd_skeleton']}")
+        print(f"\n {name}:")
+        print(f" Precision: {metrics['precision']:.4f}")
+        print(f" Recall: {metrics['recall']:.4f}")
+        print(f" F1 Score: {metrics['f1']:.4f}")
+        print(f" SHD (directed): {metrics['shd']}")
+        print(f" SHD (skeleton): {metrics['shd_skeleton']}")
         if 'auprc' in metrics:
-            print(f"   AUPRC:           {metrics['auprc']:.4f}")
+            print(f" AUPRC: {metrics['auprc']:.4f}")
         if 'topk_f1' in metrics:
-            print(f"   Top-k F1:        {metrics['topk_f1']:.4f} (k={metrics['k']})")
-        print(f"   TP/FP/FN/TN:     {metrics['tp']}/{metrics['fp']}/{metrics['fn']}/{metrics['tn']}")
+            print(f" Top-k F1: {metrics['topk_f1']:.4f} (k={metrics['k']})")
+        print(f" TP/FP/FN/TN: {metrics['tp']}/{metrics['fp']}/{metrics['fn']}/{metrics['tn']}")
     
     return results, methods
 
@@ -353,7 +353,7 @@ def plot_method_comparison(results, output_path='artifacts/baseline_comparison.p
     for bars in [bars1, bars2, bars3]:
         for bar in bars:
             height = bar.get_height()
-            if height > 0.02:  # Only label if visible
+            if height > 0.02: # Only label if visible
                 ax.text(bar.get_x() + bar.get_width() / 2., height,
                        f'{height:.3f}', ha='center', va='bottom', fontsize=8)
     
@@ -423,7 +423,7 @@ def plot_method_comparison(results, output_path='artifacts/baseline_comparison.p
     plt.tight_layout()
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    print(f"\n✅ Saved comparison plot: {output_path}")
+    print(f"\n[DONE] Saved comparison plot: {output_path}")
     plt.close()
 
 
@@ -447,7 +447,7 @@ def plot_adjacency_comparison(methods, A_true, output_path='artifacts/adjacency_
     # Methods (consistent [0,1] colorbar, diagonal masked)
     for idx, (name, A) in enumerate(methods.items(), 1):
         A_show = A.copy()
-        np.fill_diagonal(A_show, np.nan)  # Mask diagonal visually
+        np.fill_diagonal(A_show, np.nan) # Mask diagonal visually
         im = axes[idx].imshow(A_show, cmap='YlOrRd', vmin=0, vmax=1)
         axes[idx].set_title(name, fontsize=12, fontweight='bold')
         axes[idx].set_xlabel('Target')
@@ -457,7 +457,7 @@ def plot_adjacency_comparison(methods, A_true, output_path='artifacts/adjacency_
     plt.tight_layout()
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    print(f"✅ Saved adjacency comparison: {output_path}")
+    print(f"[DONE] Saved adjacency comparison: {output_path}")
     plt.close()
 
 
@@ -512,47 +512,47 @@ def save_comparison_report(results, methods, A_true, output_path='artifacts/base
     best_precision = max(results, key=lambda m: results[m]['precision'])
     best_recall = max(results, key=lambda m: results[m]['recall'])
     
-    report.append(f"🥇 Best F1 Score:    {best_f1:<15} ({results[best_f1]['f1']:.4f})")
-    report.append(f"🥇 Best Precision:   {best_precision:<15} ({results[best_precision]['precision']:.4f})")
-    report.append(f"🥇 Best Recall:      {best_recall:<15} ({results[best_recall]['recall']:.4f})")
-    report.append(f"🥇 Best SHD:         {best_shd:<15} ({results[best_shd]['shd']})")
+    report.append(f" Best F1 Score: {best_f1:<15} ({results[best_f1]['f1']:.4f})")
+    report.append(f" Best Precision: {best_precision:<15} ({results[best_precision]['precision']:.4f})")
+    report.append(f" Best Recall: {best_recall:<15} ({results[best_recall]['recall']:.4f})")
+    report.append(f" Best SHD: {best_shd:<15} ({results[best_shd]['shd']})")
     
     if 'auprc' in results[best_f1]:
         best_auprc = max(results, key=lambda m: results[m].get('auprc', 0.0))
-        report.append(f"🥇 Best AUPRC:       {best_auprc:<15} ({results[best_auprc]['auprc']:.4f})")
+        report.append(f" Best AUPRC: {best_auprc:<15} ({results[best_auprc]['auprc']:.4f})")
     
     if 'topk_f1' in results[best_f1]:
         best_topk = max(results, key=lambda m: results[m].get('topk_f1', 0.0))
-        report.append(f"🥇 Best Top-k F1:    {best_topk:<15} ({results[best_topk]['topk_f1']:.4f})")
+        report.append(f" Best Top-k F1: {best_topk:<15} ({results[best_topk]['topk_f1']:.4f})")
     
     report.append("")
     report.append("## INTERPRETATION")
     report.append("")
     report.append("Binary Metrics:")
-    report.append("  • Precision: % of predicted edges that are correct")
-    report.append("  • Recall: % of true edges that were found")
-    report.append("  • F1: Harmonic mean (balanced precision-recall)")
-    report.append("  • SHD: Directed edge disagreements (orientation-aware)")
-    report.append("  • SHD-Skel: Undirected edge disagreements (skeleton only)")
+    report.append(" • Precision: % of predicted edges that are correct")
+    report.append(" • Recall: % of true edges that were found")
+    report.append(" • F1: Harmonic mean (balanced precision-recall)")
+    report.append(" • SHD: Directed edge disagreements (orientation-aware)")
+    report.append(" • SHD-Skel: Undirected edge disagreements (skeleton only)")
     report.append("")
     report.append("Threshold-Free Metrics:")
-    report.append("  • AUPRC: Area under precision-recall curve (ranking quality)")
-    report.append("  • Best F1 (PR): Optimal F1 across all thresholds")
-    report.append("  • Top-k F1: Ranking quality (k = #true edges)")
+    report.append(" • AUPRC: Area under precision-recall curve (ranking quality)")
+    report.append(" • Best F1 (PR): Optimal F1 across all thresholds")
+    report.append(" • Top-k F1: Ranking quality (k = #true edges)")
     report.append("")
     
     report.append("## PERFORMANCE SUMMARY")
     report.append("")
     
     if results[best_f1]['f1'] > 0.7:
-        report.append(f"✅ {best_f1} performs EXCELLENT with F1 > 0.7")
+        report.append(f"[DONE] {best_f1} performs EXCELLENT with F1 > 0.7")
     elif results[best_f1]['f1'] > 0.5:
-        report.append(f"⚠️  {best_f1} shows MODERATE performance (0.5 < F1 < 0.7)")
+        report.append(f"[WARN] {best_f1} shows MODERATE performance (0.5 < F1 < 0.7)")
     elif results[best_f1]['f1'] > 0.3:
-        report.append(f"⚠️  {best_f1} shows WEAK performance (0.3 < F1 < 0.5)")
+        report.append(f"[WARN] {best_f1} shows WEAK performance (0.3 < F1 < 0.5)")
     else:
-        report.append(f"❌ {best_f1} shows POOR performance (F1 < 0.3)")
-        report.append("   → May need different approach, more data, or hyperparameter tuning")
+        report.append(f"[FAIL] {best_f1} shows POOR performance (F1 < 0.3)")
+        report.append(" -> May need different approach, more data, or hyperparameter tuning")
     
     report.append("")
     
@@ -566,14 +566,14 @@ def save_comparison_report(results, methods, A_true, output_path='artifacts/base
             improvement = ((rcgnn_f1 - baseline_f1) / (baseline_f1 + 1e-10)) * 100
             
             report.append(f"RC-GNN vs. Best Baseline ({best_baseline}):")
-            report.append(f"  RC-GNN F1:    {rcgnn_f1:.4f}")
-            report.append(f"  Baseline F1:  {baseline_f1:.4f}")
+            report.append(f" RC-GNN F1: {rcgnn_f1:.4f}")
+            report.append(f" Baseline F1: {baseline_f1:.4f}")
             if improvement > 5:
-                report.append(f"  ✅ RC-GNN is {improvement:.1f}% better!")
+                report.append(f" [DONE] RC-GNN is {improvement:.1f}% better!")
             elif improvement > -5:
-                report.append(f"  ⚠️  RC-GNN is comparable ({improvement:+.1f}%)")
+                report.append(f" [WARN] RC-GNN is comparable ({improvement:+.1f}%)")
             else:
-                report.append(f"  ❌ RC-GNN is {abs(improvement):.1f}% worse")
+                report.append(f" [FAIL] RC-GNN is {abs(improvement):.1f}% worse")
     
     report.append("")
     report.append("=" * 80)
@@ -584,8 +584,8 @@ def save_comparison_report(results, methods, A_true, output_path='artifacts/base
     with open(output_path, 'w') as f:
         f.write('\n'.join(report))
     
-    print(f"\n✅ Saved comparison report: {output_path}")
-    print("\n" + '\n'.join(report[-30:]))  # Print last 30 lines
+    print(f"\n[DONE] Saved comparison report: {output_path}")
+    print("\n" + '\n'.join(report[-30:])) # Print last 30 lines
 
 
 def main():
@@ -608,31 +608,31 @@ def main():
     A_true_path = os.path.join(args.data_root, 'A_true.npy')
     
     if not os.path.exists(X_path):
-        print(f"❌ Error: Data not found at {X_path}")
+        print(f"[FAIL] Error: Data not found at {X_path}")
         sys.exit(1)
     
     if not os.path.exists(A_true_path):
-        print(f"❌ Error: Ground truth not found at {A_true_path}")
+        print(f"[FAIL] Error: Ground truth not found at {A_true_path}")
         sys.exit(1)
     
     X = np.load(X_path)
     A_true = np.load(A_true_path)
     
-    print(f"✅ Loaded data: X.shape={X.shape}, A_true.shape={A_true.shape}")
+    print(f"[DONE] Loaded data: X.shape={X.shape}, A_true.shape={A_true.shape}")
     
     # Load RC-GNN adjacency
     if not os.path.exists(args.adjacency):
-        print(f"❌ Error: RC-GNN adjacency not found at {args.adjacency}")
+        print(f"[FAIL] Error: RC-GNN adjacency not found at {args.adjacency}")
         sys.exit(1)
     
     A_rcgnn = np.load(args.adjacency)
-    print(f"✅ Loaded RC-GNN adjacency: {A_rcgnn.shape}")
+    print(f"[DONE] Loaded RC-GNN adjacency: {A_rcgnn.shape}")
     
     # Compare methods
     results, methods = compare_methods(X, A_true, A_rcgnn, threshold=args.threshold)
     
     # Generate visualizations
-    print("\n📊 Generating visualizations...")
+    print("\n Generating visualizations...")
     plot_method_comparison(results, os.path.join(args.export, 'baseline_comparison.png'))
     plot_adjacency_comparison(methods, A_true, 
                              os.path.join(args.export, 'adjacency_methods_comparison.png'))
@@ -641,7 +641,7 @@ def main():
     save_comparison_report(results, methods, A_true,
                           os.path.join(args.export, 'baseline_comparison_report.txt'))
     
-    print("\n✅ Baseline comparison complete!")
+    print("\n[DONE] Baseline comparison complete!")
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ import seaborn as sns
 from pathlib import Path
 from sklearn.metrics import precision_recall_curve, f1_score, precision_score, recall_score, roc_auc_score
 
-import path_helper  # noqa: F401
+import path_helper # noqa: F401
 
 
 def compute_metrics_at_threshold(A_pred, A_true, threshold):
@@ -46,7 +46,7 @@ def compute_metrics_at_threshold(A_pred, A_true, threshold):
     
     # False positive rate, true negative rate
     fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
-    tpr = recall  # same as recall
+    tpr = recall # same as recall
     
     # Sparsity (what % of edges are non-zero in prediction)
     sparsity = np.sum(A_pred_bin) / A_pred_bin.size
@@ -92,12 +92,12 @@ def find_optimal_threshold(A_pred, A_true, thresholds=None, verbose=True):
     best_f1 = results[best_idx]['f1']
     
     if verbose:
-        print(f"\n✅ Optimal threshold found: {best_threshold:.6f}")
-        print(f"   F1 Score: {best_f1:.4f}")
-        print(f"   Precision: {results[best_idx]['precision']:.4f}")
-        print(f"   Recall: {results[best_idx]['recall']:.4f}")
-        print(f"   SHD: {results[best_idx]['shd']}")
-        print(f"   Sparsity: {results[best_idx]['sparsity']:.2%}")
+        print(f"\n[DONE] Optimal threshold found: {best_threshold:.6f}")
+        print(f" F1 Score: {best_f1:.4f}")
+        print(f" Precision: {results[best_idx]['precision']:.4f}")
+        print(f" Recall: {results[best_idx]['recall']:.4f}")
+        print(f" SHD: {results[best_idx]['shd']}")
+        print(f" Sparsity: {results[best_idx]['sparsity']:.2%}")
     
     return best_threshold, results
 
@@ -159,7 +159,7 @@ def plot_threshold_analysis(results, output_path='artifacts/threshold_analysis.p
     plt.tight_layout()
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    print(f"✅ Saved threshold analysis: {output_path}")
+    print(f"[DONE] Saved threshold analysis: {output_path}")
     plt.close()
 
 
@@ -203,7 +203,7 @@ def plot_threshold_comparison(results, output_path='artifacts/threshold_metrics_
     plt.title('Top 10 Thresholds by F1 Score', fontsize=14, fontweight='bold', pad=20)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    print(f"✅ Saved threshold comparison table: {output_path}")
+    print(f"[DONE] Saved threshold comparison table: {output_path}")
     plt.close()
 
 
@@ -228,39 +228,39 @@ def save_threshold_report(best_threshold, results, output_path='artifacts/thresh
     
     report.append("## INTERPRETATION")
     report.append(f"At threshold {best_threshold:.6f}:")
-    report.append(f"  • {best_result['tp']} True Positives (correct edge predictions)")
-    report.append(f"  • {best_result['fp']} False Positives (incorrect edge predictions)")
-    report.append(f"  • {best_result['fn']} False Negatives (missed edges)")
-    report.append(f"  • {best_result['tn']} True Negatives (correct non-edge predictions)")
+    report.append(f" • {best_result['tp']} True Positives (correct edge predictions)")
+    report.append(f" • {best_result['fp']} False Positives (incorrect edge predictions)")
+    report.append(f" • {best_result['fn']} False Negatives (missed edges)")
+    report.append(f" • {best_result['tn']} True Negatives (correct non-edge predictions)")
     report.append("")
     
     report.append("## RECOMMENDATIONS")
     if best_result['sparsity'] > 0.9:
-        report.append("⚠️  WARNING: Very high sparsity (>90%)")
-        report.append("   Consider lowering threshold to capture more causal relationships")
+        report.append("[WARN] WARNING: Very high sparsity (>90%)")
+        report.append(" Consider lowering threshold to capture more causal relationships")
     elif best_result['sparsity'] < 0.1:
-        report.append("⚠️  WARNING: Very low sparsity (<10%)")
-        report.append("   Consider raising threshold to reduce false positives")
+        report.append("[WARN] WARNING: Very low sparsity (<10%)")
+        report.append(" Consider raising threshold to reduce false positives")
     else:
-        report.append("✅ Sparsity is reasonable (10-90%)")
+        report.append("[DONE] Sparsity is reasonable (10-90%)")
     
     if best_result['precision'] < 0.5:
-        report.append("⚠️  Low precision - many false positives")
-        report.append("   Consider raising threshold for stricter edge selection")
+        report.append("[WARN] Low precision - many false positives")
+        report.append(" Consider raising threshold for stricter edge selection")
     
     if best_result['recall'] < 0.5:
-        report.append("⚠️  Low recall - missing many true edges")
-        report.append("   Consider lowering threshold to capture more relationships")
+        report.append("[WARN] Low recall - missing many true edges")
+        report.append(" Consider lowering threshold to capture more relationships")
     
     report.append("")
     report.append("## USAGE IN DOWNSTREAM ANALYSIS")
     report.append(f"Use threshold: {best_threshold:.6f}")
     report.append("")
     report.append("Python:")
-    report.append(f"  A_binary = (A_pred > {best_threshold:.6f}).astype(int)")
+    report.append(f" A_binary = (A_pred > {best_threshold:.6f}).astype(int)")
     report.append("")
     report.append("Command line:")
-    report.append(f"  python scripts/validate_and_visualize.py --threshold {best_threshold:.6f}")
+    report.append(f" python scripts/validate_and_visualize.py --threshold {best_threshold:.6f}")
     report.append("")
     
     report.append("## FULL THRESHOLD RESULTS")
@@ -278,7 +278,7 @@ def save_threshold_report(best_threshold, results, output_path='artifacts/thresh
     with open(output_path, 'w') as f:
         f.write('\n'.join(report))
     
-    print(f"✅ Saved threshold report: {output_path}")
+    print(f"[DONE] Saved threshold report: {output_path}")
     
     # Print to stdout
     print("\n" + '\n'.join(report))
@@ -301,21 +301,21 @@ def main():
     
     # Load adjacency
     if not os.path.exists(args.adjacency):
-        print(f"❌ Error: Adjacency not found at {args.adjacency}")
+        print(f"[FAIL] Error: Adjacency not found at {args.adjacency}")
         sys.exit(1)
     
     A_pred = np.load(args.adjacency)
-    print(f"✅ Loaded predicted adjacency: {A_pred.shape}")
+    print(f"[DONE] Loaded predicted adjacency: {A_pred.shape}")
     
     # Load ground truth
     gt_path = os.path.join(args.data_root, 'A_true.npy')
     if not os.path.exists(gt_path):
-        print(f"❌ Error: Ground truth not found at {gt_path}")
-        print(f"   This script requires ground truth for threshold optimization")
+        print(f"[FAIL] Error: Ground truth not found at {gt_path}")
+        print(f" This script requires ground truth for threshold optimization")
         sys.exit(1)
     
     A_true = np.load(gt_path)
-    print(f"✅ Loaded ground truth adjacency: {A_true.shape}")
+    print(f"[DONE] Loaded ground truth adjacency: {A_true.shape}")
     
     # Generate thresholds - use linear spacing for better threshold exploration
     max_val = A_pred.max()
@@ -332,7 +332,7 @@ def main():
     best_threshold, results = find_optimal_threshold(A_pred, A_true, thresholds)
     
     # Generate visualizations
-    print("\n📊 Generating visualizations...")
+    print("\n Generating visualizations...")
     plot_threshold_analysis(results, 
                            os.path.join(args.export, 'threshold_analysis.png'))
     plot_threshold_comparison(results, 
@@ -342,9 +342,9 @@ def main():
     save_threshold_report(best_threshold, results,
                          os.path.join(args.export, 'threshold_report.txt'))
     
-    print("\n✅ Threshold optimization complete!")
-    print(f"   Best threshold: {best_threshold:.6f}")
-    print(f"   Visualizations saved to: {args.export}/")
+    print("\n[DONE] Threshold optimization complete!")
+    print(f" Best threshold: {best_threshold:.6f}")
+    print(f" Visualizations saved to: {args.export}/")
 
 
 if __name__ == "__main__":

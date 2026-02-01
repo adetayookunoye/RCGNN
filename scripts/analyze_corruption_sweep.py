@@ -43,7 +43,7 @@ def paired_test(values_a, values_b, method='wilcoxon'):
     
     if method == 'wilcoxon':
         statistic, pvalue = stats.wilcoxon(values_a, values_b, alternative='greater')
-    else:  # t-test
+    else: # t-test
         statistic, pvalue = stats.ttest_rel(values_a, values_b, alternative='greater')
     
     return {'statistic': statistic, 'pvalue': pvalue}
@@ -75,16 +75,16 @@ def main():
         rcgnn = rcgnn_results[rate]
         if 'f1' in rcgnn:
             print(f"{rate:<8.0%} {'RC-GNN':<12} "
-                  f"{rcgnn['f1']['mean']:.3f}±{rcgnn['f1']['std']:.3f}    "
-                  f"{rcgnn['auprc']['mean']:.3f}±{rcgnn['auprc']['std']:.3f}    "
+                  f"{rcgnn['f1']['mean']:.3f}±{rcgnn['f1']['std']:.3f} "
+                  f"{rcgnn['auprc']['mean']:.3f}±{rcgnn['auprc']['std']:.3f} "
                   f"{rcgnn['shd']['mean']:.1f}±{rcgnn['shd']['std']:.1f}")
         
         # NOTEARS
         notears = notears_results[rate]
         if 'f1' in notears:
             print(f"{'':<8} {'NOTEARS':<12} "
-                  f"{notears['f1']['mean']:.3f}±{notears['f1']['std']:.3f}    "
-                  f"{notears['auprc']['mean']:.3f}±{notears['auprc']['std']:.3f}    "
+                  f"{notears['f1']['mean']:.3f}±{notears['f1']['std']:.3f} "
+                  f"{notears['auprc']['mean']:.3f}±{notears['auprc']['std']:.3f} "
                   f"{notears['shd']['mean']:.1f}±{notears['shd']['std']:.1f}")
         print()
     
@@ -121,7 +121,7 @@ def main():
     with open(output_file, 'w') as f:
         json.dump(summary, f, indent=2, default=lambda x: x.tolist() if isinstance(x, np.ndarray) else x)
     
-    print(f"✓ Summary saved to: {output_file}")
+    print(f"[OK] Summary saved to: {output_file}")
     print()
     
     # Generate degradation curve plot
@@ -152,7 +152,7 @@ def main():
     plt.tight_layout()
     plot_file = Path("artifacts/corruption_sweep/degradation_curve.png")
     plt.savefig(plot_file, dpi=300, bbox_inches='tight')
-    print(f"✓ Plot saved to: {plot_file}")
+    print(f"[OK] Plot saved to: {plot_file}")
     print()
     
     print("=" * 80)

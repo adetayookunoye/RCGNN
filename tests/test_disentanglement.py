@@ -25,8 +25,8 @@ def synthetic_batch():
 def test_mine_loss_decreases():
     """Test that MINE loss decreases during training."""
     x = torch.randn(100, 32)
-    y = x + 0.1 * torch.randn(100, 32)  # Correlated with x
-    z = torch.randn(100, 32)  # Independent
+    y = x + 0.1 * torch.randn(100, 32) # Correlated with x
+    z = torch.randn(100, 32) # Independent
     
     mine = MINELoss(input_dim=32)
     optimizer = torch.optim.Adam(mine.parameters())
@@ -43,7 +43,7 @@ def test_mine_loss_decreases():
     for _ in range(50):
         optimizer.zero_grad()
         mi_xy, reg = mine(x, y)
-        loss = -mi_xy + reg  # Maximize MI
+        loss = -mi_xy + reg # Maximize MI
         loss.backward()
         optimizer.step()
         

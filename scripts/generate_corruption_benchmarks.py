@@ -99,7 +99,7 @@ def generate_benchmark_h1_full(output_root="data/interim/synth_corrupted/h1_full
                 }
                 configs.append(config)
     
-    print(f"\n🎯 Generating H1 Benchmark: Structural Accuracy ({len(configs)} configs)")
+    print(f"\n Generating H1 Benchmark: Structural Accuracy ({len(configs)} configs)")
     print("=" * 70)
     
     for idx, config in enumerate(configs, 1):
@@ -110,7 +110,7 @@ def generate_benchmark_h1_full(output_root="data/interim/synth_corrupted/h1_full
         print(f"\n[{idx}/{len(configs)}] {config_name}")
         _generate_benchmark_config(output_dir, config)
     
-    print(f"\n✅ H1 Benchmark complete: {len(configs)} datasets in {output_root}")
+    print(f"\n[DONE] H1 Benchmark complete: {len(configs)} datasets in {output_root}")
     return output_root
 
 
@@ -156,14 +156,14 @@ def generate_benchmark_h2_stability(output_root="data/interim/synth_corrupted/h2
                     "n_envs": 5,
                     "samples_per_env": 400,
                     "T": 50,
-                    "shift_type": "progressive",  # Progressive shift across environments
+                    "shift_type": "progressive", # Progressive shift across environments
                     "max_shift": shift["max_drift"],
                     "shift_name": shift["name"],
                     "seed": seed,
                 }
                 configs.append(config)
     
-    print(f"\n🎯 Generating H2 Benchmark: Stability ({len(configs)} configs)")
+    print(f"\n Generating H2 Benchmark: Stability ({len(configs)} configs)")
     print("=" * 70)
     
     for idx, config in enumerate(configs, 1):
@@ -174,7 +174,7 @@ def generate_benchmark_h2_stability(output_root="data/interim/synth_corrupted/h2
         print(f"\n[{idx}/{len(configs)}] {config_name}")
         _generate_benchmark_config(output_dir, config)
     
-    print(f"\n✅ H2 Benchmark complete: {len(configs)} datasets in {output_root}")
+    print(f"\n[DONE] H2 Benchmark complete: {len(configs)} datasets in {output_root}")
     return output_root
 
 
@@ -224,7 +224,7 @@ def generate_benchmark_h3_policy(output_root="data/interim/synth_corrupted/h3_po
             }
             configs.append(config)
     
-    print(f"\n🎯 Generating H3 Benchmark: Policy Pathways ({len(configs)} configs)")
+    print(f"\n Generating H3 Benchmark: Policy Pathways ({len(configs)} configs)")
     print("=" * 70)
     
     for idx, config in enumerate(configs, 1):
@@ -234,7 +234,7 @@ def generate_benchmark_h3_policy(output_root="data/interim/synth_corrupted/h3_po
         print(f"\n[{idx}/{len(configs)}] {config_name}")
         _generate_benchmark_config(output_dir, config, track_policy=True)
     
-    print(f"\n✅ H3 Benchmark complete: {len(configs)} datasets in {output_root}")
+    print(f"\n[DONE] H3 Benchmark complete: {len(configs)} datasets in {output_root}")
     return output_root
 
 
@@ -250,7 +250,7 @@ def _generate_benchmark_config(output_dir, config, track_policy=False):
     else:
         A_true = generate_scale_free_dag(config["d"], config["attachment"], seed=seed)
     
-    print(f"   Graph: {config['graph_type']} (d={config['d']}, edges={int(A_true.sum())})")
+    print(f" Graph: {config['graph_type']} (d={config['d']}, edges={int(A_true.sum())})")
     
     # Generate per-environment corruption configs
     n_envs = config["n_envs"]
@@ -264,9 +264,9 @@ def _generate_benchmark_config(output_dir, config, track_policy=False):
             # Interpolate from base to max shift
             shift_factor = env_idx / (n_envs - 1) if n_envs > 1 else 0
             
-            missing_rate = 0.2 + shift_factor * (0.6 - 0.2)  # 20% -> 60%
-            noise_scale = 0.1 + shift_factor * (0.6 - 0.1)  # 0.1 -> 0.6
-            drift = shift_factor * max_shift  # 0 -> max_shift
+            missing_rate = 0.2 + shift_factor * (0.6 - 0.2) # 20% -> 60%
+            noise_scale = 0.1 + shift_factor * (0.6 - 0.1) # 0.1 -> 0.6
+            drift = shift_factor * max_shift # 0 -> max_shift
             
             # Vary missing type per environment
             missing_types = ["mcar", "mar", "mnar"]
@@ -318,7 +318,7 @@ def _generate_benchmark_config(output_dir, config, track_policy=False):
                 M = apply_mcar(S, corruption["missing_rate"], seed=seed + env_idx * 10000 + sample_idx * 100 + 1000)
             elif corruption["missing_type"] == "mar":
                 M = apply_mar(S, corruption["missing_rate"], seed=seed + env_idx * 10000 + sample_idx * 100 + 1000)
-            else:  # mnar
+            else: # mnar
                 M = apply_mnar(S, corruption["missing_rate"], seed=seed + env_idx * 10000 + sample_idx * 100 + 1000)
             
             # Add noise
@@ -332,7 +332,7 @@ def _generate_benchmark_config(output_dir, config, track_policy=False):
             S_all.append(S)
             e_all.append(env_idx)
     
-    X_all = np.stack(X_all, axis=0)  # (N, T, d)
+    X_all = np.stack(X_all, axis=0) # (N, T, d)
     M_all = np.stack(M_all, axis=0)
     S_all = np.stack(S_all, axis=0)
     e_all = np.array(e_all, dtype=np.int32)
@@ -364,10 +364,10 @@ def _generate_benchmark_config(output_dir, config, track_policy=False):
         policy_edges = []
         for i in high_out_nodes:
             targets = np.where(A_true[i] > 0)[0]
-            for j in targets[:2]:  # Top 2 targets per high-degree node
+            for j in targets[:2]: # Top 2 targets per high-degree node
                 policy_edges.append((int(i), int(j)))
         
-        policy_edges = list(set(policy_edges))  # Remove duplicates
+        policy_edges = list(set(policy_edges)) # Remove duplicates
     
     # Metadata
     metadata = {
@@ -400,10 +400,10 @@ def _generate_benchmark_config(output_dir, config, track_policy=False):
     with open(os.path.join(output_dir, "meta.json"), "w") as f:
         json.dump(metadata, f, indent=2)
     
-    print(f"   ✅ Saved: {output_dir}")
-    print(f"      Train: {X_train.shape[0]} samples, Val: {X_val.shape[0]} samples")
+    print(f" [DONE] Saved: {output_dir}")
+    print(f" Train: {X_train.shape[0]} samples, Val: {X_val.shape[0]} samples")
     if policy_edges:
-        print(f"      Policy edges: {len(policy_edges)} pathways")
+        print(f" Policy edges: {len(policy_edges)} pathways")
 
 
 # ============================================================================
@@ -454,7 +454,7 @@ def main():
     elif args.benchmark == "h3_policy":
         generate_benchmark_h3_policy(os.path.join(args.output_root, "h3_policy"), args.seed)
     
-    print("\n✅ All benchmarks generated successfully!")
+    print("\n[DONE] All benchmarks generated successfully!")
     print("=" * 70)
 
 

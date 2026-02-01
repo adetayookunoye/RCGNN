@@ -76,7 +76,7 @@ class IRMStructureInvariance(nn.Module):
             effective_adj = A_e * support
 
             # CRITICAL FIX: Remove transpose to match causal convention
-            # A[i,j]=1 means i→j (i causes j)
+            # A[i,j]=1 means i->j (i causes j)
             # For prediction: X_next[j] = sum_i A[i,j] * X_prev[i]
             # This is X_prev @ A (not X_prev @ A.T)
             preds = torch.matmul(X_e[:, :-1], effective_adj)
@@ -93,8 +93,8 @@ class IRMStructureInvariance(nn.Module):
                 grad_logits = torch.autograd.grad(risk, logits_e, create_graph=True)[0]
                 # Keep edge-level gradients for proper variance computation
                 # Average over batch dimension, keep [d, d] structure
-                grad_edges = grad_logits.mean(dim=0)  # [d, d]
-                grads.append(grad_edges.flatten())  # [d*d]
+                grad_edges = grad_logits.mean(dim=0) # [d, d]
+                grads.append(grad_edges.flatten()) # [d*d]
             except RuntimeError:
                 # Fallback to the original scale-based finite-diff style when
                 # logits are not differentiable for some reason.
@@ -109,10 +109,10 @@ class IRMStructureInvariance(nn.Module):
             risks[env_idx] = risk
 
         if grads:
-            grads_tensor = torch.stack(grads)  # [n_envs, d*d]
+            grads_tensor = torch.stack(grads) # [n_envs, d*d]
             if grads_tensor.shape[0] > 1:
                 # Variance across environments for each edge
-                edge_var = torch.var(grads_tensor, dim=0, unbiased=False)  # [d*d]
+                edge_var = torch.var(grads_tensor, dim=0, unbiased=False) # [d*d]
                 # Mean variance across all edges, scaled by gamma
                 grad_penalty = edge_var.mean() * self.gamma
             else:

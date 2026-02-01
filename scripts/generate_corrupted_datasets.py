@@ -79,9 +79,9 @@ def main():
         with open(output_dir / "meta.json", "w") as f:
             json.dump(meta, f, indent=2)
         
-        print(f"✓ Created {output_dir}")
-        print(f"  Target: {rate:.0%}, Actual: {actual_rate:.1%}")
-        print(f"  X: {X_corrupt.shape}, Missing: {(M_corrupt == 0).sum()} entries")
+        print(f"[OK] Created {output_dir}")
+        print(f" Target: {rate:.0%}, Actual: {actual_rate:.1%}")
+        print(f" X: {X_corrupt.shape}, Missing: {(M_corrupt == 0).sum()} entries")
         print()
     
     print("=" * 60)
@@ -92,7 +92,7 @@ def main():
     print("Available datasets:")
     for rate in corruption_rates:
         dir_name = f"uci_air_{int(rate*100):02d}"
-        print(f"  - data/interim/{dir_name}/ ({rate:.0%} missing)")
+        print(f" - data/interim/{dir_name}/ ({rate:.0%} missing)")
 
 if __name__ == "__main__":
     main()

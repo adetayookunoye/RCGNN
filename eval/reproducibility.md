@@ -26,41 +26,41 @@ SEEDS = [42, 1337, 2024, 99, 777]
 ```python
 # scripts/train_rcgnn.py
 def main(args):
-    SEEDS = [42, 1337, 2024, 99, 777]
-    results_per_seed = []
-    
-    for seed in SEEDS:
-        print(f"\n{'='*60}")
-        print(f"Run: Seed {seed}")
-        print(f"{'='*60}")
-        
-        # Set all random states
-        torch.manual_seed(seed)
-        np.random.seed(seed)
-        torch.cuda.manual_seed_all(seed)
-        
-        # Load data with same seed
-        ds_train, ds_val, ds_test = load_synth(
-            root=args.data_root,
-            split=args.split,
-            seed=seed,
-        )
-        
-        # Train
-        model, metrics = train_and_eval(ds_train, ds_val, ds_test)
-        results_per_seed.append(metrics)
-    
-    # Aggregate
-    print(f"\n{'='*60}")
-    print("FINAL RESULTS (Mean ± Std across 5 seeds)")
-    print(f"{'='*60}")
-    for key in results_per_seed[0].keys():
-        values = [r[key] for r in results_per_seed]
-        mean_val = np.mean(values)
-        std_val = np.std(values)
-        print(f"{key}: {mean_val:.4f} ± {std_val:.4f}")
-    
-    return results_per_seed
+ SEEDS = [42, 1337, 2024, 99, 777]
+ results_per_seed = []
+
+ for seed in SEEDS:
+ print(f"\n{'='*60}")
+ print(f"Run: Seed {seed}")
+ print(f"{'='*60}")
+
+ # Set all random states
+ torch.manual_seed(seed)
+ np.random.seed(seed)
+ torch.cuda.manual_seed_all(seed)
+
+ # Load data with same seed
+ ds_train, ds_val, ds_test = load_synth(
+ root=args.data_root,
+ split=args.split,
+ seed=seed,
+ )
+
+ # Train
+ model, metrics = train_and_eval(ds_train, ds_val, ds_test)
+ results_per_seed.append(metrics)
+
+ # Aggregate
+ print(f"\n{'='*60}")
+ print("FINAL RESULTS (Mean ± Std across 5 seeds)")
+ print(f"{'='*60}")
+ for key in results_per_seed[0].keys():
+ values = [r[key] for r in results_per_seed]
+ mean_val = np.mean(values)
+ std_val = np.std(values)
+ print(f"{key}: {mean_val:.4f} ± {std_val:.4f}")
+
+ return results_per_seed
 ```
 
 ---
@@ -73,53 +73,53 @@ def main(args):
 
 ```python
 def generate_and_save_splits(
-    n_samples, 
-    train_ratio=0.6, 
-    val_ratio=0.2, 
-    test_ratio=0.2,
-    seed=42,
-    output_dir='artifacts/splits',
+ n_samples,
+ train_ratio=0.6,
+ val_ratio=0.2,
+ test_ratio=0.2,
+ seed=42,
+ output_dir='artifacts/splits',
 ):
-    """
-    Generate reproducible train/val/test indices.
-    Uses time-aware contiguous split (no shuffling).
-    """
-    np.random.seed(seed)
-    
-    n_train = int(n_samples * train_ratio)
-    n_val = int(n_samples * val_ratio)
-    n_test = n_samples - n_train - n_val
-    
-    # Contiguous split (time-series friendly)
-    idx_train = np.arange(0, n_train)
-    idx_val = np.arange(n_train, n_train + n_val)
-    idx_test = np.arange(n_train + n_val, n_samples)
-    
-    # Save
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-    splits = {
-        'train_indices': idx_train.tolist(),
-        'val_indices': idx_val.tolist(),
-        'test_indices': idx_test.tolist(),
-        'ratios': {
-            'train': train_ratio,
-            'val': val_ratio,
-            'test': test_ratio,
-        },
-        'seed': seed,
-        'n_samples': n_samples,
-    }
-    
-    with open(f'{output_dir}/splits_seed{seed}.json', 'w') as f:
-        json.dump(splits, f, indent=2)
-    
-    return splits
+ """
+ Generate reproducible train/val/test indices.
+ Uses time-aware contiguous split (no shuffling).
+ """
+ np.random.seed(seed)
+
+ n_train = int(n_samples * train_ratio)
+ n_val = int(n_samples * val_ratio)
+ n_test = n_samples - n_train - n_val
+
+ # Contiguous split (time-series friendly)
+ idx_train = np.arange(0, n_train)
+ idx_val = np.arange(n_train, n_train + n_val)
+ idx_test = np.arange(n_train + n_val, n_samples)
+
+ # Save
+ Path(output_dir).mkdir(parents=True, exist_ok=True)
+ splits = {
+ 'train_indices': idx_train.tolist(),
+ 'val_indices': idx_val.tolist(),
+ 'test_indices': idx_test.tolist(),
+ 'ratios': {
+ 'train': train_ratio,
+ 'val': val_ratio,
+ 'test': test_ratio,
+ },
+ 'seed': seed,
+ 'n_samples': n_samples,
+ }
+
+ with open(f'{output_dir}/splits_seed{seed}.json', 'w') as f:
+ json.dump(splits, f, indent=2)
+
+ return splits
 
 # In training script:
 splits = generate_and_save_splits(
-    n_samples=len(ds),
-    seed=args.seed,
-    output_dir='artifacts/splits',
+ n_samples=len(ds),
+ seed=args.seed,
+ output_dir='artifacts/splits',
 )
 ds_train = Subset(ds, splits['train_indices'])
 ds_val = Subset(ds, splits['val_indices'])
@@ -130,27 +130,27 @@ ds_test = Subset(ds, splits['test_indices'])
 
 ```python
 def verify_splits(seed=42, split_file='artifacts/splits/splits_seed42.json'):
-    """
-    Load saved splits and verify no data leakage.
-    """
-    with open(split_file, 'r') as f:
-        splits = json.load(f)
-    
-    train_indices = set(splits['train_indices'])
-    val_indices = set(splits['val_indices'])
-    test_indices = set(splits['test_indices'])
-    
-    # Check no overlap
-    assert len(train_indices & val_indices) == 0, "Train-Val overlap!"
-    assert len(train_indices & test_indices) == 0, "Train-Test overlap!"
-    assert len(val_indices & test_indices) == 0, "Val-Test overlap!"
-    
-    # Check coverage
-    all_indices = train_indices | val_indices | test_indices
-    assert len(all_indices) == splits['n_samples'], "Missing indices!"
-    
-    print(f"✓ Split verification passed (seed {seed})")
-    return splits
+ """
+ Load saved splits and verify no data leakage.
+ """
+ with open(split_file, 'r') as f:
+ splits = json.load(f)
+
+ train_indices = set(splits['train_indices'])
+ val_indices = set(splits['val_indices'])
+ test_indices = set(splits['test_indices'])
+
+ # Check no overlap
+ assert len(train_indices & val_indices) == 0, "Train-Val overlap!"
+ assert len(train_indices & test_indices) == 0, "Train-Test overlap!"
+ assert len(val_indices & test_indices) == 0, "Val-Test overlap!"
+
+ # Check coverage
+ all_indices = train_indices | val_indices | test_indices
+ assert len(all_indices) == splits['n_samples'], "Missing indices!"
+
+ print(f"[OK] Split verification passed (seed {seed})")
+ return splits
 ```
 
 ---
@@ -164,87 +164,87 @@ def verify_splits(seed=42, split_file='artifacts/splits/splits_seed42.json'):
 ```yaml
 # configs/hyperparameter_space.yaml
 hyperparameters:
-  # Architectural
-  hidden_dim: [32, 64, 128]  # Default: 64
-  n_layers: [2, 3]           # Default: 2
-  dropout: [0.0, 0.1, 0.2]   # Default: 0.1
-  
-  # Training
-  learning_rate: [1e-4, 5e-4, 1e-3]  # Default: 1e-3
-  batch_size: [32, 64, 128]          # Default: 64
-  weight_decay: [0.0, 1e-5, 1e-4]    # Default: 1e-4
-  
-  # Sparsification
-  lambda_sparsity: [0.01, 0.1, 0.5]  # Default: 0.1
-  lambda_dag: [1.0, 5.0, 10.0]       # Default: 10.0
-  
-  # Corruption modeling
-  lambda_mnar: [0.1, 1.0, 10.0]      # Default: 1.0
-  lambda_bias: [0.1, 1.0, 10.0]      # Default: 1.0
+ # Architectural
+ hidden_dim: [32, 64, 128] # Default: 64
+ n_layers: [2, 3] # Default: 2
+ dropout: [0.0, 0.1, 0.2] # Default: 0.1
+
+ # Training
+ learning_rate: [1e-4, 5e-4, 1e-3] # Default: 1e-3
+ batch_size: [32, 64, 128] # Default: 64
+ weight_decay: [0.0, 1e-5, 1e-4] # Default: 1e-4
+
+ # Sparsification
+ lambda_sparsity: [0.01, 0.1, 0.5] # Default: 0.1
+ lambda_dag: [1.0, 5.0, 10.0] # Default: 10.0
+
+ # Corruption modeling
+ lambda_mnar: [0.1, 1.0, 10.0] # Default: 1.0
+ lambda_bias: [0.1, 1.0, 10.0] # Default: 1.0
 ```
 
 ### B. Hyperparameter Tuning Procedure
 
 ```python
 def tune_hyperparameters(ds_train, ds_val, search_space, n_trials=20):
-    """
-    Bayesian optimization over hyperparameter space.
-    Objective: minimize validation loss (NOT A_true-based).
-    """
-    import optuna
-    
-    def objective(trial):
-        # Sample hyperparameters
-        config = {
-            'hidden_dim': trial.suggest_int('hidden_dim', 32, 128),
-            'learning_rate': trial.suggest_float('learning_rate', 1e-4, 1e-3, log=True),
-            'lambda_sparsity': trial.suggest_float('lambda_sparsity', 0.01, 0.5, log=True),
-            'lambda_dag': trial.suggest_float('lambda_dag', 1.0, 10.0),
-        }
-        
-        # Train model (short run for speed)
-        model = train(
-            ds_train, ds_val,
-            config=config,
-            epochs=20,  # Short trial
-            early_stopping_metric='val_loss',  # NOT A_true
-            early_stopping_patience=3,
-        )
-        
-        # Evaluate on validation set
-        val_loss = evaluate_loss(model, ds_val)
-        
-        return val_loss
-    
-    # Run Bayesian optimization
-    sampler = optuna.samplers.TPESampler(seed=args.seed)
-    study = optuna.create_study(
-        direction='minimize',
-        sampler=sampler,
-    )
-    study.optimize(objective, n_trials=n_trials)
-    
-    # Log best hyperparameters
-    best_params = study.best_params
-    print(f"Best hyperparameters (val_loss={study.best_value:.4f}):")
-    print(json.dumps(best_params, indent=2))
-    
-    return best_params
+ """
+ Bayesian optimization over hyperparameter space.
+ Objective: minimize validation loss (NOT A_true-based).
+ """
+ import optuna
+
+ def objective(trial):
+ # Sample hyperparameters
+ config = {
+ 'hidden_dim': trial.suggest_int('hidden_dim', 32, 128),
+ 'learning_rate': trial.suggest_float('learning_rate', 1e-4, 1e-3, log=True),
+ 'lambda_sparsity': trial.suggest_float('lambda_sparsity', 0.01, 0.5, log=True),
+ 'lambda_dag': trial.suggest_float('lambda_dag', 1.0, 10.0),
+ }
+
+ # Train model (short run for speed)
+ model = train(
+ ds_train, ds_val,
+ config=config,
+ epochs=20, # Short trial
+ early_stopping_metric='val_loss', # NOT A_true
+ early_stopping_patience=3,
+ )
+
+ # Evaluate on validation set
+ val_loss = evaluate_loss(model, ds_val)
+
+ return val_loss
+
+ # Run Bayesian optimization
+ sampler = optuna.samplers.TPESampler(seed=args.seed)
+ study = optuna.create_study(
+ direction='minimize',
+ sampler=sampler,
+ )
+ study.optimize(objective, n_trials=n_trials)
+
+ # Log best hyperparameters
+ best_params = study.best_params
+ print(f"Best hyperparameters (val_loss={study.best_value:.4f}):")
+ print(json.dumps(best_params, indent=2))
+
+ return best_params
 
 # In training:
 if args.tune_hps:
-    best_params = tune_hyperparameters(
-        ds_train, ds_val,
-        search_space='configs/hyperparameter_space.yaml',
-        n_trials=20,
-    )
-    # Save for reproducibility
-    with open('artifacts/checkpoints/best_hps.json', 'w') as f:
-        json.dump(best_params, f, indent=2)
+ best_params = tune_hyperparameters(
+ ds_train, ds_val,
+ search_space='configs/hyperparameter_space.yaml',
+ n_trials=20,
+ )
+ # Save for reproducibility
+ with open('artifacts/checkpoints/best_hps.json', 'w') as f:
+ json.dump(best_params, f, indent=2)
 else:
-    # Use default hyperparameters
-    with open('configs/model.yaml', 'r') as f:
-        best_params = yaml.safe_load(f)
+ # Use default hyperparameters
+ with open('configs/model.yaml', 'r') as f:
+ best_params = yaml.safe_load(f)
 ```
 
 ---
@@ -258,34 +258,34 @@ Document for reproducibility:
 ```yaml
 # artifacts/environment/compute_specs.yaml
 compute:
-  device: "cuda"  # or "cpu"
-  gpu_model: "NVIDIA A100"  # if GPU
-  gpu_count: 1
-  gpu_memory_gb: 40
-  cpu_cores: 16
-  cpu_memory_gb: 64
+ device: "cuda" # or "cpu"
+ gpu_model: "NVIDIA A100" # if GPU
+ gpu_count: 1
+ gpu_memory_gb: 40
+ cpu_cores: 16
+ cpu_memory_gb: 64
 
 software:
-  python_version: "3.10.12"
-  pytorch_version: "2.1.2"
-  pytorch_cuda: "12.1"
-  
-dependencies:
-  - name: "torch"
-    version: "2.1.2"
-  - name: "numpy"
-    version: "1.24.3"
-  - name: "pandas"
-    version: "2.0.3"
-  - name: "scikit-learn"
-    version: "1.3.0"
-  - name: "tigramite"
-    version: "5.0.1"
-  - name: "notears"
-    version: "0.2.0"
+ python_version: "3.10.12"
+ pytorch_version: "2.1.2"
+ pytorch_cuda: "12.1"
 
-walltime_per_run_seconds: 3600  # 1 hour per seed
-total_walltime_hours: 20  # 5 seeds × 4 hours
+dependencies:
+ - name: "torch"
+ version: "2.1.2"
+ - name: "numpy"
+ version: "1.24.3"
+ - name: "pandas"
+ version: "2.0.3"
+ - name: "scikit-learn"
+ version: "1.3.0"
+ - name: "tigramite"
+ version: "5.0.1"
+ - name: "notears"
+ version: "0.2.0"
+
+walltime_per_run_seconds: 3600 # 1 hour per seed
+total_walltime_hours: 20 # 5 seeds × 4 hours
 ```
 
 ### B. Generating Environment Report
@@ -334,40 +334,40 @@ echo "Environment report saved to artifacts/environment/environment_report.txt"
 ```
 artifacts/
 ├── checkpoints/
-│   ├── rcgnn_best.pt              # Best model checkpoint
-│   ├── best_hps.json              # Best hyperparameters
-│   └── training_log.json          # Training metrics over epochs
+│ ├── rcgnn_best.pt # Best model checkpoint
+│ ├── best_hps.json # Best hyperparameters
+│ └── training_log.json # Training metrics over epochs
 ├── adjacency/
-│   ├── A_mean.npy                 # Mean adjacency over seeds
-│   ├── A_std.npy                  # Std of adjacency
-│   └── seed_*.npy                 # Per-seed adjacencies
+│ ├── A_mean.npy # Mean adjacency over seeds
+│ ├── A_std.npy # Std of adjacency
+│ └── seed_*.npy # Per-seed adjacencies
 ├── metrics/
-│   ├── results_seed42.json        # Results for seed 42
-│   ├── results_seed1337.json      # Results for seed 1337
-│   ├── ...
-│   └── results_aggregated.json    # Mean ± std over all seeds
+│ ├── results_seed42.json # Results for seed 42
+│ ├── results_seed1337.json # Results for seed 1337
+│ ├── ...
+│ └── results_aggregated.json # Mean ± std over all seeds
 ├── splits/
-│   ├── splits_seed42.json         # Train/val/test indices
-│   ├── splits_seed1337.json
-│   └── ...
+│ ├── splits_seed42.json # Train/val/test indices
+│ ├── splits_seed1337.json
+│ └── ...
 ├── baselines/
-│   ├── correlation_results.json
-│   ├── notears_results.json
-│   └── ...
+│ ├── correlation_results.json
+│ ├── notears_results.json
+│ └── ...
 ├── ablations/
-│   ├── results_no_3stage.json
-│   ├── results_no_signal_enc.json
-│   └── ...
+│ ├── results_no_3stage.json
+│ ├── results_no_signal_enc.json
+│ └── ...
 ├── robustness/
-│   ├── missingness_sweep.json
-│   ├── corruption_modes.json
-│   ├── ood_regime_test.json
-│   └── ...
+│ ├── missingness_sweep.json
+│ ├── corruption_modes.json
+│ ├── ood_regime_test.json
+│ └── ...
 ├── environment/
-│   ├── environment_report.txt
-│   ├── requirements_exact.txt
-│   └── compute_specs.yaml
-└── README.md                      # Artifact guide
+│ ├── environment_report.txt
+│ ├── requirements_exact.txt
+│ └── compute_specs.yaml
+└── README.md # Artifact guide
 ```
 
 ---
@@ -415,44 +415,44 @@ artifacts/
 from scipy.stats import wilcoxon
 
 def compare_methods(results_method_a, results_method_b, metric='directed_f1'):
-    """
-    Wilcoxon signed-rank test: compare two methods across seeds.
-    """
-    scores_a = np.array([r[metric] for r in results_method_a])
-    scores_b = np.array([r[metric] for r in results_method_b])
-    
-    # Wilcoxon test
-    statistic, p_value = wilcoxon(scores_a, scores_b)
-    
-    # Effect size: rank-biserial correlation
-    n = len(scores_a)
-    r = 1 - (2 * statistic) / (n * (n + 1))
-    
-    # Print results
-    print(f"Wilcoxon Signed-Rank Test: {metric}")
-    print(f"  Method A: {scores_a.mean():.4f} ± {scores_a.std():.4f}")
-    print(f"  Method B: {scores_b.mean():.4f} ± {scores_b.std():.4f}")
-    print(f"  p-value: {p_value:.6f}")
-    print(f"  Effect size (r): {r:.4f}")
-    
-    if p_value < 0.05:
-        print(f"  ✓ Significant difference (α=0.05)")
-    else:
-        print(f"  ✗ No significant difference")
-    
-    return {
-        'statistic': statistic,
-        'p_value': p_value,
-        'effect_size': r,
-        'mean_a': scores_a.mean(),
-        'std_a': scores_a.std(),
-        'mean_b': scores_b.mean(),
-        'std_b': scores_b.std(),
-    }
+ """
+ Wilcoxon signed-rank test: compare two methods across seeds.
+ """
+ scores_a = np.array([r[metric] for r in results_method_a])
+ scores_b = np.array([r[metric] for r in results_method_b])
+
+ # Wilcoxon test
+ statistic, p_value = wilcoxon(scores_a, scores_b)
+
+ # Effect size: rank-biserial correlation
+ n = len(scores_a)
+ r = 1 - (2 * statistic) / (n * (n + 1))
+
+ # Print results
+ print(f"Wilcoxon Signed-Rank Test: {metric}")
+ print(f" Method A: {scores_a.mean():.4f} ± {scores_a.std():.4f}")
+ print(f" Method B: {scores_b.mean():.4f} ± {scores_b.std():.4f}")
+ print(f" p-value: {p_value:.6f}")
+ print(f" Effect size (r): {r:.4f}")
+
+ if p_value < 0.05:
+ print(f" [OK] Significant difference (α=0.05)")
+ else:
+ print(f" [X] No significant difference")
+
+ return {
+ 'statistic': statistic,
+ 'p_value': p_value,
+ 'effect_size': r,
+ 'mean_a': scores_a.mean(),
+ 'std_a': scores_a.std(),
+ 'mean_b': scores_b.mean(),
+ 'std_b': scores_b.std(),
+ }
 
 # Example:
-results_rc_gnn = [...]  # 5 seed results
-results_notears = [...]  # 5 seed results
+results_rc_gnn = [...] # 5 seed results
+results_notears = [...] # 5 seed results
 comparison = compare_methods(results_rc_gnn, results_notears, metric='directed_f1')
 ```
 

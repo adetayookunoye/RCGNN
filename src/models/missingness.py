@@ -40,7 +40,7 @@ class MissingnessModel(nn.Module):
         
         # Final missingness probability
         self.combine = nn.Sequential(
-            nn.Linear(3, hidden_dim),  # 3 sources: self, cross, temporal
+            nn.Linear(3, hidden_dim), # 3 sources: self, cross, temporal
             nn.ReLU(),
             nn.Linear(hidden_dim, 1),
             nn.Sigmoid()
@@ -58,7 +58,7 @@ class MissingnessModel(nn.Module):
             features: Dictionary of intermediate features for auxiliary losses
         """
         if X.dim() == 2:
-            X = X.unsqueeze(0)  # Add batch dim
+            X = X.unsqueeze(0) # Add batch dim
             if M is not None:
                 M = M.unsqueeze(0)
                 
@@ -66,16 +66,16 @@ class MissingnessModel(nn.Module):
         
         # 1. Self-masking: value-dependent missingness
         # Reshape for per-value processing
-        X_flat = X.reshape(-1, 1)  # [B*T*d, 1]
-        self_probs = self.self_mask(X_flat)  # [B*T*d, 1]
+        X_flat = X.reshape(-1, 1) # [B*T*d, 1]
+        self_probs = self.self_mask(X_flat) # [B*T*d, 1]
         self_probs = self_probs.reshape(B, T, d)
         
         # 2. Cross-feature dependencies
-        cross_hidden = self.cross_feature(X)  # [B,T,d]
+        cross_hidden = self.cross_feature(X) # [B,T,d]
         cross_probs = torch.sigmoid(cross_hidden)
         
         # 3. Temporal patterns
-        temporal_hidden, _ = self.temporal(X)  # [B,T,hidden]
+        temporal_hidden, _ = self.temporal(X) # [B,T,hidden]
         temporal_probs = torch.sigmoid(self.temporal_proj(temporal_hidden))
         
         # Combine all sources of missingness
@@ -83,9 +83,9 @@ class MissingnessModel(nn.Module):
             self_probs,
             cross_probs,
             temporal_probs
-        ], dim=-1)  # [B,T,d,3]
+        ], dim=-1) # [B,T,d,3]
         
-        M_pred = self.combine(features_combined).squeeze(-1)  # [B,T,d]
+        M_pred = self.combine(features_combined).squeeze(-1) # [B,T,d]
         
         # Collect features for auxiliary losses
         features = {
@@ -95,7 +95,7 @@ class MissingnessModel(nn.Module):
         }
         
         if X.shape[0] == 1:
-            M_pred = M_pred.squeeze(0)  # Remove batch dim if input was unbatched
+            M_pred = M_pred.squeeze(0) # Remove batch dim if input was unbatched
             features = {k: v.squeeze(0) for k, v in features.items()}
             
         return M_pred, features
@@ -133,7 +133,7 @@ class MissingnessModel(nn.Module):
             # Diversity loss on cross-feature patterns
             cross_corr = torch.matmul(features['cross'].transpose(1,2), 
                                     features['cross'])
-            cross_corr = cross_corr / features['cross'].shape[1]  # normalize
+            cross_corr = cross_corr / features['cross'].shape[1] # normalize
             identity = torch.eye(cross_corr.shape[-1], device=cross_corr.device)
             aux_losses['cross_diverse'] = torch.norm(cross_corr - identity)
             

@@ -117,9 +117,9 @@ def main():
     print("A_true edge list (i -> j):")
     edges = list(zip(*np.where(A_true > 0)))
     for i, j in edges[:20]:
-        print(f"  {i} -> {j}")
+        print(f" {i} -> {j}")
     if len(edges) > 20:
-        print(f"  ... ({len(edges) - 20} more)")
+        print(f" ... ({len(edges) - 20} more)")
     print()
     
     # Load predicted adjacency
@@ -164,8 +164,8 @@ def main():
     skel_orig = compute_skeleton_f1(A_pred, A_true, k=n_true_edges)
     
     print(f"ORIGINAL A_pred:")
-    print(f"  TopK-F1:     {topk_orig['f1']:.4f} (TP={topk_orig['tp']}/{n_true_edges})")
-    print(f"  Skeleton-F1: {skel_orig['f1']:.4f} (TP={skel_orig['tp']})")
+    print(f" TopK-F1: {topk_orig['f1']:.4f} (TP={topk_orig['tp']}/{n_true_edges})")
+    print(f" Skeleton-F1: {skel_orig['f1']:.4f} (TP={skel_orig['tp']})")
     print()
     
     # Transpose
@@ -174,8 +174,8 @@ def main():
     skel_trans = compute_skeleton_f1(A_pred_T, A_true, k=n_true_edges)
     
     print(f"TRANSPOSED A_pred.T:")
-    print(f"  TopK-F1:     {topk_trans['f1']:.4f} (TP={topk_trans['tp']}/{n_true_edges})")
-    print(f"  Skeleton-F1: {skel_trans['f1']:.4f} (TP={skel_trans['tp']})")
+    print(f" TopK-F1: {topk_trans['f1']:.4f} (TP={topk_trans['tp']}/{n_true_edges})")
+    print(f" Skeleton-F1: {skel_trans['f1']:.4f} (TP={skel_trans['tp']})")
     print()
     
     # Diagnosis
@@ -184,19 +184,19 @@ def main():
     print("=" * 60)
     
     if topk_trans['f1'] > topk_orig['f1'] + 0.05:
-        print("⚠️  TRANSPOSE IS BETTER!")
-        print("    This suggests a DIRECTION BUG:")
-        print("    - A[i,j] indexing might be swapped")
-        print("    - Or GT uses opposite convention (j->i instead of i->j)")
+        print("[WARN] TRANSPOSE IS BETTER!")
+        print(" This suggests a DIRECTION BUG:")
+        print(" - A[i,j] indexing might be swapped")
+        print(" - Or GT uses opposite convention (j->i instead of i->j)")
         print()
-        print("    FIX: Check if model outputs A[j,i] for edge i->j")
+        print(" FIX: Check if model outputs A[j,i] for edge i->j")
     elif topk_orig['f1'] > topk_trans['f1'] + 0.05:
-        print("✓ ORIGINAL IS BETTER")
-        print("    Direction encoding appears correct.")
+        print("[OK] ORIGINAL IS BETTER")
+        print(" Direction encoding appears correct.")
     else:
         print("~ SIMILAR PERFORMANCE")
-        print("    Model may not be learning direction well yet.")
-        print("    Skeleton-F1 vs TopK-F1 gap indicates direction confusion.")
+        print(" Model may not be learning direction well yet.")
+        print(" Skeleton-F1 vs TopK-F1 gap indicates direction confusion.")
     
     print()
     
@@ -205,14 +205,14 @@ def main():
     dir_ratio_trans = topk_trans['f1'] / (skel_trans['f1'] + 1e-8)
     
     print(f"Direction Ratios:")
-    print(f"  Original:   {dir_ratio_orig:.2f} (TopK/Skel)")
-    print(f"  Transpose:  {dir_ratio_trans:.2f} (TopK/Skel)")
+    print(f" Original: {dir_ratio_orig:.2f} (TopK/Skel)")
+    print(f" Transpose: {dir_ratio_trans:.2f} (TopK/Skel)")
     print()
     
     if skel_orig['f1'] > topk_orig['f1'] + 0.15:
-        print("⚠️  SKELETON >> TOPK")
-        print("    Model finds correct edges but wrong direction!")
-        print("    Need stronger direction supervision.")
+        print("[WARN] SKELETON >> TOPK")
+        print(" Model finds correct edges but wrong direction!")
+        print(" Need stronger direction supervision.")
     
     # Show top predicted edges vs true
     print()
@@ -236,7 +236,7 @@ def main():
         in_gt = A_true[i, j] > 0
         reversed_gt = A_true[j, i] > 0
         
-        status = "✓ CORRECT" if in_gt else ("⇄ REVERSED" if reversed_gt else "✗ WRONG")
+        status = "[OK] CORRECT" if in_gt else ("<-> REVERSED" if reversed_gt else "[X] WRONG")
         print(f"{rank:<5} {i}->{j:<6} {weight:<10.4f} {status}")
     
     print()

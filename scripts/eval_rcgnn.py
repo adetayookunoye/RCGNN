@@ -1,7 +1,7 @@
 
 import argparse, yaml, os, numpy as np, matplotlib.pyplot as plt
 
-import path_helper  # noqa: F401  # adds project root to sys.path
+import path_helper # noqa: F401 # adds project root to sys.path
 from src.training.metrics import pairwise_l1
 
 def main():

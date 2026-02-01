@@ -7,37 +7,37 @@ with known ground-truth DAG for proper robustness evaluation.
 
 Corruption Grid (reviewer-approved):
 ┌─────────────────┬─────────────────────────────────┐
-│ Corruption Type │ Levels                          │
+│ Corruption Type │ Levels │
 ├─────────────────┼─────────────────────────────────┤
-│ Gaussian noise  │ σ ∈ {0.1, 0.3, 0.5}             │
-│ Missingness     │ MCAR: 20%, 30%, 40%             │
-│ MNAR            │ structural (parent-dependent)   │
-│ Sensor bias     │ additive, multiplicative        │
-│ Regime shift    │ env ∈ {0, 1, 2}                 │
+│ Gaussian noise │ σ ∈ {0.1, 0.3, 0.5} │
+│ Missingness │ MCAR: 20%, 30%, 40% │
+│ MNAR │ structural (parent-dependent) │
+│ Sensor bias │ additive, multiplicative │
+│ Regime shift │ env ∈ {0, 1, 2} │
 └─────────────────┴─────────────────────────────────┘
 
 Each sample gets MULTIPLE corruptions simultaneously = compound corruption.
 
 Output structure:
     data/interim/uci_air_c/
-    ├── clean/                    # Reference (no corruption)
-    ├── mild/                     # Low corruption  
-    ├── moderate/                 # Medium corruption
-    ├── severe/                   # High corruption
-    ├── extreme/                  # Very high corruption
-    ├── noise_0.1/                # Single: noise only
+    ├── clean/ # Reference (no corruption)
+    ├── mild/ # Low corruption 
+    ├── moderate/ # Medium corruption
+    ├── severe/ # High corruption
+    ├── extreme/ # Very high corruption
+    ├── noise_0.1/ # Single: noise only
     ├── noise_0.3/
     ├── noise_0.5/
-    ├── mcar_20/                  # Single: MCAR only
+    ├── mcar_20/ # Single: MCAR only
     ├── mcar_30/
     ├── mcar_40/
-    ├── mnar_structural/          # Single: structural MNAR
-    ├── bias_additive/            # Single: additive bias
-    ├── bias_multiplicative/      # Single: multiplicative bias
-    ├── compound_mcar_noise/      # Compound: MCAR + noise
-    ├── compound_mnar_bias/       # Compound: MNAR + bias
-    ├── compound_full/            # Compound: all corruptions
-    └── regimes_3/                # Multi-regime (3 environments)
+    ├── mnar_structural/ # Single: structural MNAR
+    ├── bias_additive/ # Single: additive bias
+    ├── bias_multiplicative/ # Single: multiplicative bias
+    ├── compound_mcar_noise/ # Compound: MCAR + noise
+    ├── compound_mnar_bias/ # Compound: MNAR + bias
+    ├── compound_full/ # Compound: all corruptions
+    └── regimes_3/ # Multi-regime (3 environments)
 """
 
 import sys
@@ -123,8 +123,8 @@ def save_corrupted_data(
     with open(os.path.join(output_dir, "config.json"), "w") as f:
         json.dump(config, f, indent=2)
     
-    print(f"  Saved to {output_dir}")
-    print(f"    X: {X.shape}, Missing: {1-M.mean():.1%}, Regimes: {len(np.unique(e))}")
+    print(f" Saved to {output_dir}")
+    print(f" X: {X.shape}, Missing: {1-M.mean():.1%}, Regimes: {len(np.unique(e))}")
 
 
 def apply_corruption(
@@ -325,9 +325,9 @@ COMPOUND_CORRUPTIONS = {
         "noise_scale": 0.1,
         "heteroscedastic": True,
         "missing_mechanism": "mnar",
-        "mnar_type": "threshold",  # Sensor fails at high readings
+        "mnar_type": "threshold", # Sensor fails at high readings
         "missing_rate": 0.25,
-        "bias_type": "multiplicative",  # Calibration drift
+        "bias_type": "multiplicative", # Calibration drift
         "scale_range": (0.9, 1.1),
         "n_regimes": 2,
     },
@@ -355,10 +355,10 @@ def main():
         print("\n=== Available Corruption Configurations ===\n")
         print("Single corruptions:")
         for name in SINGLE_CORRUPTIONS:
-            print(f"  - {name}")
+            print(f" - {name}")
         print("\nCompound corruptions:")
         for name in COMPOUND_CORRUPTIONS:
-            print(f"  - {name}")
+            print(f" - {name}")
         return
     
     print("=" * 60)
@@ -372,8 +372,8 @@ def main():
     X_clean = torch.from_numpy(data["X"]).float()
     A_true = torch.from_numpy(data["A_true"]).float()
     
-    print(f"  X shape: {X_clean.shape}")
-    print(f"  Ground truth edges: {int(A_true.sum())}")
+    print(f" X shape: {X_clean.shape}")
+    print(f" Ground truth edges: {int(A_true.sum())}")
     
     # Determine which configs to generate
     if args.configs:
@@ -387,7 +387,7 @@ def main():
     # Generate each variant
     for name, config in configs_to_gen.items():
         print(f"\n[{name}]")
-        print(f"  Config: {config}")
+        print(f" Config: {config}")
         
         # Apply corruption
         X_corrupt, M, e = apply_corruption(
@@ -412,9 +412,9 @@ def main():
     print(f"\nOutput: {args.output}/")
     print(f"Total variants: {len(configs_to_gen)}")
     print("\nTo train on corrupted data:")
-    print(f"  python scripts/train_rcgnn_v3.py --data_root {args.output}/severe ...")
+    print(f" python scripts/train_rcgnn_v3.py --data_root {args.output}/severe ...")
     print("\nTo run baselines on same corruptions:")
-    print(f"  python scripts/run_baselines.py --data_root {args.output}/severe ...")
+    print(f" python scripts/run_baselines.py --data_root {args.output}/severe ...")
 
 
 if __name__ == "__main__":

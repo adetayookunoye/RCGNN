@@ -131,7 +131,7 @@ def train_one_run(data_dir, seed, epochs=40, device='cpu', ddp=False):
                 best_A = A_pred.copy()
                 no_improve = 0
             else:
-                if epoch >= 20:  # Only count after warmup
+                if epoch >= 20: # Only count after warmup
                     no_improve += 1
             
             if metrics['auprc'] > best_auprc:
@@ -200,10 +200,10 @@ def main():
         print("=" * 60)
         print("RESULTS")
         print("=" * 60)
-        print(f"F1:       {results['f1']:.3f}")
-        print(f"AUPRC:    {results['auprc']:.3f}")
-        print(f"SHD:      {results['shd']}")
-        print(f"Epochs:   {results['epochs_trained']}")
+        print(f"F1: {results['f1']:.3f}")
+        print(f"AUPRC: {results['auprc']:.3f}")
+        print(f"SHD: {results['shd']}")
+        print(f"Epochs: {results['epochs_trained']}")
         print()
         print(f"Saved to: {output_file}")
     

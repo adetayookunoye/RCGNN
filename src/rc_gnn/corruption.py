@@ -84,7 +84,7 @@ def generate_mar_mask(
             others = [others[i] for i in idx]
         
         # Conditioning values
-        X_cond = X_flat[:, others]  # [N, n_cond]
+        X_cond = X_flat[:, others] # [N, n_cond]
         
         # Random linear combination
         weights = torch.randn(len(others), device=device)
@@ -104,7 +104,7 @@ def generate_mar_mask(
 def generate_mnar_mask(
     X: torch.Tensor,
     missing_rate: float = 0.2,
-    mechanism: str = "threshold",  # "threshold", "self", "extreme"
+    mechanism: str = "threshold", # "threshold", "self", "extreme"
 ) -> torch.Tensor:
     """
     Missing Not At Random (MNAR).
@@ -145,7 +145,7 @@ def generate_mnar_mask(
         # Probability of missing proportional to value
         # P(missing | x) = sigmoid(alpha * (x - median))
         X_centered = X_flat - X_flat.median(dim=0, keepdim=True).values
-        alpha = 2.0  # Controls steepness
+        alpha = 2.0 # Controls steepness
         
         prob_missing = torch.sigmoid(alpha * X_centered)
         # Calibrate to achieve target rate
@@ -184,7 +184,7 @@ def generate_structural_mnar_mask(
     
     Args:
         X: Input data [B, T, d] or [B, d]
-        A_true: Ground truth adjacency [d, d] where A[i,j]=1 means i→j
+        A_true: Ground truth adjacency [d, d] where A[i,j]=1 means i->j
         missing_rate: Target missing rate
         
     Returns:
@@ -213,7 +213,7 @@ def generate_structural_mnar_mask(
             X_cond = X_flat[:, j:j+1]
         else:
             # Parents exist: missingness depends on parent values
-            X_cond = X_flat[:, parents]  # [N, n_parents]
+            X_cond = X_flat[:, parents] # [N, n_parents]
         
         # Linear combination of parent values
         weights = torch.randn(X_cond.shape[1], device=device)
@@ -236,7 +236,7 @@ def generate_structural_mnar_mask(
 def generate_regime_shifts(
     X: torch.Tensor,
     n_regimes: int = 3,
-    shift_type: str = "intervention",  # "intervention", "distribution", "mechanism"
+    shift_type: str = "intervention", # "intervention", "distribution", "mechanism"
     intervention_strength: float = 1.0,
     seed: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -411,7 +411,7 @@ def add_drift(
         X_drifted: Data with temporal drift
     """
     if X.dim() != 3:
-        return X  # No temporal dimension
+        return X # No temporal dimension
     
     B, T, d = X.shape
     device = X.device
@@ -548,17 +548,17 @@ class CompoundCorruptionGenerator:
         self,
         # Missingness
         missing_rate: float = 0.2,
-        missing_mechanism: str = "mcar",  # "mcar", "mar", "mnar"
+        missing_mechanism: str = "mcar", # "mcar", "mar", "mnar"
         mnar_type: str = "threshold",
         # Noise
         noise_scale: float = 0.1,
-        noise_type: str = "gaussian",  # "gaussian", "outliers", "drift", "combined"
+        noise_type: str = "gaussian", # "gaussian", "outliers", "drift", "combined"
         heteroscedastic: bool = False,
         outlier_rate: float = 0.05,
         outlier_scale: float = 5.0,
         drift_rate: float = 0.01,
         # Bias
-        bias_type: str = "none",  # "none", "constant", "scaling", "nonlinear"
+        bias_type: str = "none", # "none", "constant", "scaling", "nonlinear"
         bias_magnitude: float = 0.5,
         scale_range: Tuple[float, float] = (0.8, 1.2),
         polynomial_degree: int = 2,
@@ -640,7 +640,7 @@ class CompoundCorruptionGenerator:
             mask = torch.ones_like(X)
         
         # 4. Apply mask (set missing values to NaN or 0)
-        X_corrupt = X_noisy * mask  # 0 for missing values
+        X_corrupt = X_noisy * mask # 0 for missing values
         
         if return_components:
             return {
@@ -733,11 +733,11 @@ def get_corruption_preset(name: str) -> CompoundCorruptionGenerator:
         "sensor_failure": CompoundCorruptionGenerator(
             missing_rate=0.25,
             missing_mechanism="mnar",
-            mnar_type="threshold",  # Sensor fails when reading high
+            mnar_type="threshold", # Sensor fails when reading high
             noise_scale=0.1,
             noise_type="gaussian",
-            heteroscedastic=True,  # More noise at extreme values
-            bias_type="scaling",  # Calibration drift
+            heteroscedastic=True, # More noise at extreme values
+            bias_type="scaling", # Calibration drift
             scale_range=(0.9, 1.1),
         ),
     }

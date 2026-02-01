@@ -31,7 +31,7 @@ from src.models.rcgnn import RCGNN, notears_acyclicity
 def compute_edge_stats(A: np.ndarray, thresholds: List[float] = [0.1, 0.2, 0.3, 0.5, 0.7]) -> Dict:
     """Compute edge statistics at multiple thresholds."""
     d = A.shape[0]
-    max_edges = d * (d - 1)  # No self-loops
+    max_edges = d * (d - 1) # No self-loops
     
     # Zero diagonal
     A_clean = A.copy()
@@ -197,8 +197,8 @@ def main():
     d = A_true.shape[0]
     
     print(f"\nData: {data_dir}")
-    print(f"  d = {d}")
-    print(f"  True edges = {n_true_edges}")
+    print(f" d = {d}")
+    print(f" True edges = {n_true_edges}")
     
     # Load predicted adjacency
     if args.adjacency:
@@ -235,13 +235,13 @@ def main():
     print("1. EDGE DISTRIBUTION")
     print("=" * 70)
     edge_stats = compute_edge_stats(A_pred)
-    print(f"  A_max: {edge_stats['A_max']:.4f}")
-    print(f"  A_mean: {edge_stats['A_mean']:.4f}")
-    print(f"  edge_sum: {edge_stats['edge_sum']:.2f}")
-    print(f"\n  Edges at thresholds:")
+    print(f" A_max: {edge_stats['A_max']:.4f}")
+    print(f" A_mean: {edge_stats['A_mean']:.4f}")
+    print(f" edge_sum: {edge_stats['edge_sum']:.2f}")
+    print(f"\n Edges at thresholds:")
     for t, info in edge_stats["thresholds"].items():
-        status = "⚠️ DENSE" if info["edges"] > 3 * n_true_edges else "✓"
-        print(f"    @{t}: {info['edges']:3d} edges ({info['density']*100:.1f}% density) {status}")
+        status = "[WARN] DENSE" if info["edges"] > 3 * n_true_edges else "[OK]"
+        print(f" @{t}: {info['edges']:3d} edges ({info['density']*100:.1f}% density) {status}")
     
     # 2. Top-K edges
     print("\n" + "=" * 70)
@@ -249,7 +249,7 @@ def main():
     print("=" * 70)
     top_edges = get_top_k_edges(A_pred, k)
     for i, e in enumerate(top_edges):
-        print(f"  {i+1:2d}. {e['edge']:8s} | weight={e['weight']:.4f}")
+        print(f" {i+1:2d}. {e['edge']:8s} | weight={e['weight']:.4f}")
     
     # 3. Acyclicity
     print("\n" + "=" * 70)
@@ -260,35 +260,35 @@ def main():
     A_binary = (A_pred > 0.5).astype(float)
     h_binary = compute_notears_acyclicity(A_binary)
     
-    print(f"  h(A_soft):   {h_soft:.4f}")
-    print(f"  h(A_binary): {h_binary:.4f}")
+    print(f" h(A_soft): {h_soft:.4f}")
+    print(f" h(A_binary): {h_binary:.4f}")
     if h_soft < 0.1:
-        print("  ✓ Near-acyclic (good)")
+        print(" [OK] Near-acyclic (good)")
     elif h_soft < 1.0:
-        print("  ⚠️ Some cycles present")
+        print(" [WARN] Some cycles present")
     else:
-        print("  ❌ Significant cycles (h > 1)")
+        print(" [FAIL] Significant cycles (h > 1)")
     
     # 4. Ground truth comparison
     print("\n" + "=" * 70)
     print("4. COMPARISON WITH GROUND TRUTH")
     print("=" * 70)
     comparison = compare_with_ground_truth(A_pred, A_true, k)
-    print(f"  TopK-F1 (K={k}): {comparison['f1']:.4f}")
-    print(f"  Precision:       {comparison['precision']:.4f}")
-    print(f"  Recall:          {comparison['recall']:.4f}")
-    print(f"  SHD (at 0.5):    {comparison['shd_at_0.5']}")
-    print(f"\n  True edges found ({comparison['tp']}/{comparison['true_edges']}):")
+    print(f" TopK-F1 (K={k}): {comparison['f1']:.4f}")
+    print(f" Precision: {comparison['precision']:.4f}")
+    print(f" Recall: {comparison['recall']:.4f}")
+    print(f" SHD (at 0.5): {comparison['shd_at_0.5']}")
+    print(f"\n True edges found ({comparison['tp']}/{comparison['true_edges']}):")
     for e in comparison["correctly_found"]:
-        print(f"    ✓ {e}")
-    print(f"\n  Missed edges ({comparison['fn']}):")
+        print(f" [OK] {e}")
+    print(f"\n Missed edges ({comparison['fn']}):")
     for e in comparison["missed"]:
-        print(f"    ✗ {e}")
-    print(f"\n  Spurious edges ({comparison['fp']}):")
-    for e in comparison["spurious"][:10]:  # Limit output
-        print(f"    ? {e}")
+        print(f" [X] {e}")
+    print(f"\n Spurious edges ({comparison['fp']}):")
+    for e in comparison["spurious"][:10]: # Limit output
+        print(f" ? {e}")
     if len(comparison["spurious"]) > 10:
-        print(f"    ... and {len(comparison['spurious']) - 10} more")
+        print(f" ... and {len(comparison['spurious']) - 10} more")
     
     # 5. Training history (if available)
     ckpt_dir = Path(args.checkpoint).parent
@@ -298,11 +298,11 @@ def main():
         print("5. TRAINING HISTORY ANALYSIS")
         print("=" * 70)
         hist_analysis = analyze_training_history(history_path)
-        print(f"  Total epochs:        {hist_analysis['n_epochs']}")
-        print(f"  Best TopK-F1:        {hist_analysis['topk_f1_max']:.4f}")
-        print(f"  Final TopK-F1:       {hist_analysis['final_topk_f1']:.4f}")
-        print(f"  TopK-F1 std:         {hist_analysis['topk_f1_std']:.4f}")
-        print(f"  Improvement epochs:  {hist_analysis['epochs_with_improvement']}")
+        print(f" Total epochs: {hist_analysis['n_epochs']}")
+        print(f" Best TopK-F1: {hist_analysis['topk_f1_max']:.4f}")
+        print(f" Final TopK-F1: {hist_analysis['final_topk_f1']:.4f}")
+        print(f" TopK-F1 std: {hist_analysis['topk_f1_std']:.4f}")
+        print(f" Improvement epochs: {hist_analysis['epochs_with_improvement']}")
     
     # Save results
     results = {

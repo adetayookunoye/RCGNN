@@ -24,7 +24,7 @@ class StructureLearner(nn.Module):
         temp_end: float = 0.5,
         steps: int | None = None,
         temporal_prior: str | None = None,
-        rank: int | None = None,  # unused but kept for backward compatibility
+        rank: int | None = None, # unused but kept for backward compatibility
     ) -> None:
         super().__init__()
         self.d = d
@@ -94,7 +94,7 @@ class StructureLearner(nn.Module):
             ZS = ZS.unsqueeze(0)
             unbatched = True
 
-        proj = self.node_proj(ZS)  # [B, d, d_model]
+        proj = self.node_proj(ZS) # [B, d, d_model]
         proj = torch.tanh(proj)
 
         temperature = self.temperature()
@@ -107,9 +107,9 @@ class StructureLearner(nn.Module):
             env_idx = int(env_idx)
 
         for lag in range(self.n_lags):
-            kernel = self.bilinear[lag]  # [d_model, d_model]
-            proj_l = torch.matmul(proj, kernel)  # [B, d, d_model]
-            logits = torch.matmul(proj_l, proj.transpose(-1, -2))  # [B, d, d]
+            kernel = self.bilinear[lag] # [d_model, d_model]
+            proj_l = torch.matmul(proj, kernel) # [B, d, d_model]
+            logits = torch.matmul(proj_l, proj.transpose(-1, -2)) # [B, d, d]
             logits = logits / math.sqrt(self.d_model)
             logits = logits / temperature
             logits = logits - torch.diag_embed(torch.diagonal(logits, dim1=-2, dim2=-1))

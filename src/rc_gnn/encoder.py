@@ -16,8 +16,8 @@ class DisentangledEncoder(nn.Module):
     Two-pathway encoder that disentangles signal from corruption.
     
     Architecture:
-        x(t) → SharedTrunk → [SignalHead → z_signal]
-                           → [CorruptionHead → z_corr]
+        x(t) -> SharedTrunk -> [SignalHead -> z_signal]
+                           -> [CorruptionHead -> z_corr]
     
     The HSIC penalty encourages z_signal ⊥ z_corr.
     
@@ -27,7 +27,7 @@ class DisentangledEncoder(nn.Module):
     
     def __init__(
         self,
-        input_dim: int = 1,  # Per-sensor feature dim (usually 1)
+        input_dim: int = 1, # Per-sensor feature dim (usually 1)
         latent_dim: int = 32,
         hidden_dim: int = 64,
         n_layers: int = 2,
@@ -59,7 +59,7 @@ class DisentangledEncoder(nn.Module):
             nn.Linear(hidden_dim, latent_dim),
         )
         
-        # Corruption head: extracts noise + bias information  
+        # Corruption head: extracts noise + bias information 
         self.corruption_head = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
@@ -227,7 +227,7 @@ def hsic_penalty(
         denom = torch.sqrt(hsic_kk * hsic_ll).clamp(min=1e-8)
         hsic = hsic / denom
     
-    return hsic.clamp(min=0)  # HSIC is non-negative
+    return hsic.clamp(min=0) # HSIC is non-negative
 
 
 class DisentanglementLoss(nn.Module):

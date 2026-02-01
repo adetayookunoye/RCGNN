@@ -58,40 +58,40 @@ def test_stability_metrics():
     
     # Environment 2: slight variation
     A2 = A1.copy()
-    A2[4, 5] = 1.0  # Add one edge
+    A2[4, 5] = 1.0 # Add one edge
     
     # Environment 3: larger variation
     A3 = A1.copy()
-    A3[0, 1] = 0.0  # Remove edge
-    A3[5, 6] = A3[6, 7] = 1.0  # Add edges
+    A3[0, 1] = 0.0 # Remove edge
+    A3[5, 6] = A3[6, 7] = 1.0 # Add edges
     
     A_by_env = {0: A1, 1: A2, 2: A3}
     
-    print("\n✓ Created 3 test adjacency matrices (10×10)")
-    print(f"  - Env 0: {int(A1.sum())} edges")
-    print(f"  - Env 1: {int(A2.sum())} edges")
-    print(f"  - Env 2: {int(A3.sum())} edges")
+    print("\n[OK] Created 3 test adjacency matrices (10×10)")
+    print(f" - Env 0: {int(A1.sum())} edges")
+    print(f" - Env 1: {int(A2.sum())} edges")
+    print(f" - Env 2: {int(A3.sum())} edges")
     
     # Test 1: adjacency_variance
     print("\n[Test 1.1] adjacency_variance()")
     try:
         var = adjacency_variance(A_by_env)
-        print(f"  ✅ PASS: variance = {var:.6f}")
+        print(f" [DONE] PASS: variance = {var:.6f}")
         assert isinstance(var, (float, np.floating)), "Should return float"
         assert var >= 0, "Variance should be non-negative"
     except Exception as e:
-        print(f"  ❌ FAIL: {e}")
+        print(f" [FAIL] FAIL: {e}")
         return False
     
     # Test 2: edge_set_jaccard
     print("\n[Test 1.2] edge_set_jaccard()")
     try:
         jac = edge_set_jaccard(A_by_env, threshold=0.5)
-        print(f"  ✅ PASS: jaccard similarity = {jac:.6f}")
+        print(f" [DONE] PASS: jaccard similarity = {jac:.6f}")
         assert isinstance(jac, (float, np.floating)), "Should return float"
         assert 0 <= jac <= 1, "Jaccard should be in [0, 1]"
     except Exception as e:
-        print(f"  ❌ FAIL: {e}")
+        print(f" [FAIL] FAIL: {e}")
         return False
     
     # Test 3: policy_consistency
@@ -99,7 +99,7 @@ def test_stability_metrics():
     try:
         policy_edges = [(0, 1), (1, 2), (2, 3), (3, 4)]
         pol = policy_consistency(A_by_env, policy_edges, threshold=0.5)
-        print(f"  ✅ PASS: policy metrics = {pol}")
+        print(f" [DONE] PASS: policy metrics = {pol}")
         assert isinstance(pol, dict), "Should return dict"
         assert "consistency" in pol, "Should have 'consistency' key"
         assert "presence" in pol, "Should have 'presence' key"
@@ -107,7 +107,7 @@ def test_stability_metrics():
         assert 0 <= pol["consistency"] <= 1, "consistency should be in [0, 1]"
         assert 0 <= pol["presence"] <= 1, "presence should be in [0, 1]"
     except Exception as e:
-        print(f"  ❌ FAIL: {e}")
+        print(f" [FAIL] FAIL: {e}")
         return False
     
     # Test 4: Stability sensitivity (high vs low stability)
@@ -121,26 +121,26 @@ def test_stability_metrics():
         A_random = {}
         for env in range(3):
             A_rand = np.random.rand(d, d)
-            A_rand = np.tril(A_rand)  # Make lower triangular (DAG)
-            A_rand = (A_rand > 0.7).astype(float)  # Threshold for sparsity
+            A_rand = np.tril(A_rand) # Make lower triangular (DAG)
+            A_rand = (A_rand > 0.7).astype(float) # Threshold for sparsity
             A_random[env] = A_rand
         var_unstable = adjacency_variance(A_random)
         
         ratio = var_unstable / (var_stable + 1e-10)
-        print(f"  High stability variance: {var_stable:.6f}")
-        print(f"  Low stability variance:  {var_unstable:.6f}")
-        print(f"  Ratio (low/high):        {ratio:.1f}×")
+        print(f" High stability variance: {var_stable:.6f}")
+        print(f" Low stability variance: {var_unstable:.6f}")
+        print(f" Ratio (low/high): {ratio:.1f}×")
         
         # Low stability should have much higher variance
         if var_unstable > var_stable * 100:
-            print(f"  ✅ PASS: Sensitivity verified (ratio > 100×)")
+            print(f" [DONE] PASS: Sensitivity verified (ratio > 100×)")
         else:
-            print(f"  ⚠️  WARNING: Low sensitivity (ratio < 100×)")
+            print(f" [WARN] WARNING: Low sensitivity (ratio < 100×)")
     except Exception as e:
-        print(f"  ❌ FAIL: {e}")
+        print(f" [FAIL] FAIL: {e}")
         return False
     
-    print("\n" + "✅ TEST 1 PASSED: All stability metrics working correctly")
+    print("\n" + "[DONE] TEST 1 PASSED: All stability metrics working correctly")
     return True
 
 
@@ -160,16 +160,16 @@ def test_eval_epoch_multi_env():
         data_root = "data/interim/synth_corrupted_h1_easy"
         
         if not Path(data_root).exists():
-            print(f"  ⚠️  SKIP: {data_root} not found (run benchmark generation first)")
+            print(f" [WARN] SKIP: {data_root} not found (run benchmark generation first)")
             return True
         
-        print(f"  ✓ Loading from: {data_root}")
+        print(f" [OK] Loading from: {data_root}")
         
         # Load metadata
         meta_path = Path(data_root) / "meta.json"
         with open(meta_path) as f:
             meta = json.load(f)
-        print(f"  ✓ Metadata loaded: {meta['d']} nodes, {meta['edges']} edges")
+        print(f" [OK] Metadata loaded: {meta['d']} nodes, {meta['edges']} edges")
         
         # Always load A_true first
         A_true = np.load(Path(data_root) / "A_true.npy")
@@ -177,10 +177,10 @@ def test_eval_epoch_multi_env():
         # Load data
         try:
             val_ds = load_synth(data_root, "val", seed=42)
-            print(f"  ✓ Validation dataset loaded: {len(val_ds)} samples")
+            print(f" [OK] Validation dataset loaded: {len(val_ds)} samples")
         except Exception as e:
-            print(f"  ⚠️  Could not load with load_synth: {e}")
-            print(f"  → Manually loading numpy files...")
+            print(f" [WARN] Could not load with load_synth: {e}")
+            print(f" -> Manually loading numpy files...")
             
             X_val = np.load(Path(data_root) / "X_val.npy")
             e_val = np.load(Path(data_root) / "e_val.npy")
@@ -189,7 +189,7 @@ def test_eval_epoch_multi_env():
             e_val_t = torch.from_numpy(e_val).long()
             
             val_ds = TensorDataset(X_val_t, e_val_t)
-            print(f"  ✓ Manual load successful: X shape {X_val.shape}")
+            print(f" [OK] Manual load successful: X shape {X_val.shape}")
         
         val_loader = DataLoader(val_ds, batch_size=32, shuffle=False)
         
@@ -197,7 +197,7 @@ def test_eval_epoch_multi_env():
         d = meta['d']
         model = RCGNN(d=d, latent_dim=8, hidden_dim=16, n_envs=meta['n_envs'], device="cpu")
         model.eval()
-        print(f"  ✓ Model created: {d} nodes, {meta['n_envs']} environments")
+        print(f" [OK] Model created: {d} nodes, {meta['n_envs']} environments")
         
         print("\n[Test 2.3] Running eval_epoch_multi_env()")
         metrics = eval_epoch_multi_env(
@@ -207,27 +207,27 @@ def test_eval_epoch_multi_env():
             device="cpu",
             threshold=0.5
         )
-        print(f"  ✓ Metrics computed successfully")
-        print(f"  ✓ Keys: {list(metrics.keys())}")
+        print(f" [OK] Metrics computed successfully")
+        print(f" [OK] Keys: {list(metrics.keys())}")
         
         # Check for expected keys
         expected_keys = ["shd", "precision", "recall", "f1"]
         for key in expected_keys:
             if key in metrics:
-                print(f"    - {key}: {metrics[key]:.4f}" if isinstance(metrics[key], (float, np.floating)) else f"    - {key}: {metrics[key]}")
+                print(f" - {key}: {metrics[key]:.4f}" if isinstance(metrics[key], (float, np.floating)) else f" - {key}: {metrics[key]}")
         
         # Check multi-env metrics if available
         if "adjacency_variance" in metrics:
-            print(f"\n  ✓ Multi-environment metrics available:")
-            print(f"    - adjacency_variance: {metrics['adjacency_variance']:.6f}")
+            print(f"\n [OK] Multi-environment metrics available:")
+            print(f" - adjacency_variance: {metrics['adjacency_variance']:.6f}")
             if "edge_set_jaccard" in metrics:
-                print(f"    - edge_set_jaccard: {metrics['edge_set_jaccard']:.6f}")
+                print(f" - edge_set_jaccard: {metrics['edge_set_jaccard']:.6f}")
         
-        print("\n" + "✅ TEST 2 PASSED: eval_epoch_multi_env() working correctly")
+        print("\n" + "[DONE] TEST 2 PASSED: eval_epoch_multi_env() working correctly")
         return True
         
     except Exception as e:
-        print(f"\n  ❌ FAIL: {e}")
+        print(f"\n [FAIL] FAIL: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -260,7 +260,7 @@ def test_benchmarks():
         bench_dir = Path(f"data/interim/synth_corrupted_{bench}")
         
         if not bench_dir.exists():
-            print(f"  ❌ FAIL: Directory not found: {bench_dir}")
+            print(f" [FAIL] FAIL: Directory not found: {bench_dir}")
             all_pass = False
             continue
         
@@ -282,7 +282,7 @@ def test_benchmarks():
                 missing.append(fname)
         
         if missing:
-            print(f"  ❌ FAIL: Missing files: {missing}")
+            print(f" [FAIL] FAIL: Missing files: {missing}")
             all_pass = False
             continue
         
@@ -307,20 +307,20 @@ def test_benchmarks():
             
             size_mb = sum((bench_dir / f).stat().st_size for f in required_files if (bench_dir / f).exists()) / 1024 / 1024
             
-            print(f"  ✅ PASS:")
-            print(f"     - Shape: {X_train.shape} (samples, timesteps, features)")
-            print(f"     - Edges: {int(A_true.sum())}")
-            print(f"     - Environments: {n_envs}")
-            print(f"     - Size: {size_mb:.1f} MB")
+            print(f" [DONE] PASS:")
+            print(f" - Shape: {X_train.shape} (samples, timesteps, features)")
+            print(f" - Edges: {int(A_true.sum())}")
+            print(f" - Environments: {n_envs}")
+            print(f" - Size: {size_mb:.1f} MB")
             
         except Exception as e:
-            print(f"  ❌ FAIL: {e}")
+            print(f" [FAIL] FAIL: {e}")
             all_pass = False
     
     if all_pass:
-        print("\n" + "✅ TEST 3 PASSED: All benchmarks valid and ready")
+        print("\n" + "[DONE] TEST 3 PASSED: All benchmarks valid and ready")
     else:
-        print("\n" + "⚠️  TEST 3 PARTIAL: Some benchmarks missing (generate with: python scripts/synth_corruption_benchmark.py --benchmark [name])")
+        print("\n" + "[WARN] TEST 3 PARTIAL: Some benchmarks missing (generate with: python scripts/synth_corruption_benchmark.py --benchmark [name])")
     
     return all_pass
 
@@ -340,7 +340,7 @@ def test_end_to_end_training():
         
         data_root = Path("data/interim/synth_corrupted_h1_easy")
         if not data_root.exists():
-            print(f"  ⚠️  SKIP: {data_root} not found")
+            print(f" [WARN] SKIP: {data_root} not found")
             return True
         
         # Load metadata
@@ -355,7 +355,7 @@ def test_end_to_end_training():
         d = meta['d']
         n_envs = meta['n_envs']
         
-        print(f"  ✓ Data loaded: {d} nodes, {n_envs} environments, {X_val.shape[0]} samples")
+        print(f" [OK] Data loaded: {d} nodes, {n_envs} environments, {X_val.shape[0]} samples")
         
         print("\n[Test 4.2] Creating and training small RC-GNN model")
         
@@ -369,7 +369,7 @@ def test_end_to_end_training():
         )
         
         # Create dummy training data
-        X_val_t = torch.from_numpy(X_val[:32]).float()  # Small batch
+        X_val_t = torch.from_numpy(X_val[:32]).float() # Small batch
         e_val_t = torch.from_numpy(e_val[:32]).long()
         train_loader = DataLoader(
             TensorDataset(X_val_t, e_val_t),
@@ -377,7 +377,7 @@ def test_end_to_end_training():
             shuffle=True
         )
         
-        print(f"  ✓ Model created with {sum(p.numel() for p in model.parameters())} parameters")
+        print(f" [OK] Model created with {sum(p.numel() for p in model.parameters())} parameters")
         
         # Forward pass
         print("\n[Test 4.3] Forward pass and loss computation")
@@ -403,13 +403,13 @@ def test_end_to_end_training():
                 losses.append(loss.item())
             
             avg_loss = epoch_loss / len(train_loader)
-            print(f"  Epoch {epoch}: loss = {avg_loss:.6f}")
+            print(f" Epoch {epoch}: loss = {avg_loss:.6f}")
         
         # Check that loss is decreasing
         if losses[-1] < losses[0]:
-            print(f"  ✅ PASS: Loss decreasing (initial: {losses[0]:.6f}, final: {losses[-1]:.6f})")
+            print(f" [DONE] PASS: Loss decreasing (initial: {losses[0]:.6f}, final: {losses[-1]:.6f})")
         else:
-            print(f"  ⚠️  WARNING: Loss not consistently decreasing")
+            print(f" [WARN] WARNING: Loss not consistently decreasing")
         
         print("\n[Test 4.4] Evaluation with eval_epoch_multi_env()")
         
@@ -429,15 +429,15 @@ def test_end_to_end_training():
                 threshold=0.5
             )
         
-        print(f"  ✅ PASS: Evaluation successful")
-        print(f"     - SHD: {metrics.get('shd', 'N/A')}")
-        print(f"     - F1: {metrics.get('f1', 'N/A')}")
+        print(f" [DONE] PASS: Evaluation successful")
+        print(f" - SHD: {metrics.get('shd', 'N/A')}")
+        print(f" - F1: {metrics.get('f1', 'N/A')}")
         
-        print("\n" + "✅ TEST 4 PASSED: End-to-end training works correctly")
+        print("\n" + "[DONE] TEST 4 PASSED: End-to-end training works correctly")
         return True
         
     except Exception as e:
-        print(f"\n  ❌ FAIL: {e}")
+        print(f"\n [FAIL] FAIL: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -517,18 +517,18 @@ def main():
     print("="*70)
     
     for test_name, passed in results.items():
-        status = "✅ PASS" if passed else "❌ FAIL"
+        status = "[DONE] PASS" if passed else "[FAIL] FAIL"
         print(f"{status}: {test_name}")
     
     all_pass = all(results.values())
     
     if all_pass:
         print("\n" + "="*70)
-        print("🎉 ALL TESTS PASSED! Infrastructure ready for hypothesis testing")
+        print(" ALL TESTS PASSED! Infrastructure ready for hypothesis testing")
         print("="*70)
     else:
         print("\n" + "="*70)
-        print("⚠️  SOME TESTS FAILED - Check output above")
+        print("[WARN] SOME TESTS FAILED - Check output above")
         print("="*70)
     
     return 0 if all_pass else 1

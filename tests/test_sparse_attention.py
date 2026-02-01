@@ -105,7 +105,7 @@ def test_attention_sparsity(sample_input):
         
         # Check sparsity
         sparsity_ratio = (weights == 0).float().mean()
-        assert sparsity_ratio > 0.5  # At least 50% sparse
+        assert sparsity_ratio > 0.5 # At least 50% sparse
 
 def test_attention_mask(sample_input):
     """Test that attention mask is properly applied."""

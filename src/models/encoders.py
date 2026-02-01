@@ -23,17 +23,17 @@ class EncoderS(nn.Module):
     def forward(self, X):
         """Batched or unbatched input. Assumes input is [B,T,d] or [T,d]."""
         if X.dim() == 2:
-            X = X.unsqueeze(0)  # Add batch dim
+            X = X.unsqueeze(0) # Add batch dim
         
         # Process each feature series independently
         B, T, d = X.shape
         h_list = []
         for i in range(d):
-            series = X[..., i].unsqueeze(-1)  # [B,T,1]
-            h = self.net(series)  # [B,T,d_hidden] 
-            h_list.append(h.unsqueeze(2))  # [B,T,1,d_hidden]
+            series = X[..., i].unsqueeze(-1) # [B,T,1]
+            h = self.net(series) # [B,T,d_hidden] 
+            h_list.append(h.unsqueeze(2)) # [B,T,1,d_hidden]
             
-        H = torch.cat(h_list, dim=2)  # [B,T,d,d_hidden]
+        H = torch.cat(h_list, dim=2) # [B,T,d,d_hidden]
         return H
         
 class SimpleImputer(nn.Module):
@@ -111,7 +111,7 @@ class EncoderN(nn.Module):
             nn.ReLU(),
             nn.Linear(d_hidden, d_hidden)
         )
-    def forward(self, X):  # [B,T,d] -> [B,T,h]
+    def forward(self, X): # [B,T,d] -> [B,T,h]
         return self.net(X)
 
 class EncoderB(nn.Module):
@@ -122,5 +122,5 @@ class EncoderB(nn.Module):
             nn.ReLU(),
             nn.Linear(d_hidden, d_hidden)
         )
-    def forward(self, stats):  # [B,d] -> [B,h]
+    def forward(self, stats): # [B,d] -> [B,h]
         return self.net(stats)

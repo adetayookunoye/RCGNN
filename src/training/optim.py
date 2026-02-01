@@ -49,7 +49,7 @@ def acyclicity_loss(A, n_power=3):
     which encourages acyclicity while avoiding gradient explosion.
     
     Args:
-        A: Adjacency matrix [d, d] or [B, d, d]  
+        A: Adjacency matrix [d, d] or [B, d, d] 
         n_power: Power for penalty computation
         
     Returns:
@@ -81,7 +81,7 @@ def acyclicity_loss(A, n_power=3):
         
         # Keep norms under control
         result_norm = torch.norm(result)
-        if result_norm > 100:  # If growing too large, scale down
+        if result_norm > 100: # If growing too large, scale down
             result = result / (result_norm / 50.0)
     
     # tr((I + A/d)^n) should be close to d for a DAG
@@ -228,7 +228,7 @@ def compute_total_loss(
             l_sup = F.binary_cross_entropy_with_logits(A_logits, A_t)
         else:
             # Fall back to soft probabilities
-            A_prob = A_mean  # already mean over batch if needed
+            A_prob = A_mean # already mean over batch if needed
             l_sup = F.binary_cross_entropy(A_prob, A_t)
         losses["supervised"] = l_sup.item()
     else:
@@ -243,12 +243,12 @@ def compute_total_loss(
             # Only compute if we have multiple environments
             e = output.get("e", None)
             
-            # Skip invariance if only single environment or batch has only one env  
+            # Skip invariance if only single environment or batch has only one env 
             if e is not None:
                 if isinstance(e, torch.Tensor):
                     unique_envs = torch.unique(e)
                 else:
-                    unique_envs = torch.tensor([0, 1])  # dummy
+                    unique_envs = torch.tensor([0, 1]) # dummy
                     
                 if len(unique_envs) < 2:
                     # Only one environment in batch, skip invariance loss

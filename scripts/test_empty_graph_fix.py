@@ -14,11 +14,11 @@ import os
 from pathlib import Path
 from torch.utils.data import DataLoader
 
-# Add project root to path  
+# Add project root to path 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import path_helper  # noqa: F401
+import path_helper # noqa: F401
 from src.dataio.loaders import load_synth
 from src.models.rcgnn import RCGNN
 from src.training.optim import make_optimizer
@@ -48,7 +48,7 @@ def main():
     
     # Use fixed configs by default
     model_cfg_path = "configs/model_fixed.yaml"
-    train_cfg_path = "configs/train_fixed_v2.yaml"  # Use v2 (safer schedule)
+    train_cfg_path = "configs/train_fixed_v2.yaml" # Use v2 (safer schedule)
     
     with open(model_cfg_path) as f:
         model_cfg = yaml.safe_load(f)
@@ -68,19 +68,19 @@ def main():
     if not data_root.exists():
         # Fallback to synth_small if benchmark doesn't exist
         data_root = Path("data") / "interim" / "synth_small"
-        print(f"  Dataset dir not found, using fallback: {data_root}")
+        print(f" Dataset dir not found, using fallback: {data_root}")
     
     train_ds = load_synth(str(data_root), split="train", seed=args.seed)
     val_ds = load_synth(str(data_root), split="val", seed=args.seed + 1)
     
-    print(f"  ✓ Loaded {len(train_ds)} train, {len(val_ds)} val samples")
+    print(f" [OK] Loaded {len(train_ds)} train, {len(val_ds)} val samples")
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, drop_last=False)
     val_loader = DataLoader(val_ds, batch_size=1, shuffle=False)
 
     # Get data dimension from first batch
     d = train_ds.X.shape[-1]
-    print(f"  Data dimension: d={d}")
+    print(f" Data dimension: d={d}")
 
     # [3/5] Create model with CORRECT interface
     print(f"[3/5] Creating RC-GNN model...")
@@ -93,7 +93,7 @@ def main():
         topk_ratio=model_cfg.get("sparsify", {}).get("topk_ratio", 0.1),
         device=args.device
     )
-    print(f"  ✓ Model created (d={d}, latent_dim={model_cfg.get('latent_dim', 16)})")
+    print(f" [OK] Model created (d={d}, latent_dim={model_cfg.get('latent_dim', 16)})")
 
     # Optimizer
     optimizer = make_optimizer(model, lr=args.lr, weight_decay=train_cfg.get("weight_decay", 0.0))
@@ -106,9 +106,9 @@ def main():
         mask_no_diag = np.ones_like(A_true, dtype=bool)
         np.fill_diagonal(mask_no_diag, False)
         offdiag_nnz = int((A_true[mask_no_diag] != 0).sum())
-        print(f"  ✓ Ground truth adjacency loaded: shape={A_true.shape}, edges={offdiag_nnz}")
+        print(f" [OK] Ground truth adjacency loaded: shape={A_true.shape}, edges={offdiag_nnz}")
     else:
-        print(f"  ⚠ No ground truth adjacency found at {A_true_path}")
+        print(f" [WARN] No ground truth adjacency found at {A_true_path}")
 
     # [4/5] Training loop with warm-up schedules
     print(f"\n[4/5] Training for {args.epochs} epochs...")
@@ -120,11 +120,11 @@ def main():
         return 0.5 * (1.0 - math.cos(math.pi * x))
 
     # Warm-up parameters
-    T_sup_on = int(train_cfg.get("sup_warmup_epochs", 10))           # Supervised only epochs 0-10
-    T_acy_on = int(train_cfg.get("acy_warmup_epochs", 40))           # Acyclic dormant epochs 0-40
-    T_acy_ramp = int(train_cfg.get("acy_ramp_epochs", 20))           # Then ramp over 20 epochs
-    T_sparse_on = int(train_cfg.get("sparse_warmup_epochs", 50))     # Sparsity dormant epochs 0-50
-    T_sparse_ramp = int(train_cfg.get("sparse_ramp_epochs", 20))     # Then ramp over 20 epochs
+    T_sup_on = int(train_cfg.get("sup_warmup_epochs", 10)) # Supervised only epochs 0-10
+    T_acy_on = int(train_cfg.get("acy_warmup_epochs", 40)) # Acyclic dormant epochs 0-40
+    T_acy_ramp = int(train_cfg.get("acy_ramp_epochs", 20)) # Then ramp over 20 epochs
+    T_sparse_on = int(train_cfg.get("sparse_warmup_epochs", 50)) # Sparsity dormant epochs 0-50
+    T_sparse_ramp = int(train_cfg.get("sparse_ramp_epochs", 20)) # Then ramp over 20 epochs
     
     base_lambda_sup = float(train_cfg.get("lambda_supervised_max", 0.01))
     base_lambda_acy = float(train_cfg.get("acy_max", 0.05))
@@ -146,7 +146,7 @@ def main():
         if epoch <= T_sup_on:
             lam_sup = base_lambda_sup * cos_ramp(epoch, T_sup_on)
         else:
-            lam_sup = 0.0  # TURN OFF after warm-up
+            lam_sup = 0.0 # TURN OFF after warm-up
         
         # (2) Acyclic loss: Dormant 0-40, then ramp 40-60
         if epoch < T_acy_on:
@@ -210,20 +210,20 @@ def main():
             if "A_mean" in ev:
                 np.save(output_dir / "adjacency" / "A_mean.npy", ev["A_mean"])
             if epoch % max(1, args.epochs // 20) == 0 or epoch == args.epochs - 1:
-                print(f"  ✓ Checkpoint saved (SHD={best_shd:.1f})")
+                print(f" [OK] Checkpoint saved (SHD={best_shd:.1f})")
 
     # [5/5] Final results
     print(f"\n[5/5] Training complete!")
-    print(f"  Best SHD: {best_shd:.1f}")
-    print(f"  Results saved to: {output_dir}")
+    print(f" Best SHD: {best_shd:.1f}")
+    print(f" Results saved to: {output_dir}")
     print("\n" + "="*60)
     print("Fix verification:")
     if best_shd < 10:
-        print(f"  ✅ SUCCESS! SHD={best_shd:.1f} (improved from 30.0)")
+        print(f" [DONE] SUCCESS! SHD={best_shd:.1f} (improved from 30.0)")
     elif best_shd < 20:
-        print(f"  ⚠️  PARTIAL - SHD={best_shd:.1f} (some improvement)")
+        print(f" [WARN] PARTIAL - SHD={best_shd:.1f} (some improvement)")
     else:
-        print(f"  ❌ FAILED - SHD={best_shd:.1f} (no improvement)")
+        print(f" [FAIL] FAILED - SHD={best_shd:.1f} (no improvement)")
     print("="*60 + "\n")
 
 

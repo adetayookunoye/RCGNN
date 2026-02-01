@@ -138,7 +138,7 @@ def train_epoch(model, train_loader, optimizer, device="cpu", loss_fn=None, **lo
 
 def eval_epoch(model, eval_loader, A_true=None, device="cpu", threshold=0.5):
     """
-    ATOMIC EVALUATION - ONE DECODER PATH → ALL METRICS (no more 1e9 sentinels)
+    ATOMIC EVALUATION - ONE DECODER PATH -> ALL METRICS (no more 1e9 sentinels)
     
     Implements comprehensive fixes:
     - Single mask used consistently (no diagonal, directed graph)
@@ -151,7 +151,7 @@ def eval_epoch(model, eval_loader, A_true=None, device="cpu", threshold=0.5):
     
     all_A_pred = []
     all_A_logits = []
-    all_A_soft = []  # CRITICAL: Collect soft probabilities for metrics
+    all_A_soft = [] # CRITICAL: Collect soft probabilities for metrics
     total_recon_loss = 0.0
     n_batches = 0
     
@@ -202,7 +202,7 @@ def eval_epoch(model, eval_loader, A_true=None, device="cpu", threshold=0.5):
     # CRITICAL: Use A_soft (differentiable probs) for metrics if available
     if len(all_A_soft) > 0:
         A_soft_avg = torch.stack(all_A_soft).mean(dim=0).cpu().numpy()
-        np.fill_diagonal(A_soft_avg, 0.0)  # Zero diagonal (no self-loops)
+        np.fill_diagonal(A_soft_avg, 0.0) # Zero diagonal (no self-loops)
         # Convert soft probs to logits for threshold tuning safely
         # Guard against 0/1 by clipping to avoid log(0) and Inf/NaN spam
         probs = np.clip(A_soft_avg, 1e-6, 1 - 1e-6)
@@ -218,34 +218,34 @@ def eval_epoch(model, eval_loader, A_true=None, device="cpu", threshold=0.5):
     # === ATOMIC DECODER: ONE MASK FOR EVERYTHING ===
     N = A_logits_avg.shape[0]
     mask = np.ones((N, N), dtype=bool)
-    mask &= ~np.eye(N, dtype=bool)  # Drop diagonal (CRITICAL: consistent masking)
+    mask &= ~np.eye(N, dtype=bool) # Drop diagonal (CRITICAL: consistent masking)
     
     # Guard against NaN/Inf
     if not np.isfinite(A_logits_avg).all():
-        print(f"⚠️  Non-finite logits detected (NaN/Inf), sanitizing")
+        print(f"[WARN] Non-finite logits detected (NaN/Inf), sanitizing")
         A_logits_avg = np.nan_to_num(A_logits_avg, nan=0.0, posinf=10.0, neginf=-10.0)
     
-    np.fill_diagonal(A_logits_avg, 0)  # Force zero diagonal
+    np.fill_diagonal(A_logits_avg, 0) # Force zero diagonal
     
     # Convert A_true if needed
     if A_true is not None:
         if isinstance(A_true, torch.Tensor):
             A_true = A_true.cpu().numpy()
         A_true = A_true.astype(np.int32)
-        np.fill_diagonal(A_true, 0)  # Force zero diagonal
+        np.fill_diagonal(A_true, 0) # Force zero diagonal
     
     # Extract masked scores (SAME mask for all metrics)
     y_score = A_logits_avg[mask].ravel()
     
     # === THRESHOLD TUNING (auto-tune on validation F1) ===
-    best_thr = threshold  # Default fallback
+    best_thr = threshold # Default fallback
     best_f1 = -1.0
     
     if A_true is not None:
         from sklearn.metrics import precision_recall_fscore_support
         
         y_true = A_true[mask].ravel()
-        thr_grid = np.linspace(0.0, 0.9, 19)  # 19 thresholds
+        thr_grid = np.linspace(0.0, 0.9, 19) # 19 thresholds
         
         for t in thr_grid:
             y_pred_try = (y_score > t).astype(np.int32)
@@ -256,16 +256,16 @@ def eval_epoch(model, eval_loader, A_true=None, device="cpu", threshold=0.5):
                 if f1 > best_f1:
                     best_f1, best_thr = f1, t
             except:
-                continue  # Skip if computation fails for this threshold
+                continue # Skip if computation fails for this threshold
     
     # === FINAL BINARIZATION (used for ALL metrics - no divergence) ===
     A_bin = np.zeros((N, N), dtype=np.int32)
     A_bin[mask] = (y_score > best_thr).astype(np.int32)
-    np.fill_diagonal(A_bin, 0)  # Redundant safety
+    np.fill_diagonal(A_bin, 0) # Redundant safety
     
     metrics = {
         "recon_loss": avg_recon_loss,
-        "A_mean": A_soft_avg if len(all_A_soft) > 0 else A_logits_avg,  # Save soft probs (or logits fallback)
+        "A_mean": A_soft_avg if len(all_A_soft) > 0 else A_logits_avg, # Save soft probs (or logits fallback)
         "A_bin": A_bin,
         "threshold_used": float(best_thr),
     }
@@ -276,7 +276,7 @@ def eval_epoch(model, eval_loader, A_true=None, device="cpu", threshold=0.5):
     
     # Top-k: rank all masked scores, take top k% (10% sparsity)
     k = max(1, int(0.1 * y_score.size))
-    edges_at_topk = k  # By definition
+    edges_at_topk = k # By definition
     
     metrics["edges_pred@tuned"] = edges_at_tuned
     metrics["edges_pred@0.5"] = edges_at_05
@@ -331,7 +331,7 @@ def eval_epoch(model, eval_loader, A_true=None, device="cpu", threshold=0.5):
             orient_err = 0
             iu = np.triu_indices(N, 1)
             for i, j in zip(*iu):
-                if Sk_pred[i, j] == Sk_true[i, j] == 1:  # Both have undirected edge
+                if Sk_pred[i, j] == Sk_true[i, j] == 1: # Both have undirected edge
                     if (A_bin[i, j] != A_true[i, j]) or (A_bin[j, i] != A_true[j, i]):
                         orient_err += 1
             
@@ -342,7 +342,7 @@ def eval_epoch(model, eval_loader, A_true=None, device="cpu", threshold=0.5):
         
         except Exception as e:
             # Only use sentinel if computation truly fails (should be rare now)
-            print(f"⚠️  SHD computation failed: {e}, using sentinel")
+            print(f"[WARN] SHD computation failed: {e}, using sentinel")
             metrics["shd"] = 1e9
             metrics["shd_skeleton"] = 1e9
             metrics["shd_orientation"] = 0
@@ -463,7 +463,7 @@ def eval_epoch_multi_env(model, eval_loader, A_true=None, device="cpu", threshol
     """
     model.eval()
     
-    all_A_by_env = {}  # Dict: env_id -> list of adjacency matrices
+    all_A_by_env = {} # Dict: env_id -> list of adjacency matrices
     all_outputs = []
     total_recon_loss = 0.0
     n_batches = 0
@@ -589,7 +589,7 @@ def eval_epoch_multi_env(model, eval_loader, A_true=None, device="cpu", threshol
         except:
             metrics["shd"] = 1e9
     
-    # ✅ STABILITY METRICS (Multi-Environment)
+    # [DONE] STABILITY METRICS (Multi-Environment)
     if len(A_by_env_avg) > 1:
         # Cross-environment metrics
         metrics["adjacency_variance"] = float(adjacency_variance(A_by_env_avg))

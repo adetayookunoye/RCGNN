@@ -6,7 +6,7 @@ This module ensures that the project root is added to sys.path,
 allowing scripts to import from src/ and other project modules.
 
 Usage:
-  import path_helper  # noqa: F401
+  import path_helper # noqa: F401
 """
 
 import sys
