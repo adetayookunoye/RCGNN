@@ -125,7 +125,7 @@ DEFAULT_CONFIG = {
     # CRITICAL FIX: Gradual sparsity ramp (not cliff)
     # ===========================================================================
     # Loss weights (rebalanced for causal discovery, not just reconstruction)
-    "lambda_recon": 1.0, # FIXED: Was 50.0, dominated all other losses
+    # NOTE: lambda_recon set to 0.5 in V8.22 section below
     "lambda_miss": 0.5, # Missingness prediction
     "lambda_hsic": 0.1, # Disentanglement
     
@@ -140,13 +140,11 @@ DEFAULT_CONFIG = {
     "acyclic_start_epoch": 10, # Start acyclicity after epoch 10
     
     # Edge budget schedule (ramps from epoch 10)
-    # NOTE: V8.21 overrides lambda_budget_final to 0.05 below
-    "lambda_budget_init": 0.0, # Start at 0
-    "lambda_budget_final": 0.5, # Overridden to 0.05 by V8.21 below
+    # NOTE: lambda_budget_init/final set in V8.21 section below
     "budget_start_epoch": 10, # Start budget pressure after epoch 10
     
-    "lambda_inv": 1.0, # Invariance (needs regimes > 1)
-    "lambda_causal": 1.0, # FIXED: Was 0.2, increased for direction awareness
+    # NOTE: lambda_inv set to 2.0 in V8.22 section below
+    # NOTE: lambda_causal set to 3.0 in V8.22 section below
     "lambda_var_penalty": 0.01, # MNAR variance penalty
     
     # ===========================================================================
@@ -165,13 +163,11 @@ DEFAULT_CONFIG = {
     "temperature_floor_unstable": 0.8, # Don't go below this τ if direction unstable
     
     # ===========================================================================
-    # CRITICAL FIX: Temperature annealing (prevent early saturation)
-    # Aggressive schedule: 2.0 -> 0.3 to force confident edge separation
+    # Temperature annealing (prevent early saturation)
+    # NOTE: temperature_final and temperature_anneal_end set in V8.34 section below
     # ===========================================================================
     "temperature_init": 2.0, # Start high (soft edges)
-    "temperature_final": 0.2, # V8.21: Anneal lower (0.3→0.2) for sharper edges
     "temperature_anneal_start": 0.1, # V8.21: Start earlier (0.2→0.1)
-    "temperature_anneal_end": 0.5, # V8.21: Finish earlier (0.7→0.5)
     
     # Structure learning
     "sparsify_method": "topk", # or "sigmoid" for continuous
@@ -210,7 +206,7 @@ DEFAULT_CONFIG = {
     
     # V8.5: Two-Stage Training
     "two_stage_training": True, # Enable skeleton->direction separation
-    "skeleton_freeze_threshold": 0.1, # Edges > this in skeleton mask can be trained for direction
+    "skeleton_mask_threshold": 0.1, # V8.41: Edges > this go into skeleton mask (for direction training)
     "direction_penalty_stage_d_only": True, # Only apply dir penalty in Stage D
     
     # V8.6: Confidence-based Direction Evaluation
@@ -269,7 +265,7 @@ DEFAULT_CONFIG = {
     # V8.11: Skeleton Freeze + Antisymmetric Direction Learning
     # Once skeleton is learned, freeze it and train only direction
     "skeleton_freeze_enabled": True, # Enable skeleton freezing
-    "skeleton_freeze_threshold": 0.95, # Freeze when Skel-F1 >= this
+    "skeleton_freeze_skel_f1": 0.70, # V8.41: Freeze when Skel-F1 >= this (was 0.95→0.70 in V8.20)
     "skeleton_freeze_patience": 5, # Consecutive epochs before freeze
     "direction_tau": 0.5, # Fixed τ for direction learning (lower=sharper)
     "lambda_direction": 2.0, # Boost direction loss after freeze
@@ -281,7 +277,8 @@ DEFAULT_CONFIG = {
     # =========================================================================
     # V8.18: Training stability fixes
     # =========================================================================
-    "lambda_inv_mask": 1e-3, # Mask-invariance penalty weight (only if skeleton frozen)
+    # V8.41: lambda_inv_mask REMOVED — compute_mask_invariance_penalty was a no-op
+    # (A is global params, not data-dependent, so A1==A2 always)
     "peakiness_failsafe_epoch": 15, # Force λs/λb ramp if peakiness not achieved by this epoch
     
     # =========================================================================
@@ -318,8 +315,7 @@ DEFAULT_CONFIG = {
     # V8.20: Delay budget ramping until after separation established
     "budget_ramp_start": 0.40, # Don't ramp λb until 40% of training (after DISC)
     
-    # V8.20: Lower skeleton freeze threshold (0.95 is too strict for noisy data)
-    "skeleton_freeze_threshold": 0.70, # Freeze when Skel-F1 >= this (was 0.95)
+    # V8.20: skeleton_freeze_skel_f1 already set to 0.70 above (merged from V8.20)
     
     # V8.20: Fix τ_dir instead of floor
     "direction_tau_fixed": 0.5, # Fixed τ for direction (not floored)
@@ -1082,92 +1078,13 @@ def create_dataloaders(
 # MNAR-Aware Fixes (V8.18)
 # =============================================================================
 
-def compute_mask_invariance_penalty(
-    model: nn.Module,
-    X: torch.Tensor,
-    M: Optional[torch.Tensor] = None,
-    lambda_inv_mask: float = 1e-3,
-) -> torch.Tensor:
-    """
-    V8.18: Force adjacency stability under missingness perturbations.
-    
-    Prevents model from using missingness patterns as causal shortcut (MNAR bug).
-    
-    Strategy:
-    1. Get adjacency A1 under original mask M
-    2. Randomly drop additional observations -> M' (simulate MCAR perturbation)
-    3. Get adjacency A2 under M'
-    4. Penalize ||A1 - A2||_1 (encourage adjacency invariance to mask changes)
-    
-    Only apply AFTER skeleton is frozen (direction-only phase).
-    
-    Args:
-        model: RCGNN model
-        X: Data [B, T, d] or [N, d]
-        M: Mask [B, T, d] or [N, d] (1=observed, 0=missing)
-        lambda_inv_mask: Loss weight
-        
-    Returns:
-        Scalar penalty (0 if M is None or too dense)
-    """
-    if M is None or lambda_inv_mask <= 0:
-        return torch.tensor(0.0, device=X.device)
-    
-    # V8.21: Only apply on MNAR-prone datasets (> 10% missing, actual variance in patterns)
-    missing_rate = 1.0 - (M.sum().item() / M.numel())
-    if missing_rate < 0.10: # Skip if < 10% missing (MCAR-like or complete)
-        return torch.tensor(0.0, device=X.device)
-    
-    # Check if missingness pattern varies (MNAR indicator)
-    # If same rows/cols always missing -> MNAR/bias. If uniform -> MCAR.
-    M_row_missing = 1.0 - M.mean(dim=-1).mean() # Avg missing per sample
-    M_col_missing = 1.0 - M.mean(dim=0).mean() # Avg missing per variable
-    missing_variance = M_row_missing.std().item() if M_row_missing.numel() > 1 else 0.0
-    if missing_variance < 0.01: # Uniform missingness = MCAR, skip penalty
-        return torch.tensor(0.0, device=X.device)
-    
-    device = X.device
-    
-    # Get baseline adjacency
-    with torch.no_grad():
-        A1 = model.graph_learner.get_mean_adjacency().detach()
-    
-    # Create perturbed mask: randomly drop additional observations (MCAR)
-    M_pert = M.clone()
-    drop_rate = 0.2 # Drop 20% of currently-observed entries (symmetric across batch)
-    if drop_rate > 0:
-        # Sample which entries to drop uniformly
-        drop_mask = torch.bernoulli(torch.full_like(M_pert, drop_rate))
-        # Only drop where already observed (don't un-drop missing)
-        M_pert = M_pert * (1 - drop_mask)
-    
-    # Forward pass with perturbed mask
-    # M and X already have matching shapes: [B, T, d]
-    # If X: [N, d] then M: [N, d] (no unsqueeze)
-    # If X: [B, T, d] then M: [B, T, d] (no unsqueeze)
-    assert M_pert.shape == X.shape, f"Shape mismatch: M_pert {M_pert.shape} vs X {X.shape}"
-    X_pert = X * M_pert
-    
-    # Get perturbed adjacency (no detach so gradient flows)
-    with torch.no_grad():
-        # Swap mask temporarily
-        old_mask = getattr(model, '_mask_override', None)
-        model._mask_override = M_pert
-    
-    try:
-        # Re-encode with perturbed mask (lightweight forward)
-        # For now, use approximate: scale reconstruction by mask change
-        A2 = model.graph_learner.get_mean_adjacency()
-    finally:
-        if old_mask is not None:
-            model._mask_override = old_mask
-        elif hasattr(model, '_mask_override'):
-            delattr(model, '_mask_override')
-    
-    # Penalize L1 difference
-    inv_penalty = torch.abs(A1 - A2).mean() * lambda_inv_mask
-    
-    return inv_penalty
+# V8.41: compute_mask_invariance_penalty REMOVED.
+# It was a no-op: get_mean_adjacency() returns σ(W_mag/τ) * σ(W_dir/τ) which are
+# global parameters with NO dependence on X or M. So A1 == A2 always, penalty = 0.
+# Setting model._mask_override had no effect (get_mean_adjacency never reads it).
+# Both A1 and A2 were inside torch.no_grad(), killing any gradient flow anyway.
+# If mask invariance is needed, it must operate on the decoder (data-dependent),
+# not on the adjacency (global parameters).
 
 
 def compute_mnar_shortcut_detector(
@@ -1716,25 +1633,37 @@ def compute_adaptive_k_dir(mag_probs: torch.Tensor, target_edges: int,
     return k_dir, dir_mask, info
 
 
-def compute_exclusivity_loss(A: torch.Tensor, dir_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+def compute_exclusivity_loss(
+    A: torch.Tensor,
+    dir_mask: Optional[torch.Tensor] = None,
+    direction_probs: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
     """
-    V8.9: Penalize edges where both directions have high weight.
-    V8.37: Optional dir_mask restricts to believed edges only (now gap-based).
+    V8.41: Direction decisiveness loss on direction probabilities.
     
-    L_excl = sum_{i<j} A_ij * A_ji  (masked to dir_mask if provided)
+    OLD (V8.9-V8.40): L_excl = mean(A_ij * A_ji) which conflates skeleton
+    magnitude and direction: A*A.T = mag² * dir*(1-dir). The mag² factor
+    attenuated gradients by ~20× when mag≈0.22.
     
-    This pushes the model to commit to ONE direction per edge pair,
-    increasing direction margins and preventing the 0 <-> 4 TP oscillation.
+    NEW (V8.41): If direction_probs is provided, compute directly on
+    dir*(1-dir) which is independent of magnitude. Falls back to A*A.T
+    if direction_probs is not available (non-antisymmetric mode).
     
     Args:
-        A: Adjacency matrix [d, d]
+        A: Adjacency matrix [d, d] (fallback if no direction_probs)
         dir_mask: [d, d] binary mask where 1 = believed edge (optional)
+        direction_probs: [d, d] σ(Wd/τ) direction map (optional, preferred)
     
     Returns:
         Scalar loss (mean over masked pairs to normalize)
     """
-    # A * A.T gives element-wise product: high when both A_ij and A_ji are high
-    product = A * A.T
+    if direction_probs is not None:
+        # V8.41: Clean direction decisiveness, independent of magnitude
+        # dir*(1-dir) peaks at 0.25 when dir=0.5 (ambiguous), zero at 0 or 1
+        product = direction_probs * (1 - direction_probs)
+    else:
+        # Fallback: A * A.T (original behavior for non-antisymmetric mode)
+        product = A * A.T
     
     # Only count upper triangle (avoid double-counting)
     mask = torch.triu(torch.ones_like(product), diagonal=1)
@@ -3173,8 +3102,10 @@ def train_epoch(
         dir_dec_start = config.get("dir_decisive_start_epoch", 1)
         if epoch >= excl_start:
             A_excl = base_model.graph_learner.get_mean_adjacency()
-            # L_excl = mean(A_ij * A_ji) — V8.36: masked to dir_mask
-            L_excl_val = compute_exclusivity_loss(A_excl, dir_mask=dir_mask)
+            # V8.41: Pass direction_probs directly (decouples from magnitude)
+            antisym_excl = getattr(base_model.graph_learner, '_antisymmetric', False)
+            dir_probs_excl = base_model.graph_learner.get_direction_map() if antisym_excl else None
+            L_excl_val = compute_exclusivity_loss(A_excl, dir_mask=dir_mask, direction_probs=dir_probs_excl)
             loss = loss + lambda_excl_unc * L_excl_val
             batch_metrics["L_excl"] = L_excl_val.item()
             # Also track symmetry ratio for diagnostics
@@ -3414,22 +3345,8 @@ def train_epoch(
             batch_metrics["dir_avg_margin"] = dir_metrics["dir_avg_margin"]
             batch_metrics["dir_min_margin"] = dir_metrics["dir_min_margin"]
         
-        # =====================================================================
-        # V8.18: MNAR-aware Mask-Invariance Penalty
-        # Force adjacency stability under missingness perturbations (MNAR-only)
-        # Prevents model from using MNAR shortcuts to learn structure
-        # Apply ONLY after skeleton freeze AND on MNAR-prone datasets
-        # =====================================================================
-        # V8.21: MNAR-only + shape-correct + sparse activation
-        if skeleton_frozen and M is not None:
-            lambda_inv_mask = config.get("lambda_inv_mask", 1e-3)
-            if lambda_inv_mask > 0:
-                inv_mask_penalty = compute_mask_invariance_penalty(
-                    base_model, X, M, lambda_inv_mask=lambda_inv_mask
-                )
-                if inv_mask_penalty.item() > 0: # Only add if penalty computed (MNAR detected)
-                    loss = loss + inv_mask_penalty
-                    batch_metrics["L_inv_mask"] = inv_mask_penalty.item()
+        # V8.41: Mask-invariance penalty REMOVED (was a no-op, see comment above
+        # compute_mask_invariance_penalty). A is global params, not data-dependent.
         
         # =====================================================================
         # V8.8: Edge Discovery Losses (fix mode collapse to easy subgraph)
@@ -3711,13 +3628,15 @@ def train(
     """
     # V8.24 VERSION CHECK - if you see this, the new code is running!
     print("=" * 70)
-    print("[V8.40] RC-GNN Training Script — CODE REVIEW FIXES:")
-    print("  - V8.40 FIX 1: Direction loss uses F.softplus (numerically stable)")
-    print("  -   + strict edge filter: only penalise i→j where ¬(j→i)")
-    print("  - V8.40 FIX 2: W_mag.requires_grad_(False) in REFINE")
-    print("  -   stops Adam momentum bleed into frozen skeleton magnitudes")
-    print("  - V8.40 FIX 3: TopK eval always returns K edges (no >0 filter)")
-    print("  -   old code silently dropped zero-score edges, inflating precision")
+    print("[V8.41] RC-GNN Training Script — CONFIG CLEANUP + CODE REVIEW:")
+    print("  - V8.41 FIX 1: Deduplicated DEFAULT_CONFIG (6 shadow keys removed)")
+    print("  -   skeleton_freeze_threshold split → skeleton_freeze_skel_f1 + skeleton_mask_threshold")
+    print("  - V8.41 FIX 2: Deleted compute_mask_invariance_penalty (was no-op)")
+    print("  -   A is global params → A1==A2 always → penalty=0")
+    print("  - V8.41 FIX 3: L_excl now uses direction_probs directly")
+    print("  -   old: A*A.T = mag²*dir*(1-dir) — magnitude attenuated gradient 20×")
+    print("  -   new: dir*(1-dir) — clean direction-only signal")
+    print("  - Inherits V8.40: softplus dir loss, W_mag grad freeze, TopK filter")
     print("  - Inherits V8.39: Enforced skeleton freeze contract")
     print("  - Inherits V8.38: Early stopping blocked in PRUNE")
     print("  - Inherits V8.37: Adaptive K_dir (used only in DISC/PRUNE)")
@@ -4170,7 +4089,7 @@ def train(
     skeleton_frozen = False
     skeleton_freeze_counter = 0 # Consecutive epochs with Skel >= threshold
     W_frozen = None # Frozen logits at time of skeleton freeze
-    skeleton_freeze_threshold = cfg.get("skeleton_freeze_threshold", 0.95)
+    skeleton_freeze_threshold = cfg.get("skeleton_freeze_skel_f1", 0.70)
     skeleton_freeze_patience = cfg.get("skeleton_freeze_patience", 5)
     direction_tau = cfg.get("direction_tau", 0.5)
     lambda_direction_boost = cfg.get("lambda_direction", 2.0)
@@ -4809,7 +4728,7 @@ def train(
                 upper = np.triu(A_sym, k=1)
                 flat_upper = upper.flatten()
                 topk_val = np.sort(flat_upper)[::-1][K-1] if K > 0 else 0
-                skel_thresh = max(cfg.get("skeleton_freeze_threshold", 0.1), topk_val)
+                skel_thresh = max(cfg.get("skeleton_mask_threshold", 0.1), topk_val)
                 
                 skeleton_mask = torch.from_numpy((A_sym >= skel_thresh).astype(np.float32)).to(device)
                 skeleton_mask = skeleton_mask.bool()
@@ -5269,7 +5188,7 @@ def train(
             final_edges_02 = int((A_final_np > 0.2).sum())
             
             print("\n" + "=" * 70)
-            print("TRAINING COMPLETE (V8.40 - Code Review Fixes)")
+            print("TRAINING COMPLETE (V8.41 - Config Cleanup + Code Review)")
             print("=" * 70)
             print("CONVENTION INFO (for paper writeup):")
             print(" Model output: A[i,j] = 'i causes j' (causal convention)")
