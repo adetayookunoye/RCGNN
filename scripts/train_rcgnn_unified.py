@@ -1883,12 +1883,15 @@ def compute_direction_loss(
     tau_direction: float = 0.5,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """
-    V8.11: Compute direction-specific loss on true edges.
+    V8.40: Compute direction-specific loss on true edges.
     
     For each true edge (i,j), we want:
     - D_ij = W_ij - W_ji > 0 (i.e., sigmoid(D_ij/τ) -> 1)
     
-    Loss = BCE(sigmoid(D_ij / τ), 1) for true edges (i,j)
+    Loss = softplus(-D_ij/τ) for strict true edges (i→j but NOT j→i)
+    
+    Uses F.softplus for numerical stability (no log(sigmoid+eps)).
+    Only penalises strict forward edges: A[i,j]>0.5 AND A[j,i]<=0.5.
     
     Args:
         W: Raw logits [d, d]
@@ -1902,31 +1905,33 @@ def compute_direction_loss(
     device = W.device
     d = W.shape[0]
     
-    # Get true edges
-    true_edges = (A_true > 0.5).float()
+    # V8.40: Strict true edges — only (i,j) where i→j and NOT j→i
+    # This excludes bidirectional pairs, which have no meaningful direction.
+    forward = (A_true > 0.5)
+    strict_true_edges = (forward & ~forward.T).float()
     
     # Direction scores: D_ij = W_ij - W_ji
     D = W - W.T
     direction_probs = torch.sigmoid(D / tau_direction)
     
-    # For each true edge (i,j), we want direction_probs[i,j] -> 1
-    # BCE loss: -log(direction_probs) for true edges
+    # V8.40: softplus(-x) = -log(sigmoid(x)) but numerically stable
+    # For true edge (i,j), we want sigmoid(D_ij/τ) → 1, i.e. minimise softplus(-D_ij/τ)
     eps = 1e-8
-    direction_loss = -torch.log(direction_probs + eps) * true_edges
-    loss = direction_loss.sum() / (true_edges.sum() + eps)
+    direction_loss = F.softplus(-D / tau_direction) * strict_true_edges
+    loss = direction_loss.sum() / (strict_true_edges.sum() + eps)
     
     # Compute metrics
     with torch.no_grad():
-        # Direction accuracy: how many true edges have correct direction?
-        correct_direction = (direction_probs > 0.5).float() * true_edges
-        dir_accuracy = correct_direction.sum() / (true_edges.sum() + eps)
+        # Direction accuracy: how many strict true edges have correct direction?
+        correct_direction = (direction_probs > 0.5).float() * strict_true_edges
+        dir_accuracy = correct_direction.sum() / (strict_true_edges.sum() + eps)
         
-        # Average margin on true edges
-        margins = D * true_edges
-        avg_margin = margins.sum() / (true_edges.sum() + eps)
+        # Average margin on strict true edges
+        margins = D * strict_true_edges
+        avg_margin = margins.sum() / (strict_true_edges.sum() + eps)
         
-        # Min margin on true edges (detect weak directions)
-        true_edge_margins = D[A_true > 0.5]
+        # Min margin on strict true edges (detect weak directions)
+        true_edge_margins = D[strict_true_edges > 0.5]
         min_margin = true_edge_margins.min().item() if len(true_edge_margins) > 0 else 0.0
     
     metrics = {
@@ -2394,11 +2399,13 @@ def compute_topk_f1(
         top_k_idx = sort_keys[-k:] if k > 0 else np.array([]) # Take top K
         
         # Convert to (i, j) pairs
+        # V8.40 FIX: Always include all K edges. The previous `if flat_upper[idx] > 0`
+        # filter silently dropped edges with zero scores, returning fewer than K pairs
+        # and inflating precision (fewer predictions = fewer false positives).
         pairs = []
         for idx in top_k_idx:
-            if flat_upper[idx] > 0:
-                i, j = idx // d, idx % d
-                pairs.append((i, j))
+            i, j = idx // d, idx % d
+            pairs.append((i, j))
         
         # For each pair, predict direction using margin (no softmax, no τ)
         # V8.10: Use STRICT inequality so ties default to (i,j) for i<j determinism
@@ -3704,14 +3711,14 @@ def train(
     """
     # V8.24 VERSION CHECK - if you see this, the new code is running!
     print("=" * 70)
-    print("[V8.39] RC-GNN Training Script — ENFORCED SKELETON FREEZE:")
-    print("  - V8.39 FIX: REFINE enforces skeleton freeze contract")
-    print("  -   PROBLEM: 'Skeleton FROZEN with 16 edges' was a message, not a constraint")
-    print("  -   K_dir=30 still used, edge swaps ran, direction on 30 edges")
-    print("  -   FIX 1: Store E_frozen explicitly, mask ALL direction losses to E_frozen")
-    print("  -   FIX 2: Disable edge swaps in REFINE (no skeleton mutations)")
-    print("  -   FIX 3: Reset W_dir at REFINE start (escape wrong-direction basin)")
-    print("  -   FIX 4: LR boost for W_dir in early REFINE (5x for 10 epochs)")
+    print("[V8.40] RC-GNN Training Script — CODE REVIEW FIXES:")
+    print("  - V8.40 FIX 1: Direction loss uses F.softplus (numerically stable)")
+    print("  -   + strict edge filter: only penalise i→j where ¬(j→i)")
+    print("  - V8.40 FIX 2: W_mag.requires_grad_(False) in REFINE")
+    print("  -   stops Adam momentum bleed into frozen skeleton magnitudes")
+    print("  - V8.40 FIX 3: TopK eval always returns K edges (no >0 filter)")
+    print("  -   old code silently dropped zero-score edges, inflating precision")
+    print("  - Inherits V8.39: Enforced skeleton freeze contract")
     print("  - Inherits V8.38: Early stopping blocked in PRUNE")
     print("  - Inherits V8.37: Adaptive K_dir (used only in DISC/PRUNE)")
     print("  - Inherits V8.36: REFINE reweighting (λ_recon×0.1, λ_inv×5.0)")
@@ -4832,6 +4839,14 @@ def train(
                 # under L_recon dominance. A fresh start with boosted LR gives
                 # invariance a fair shot on the frozen skeleton.
                 # =============================================================
+                # V8.40: Freeze W_mag gradient — prevents Adam momentum bleed
+                # into magnitude parameters during direction-only REFINE phase.
+                # Without this, stale Adam state can drift W_mag even though
+                # freeze_skeleton_parameters restores W_mag.data each step.
+                base_model.graph_learner.W_mag.requires_grad_(False)
+                if is_main_process() and not sweep_mode:
+                    print(f" | [V8.40] W_mag.requires_grad_(False) — skeleton magnitudes fully frozen")
+                
                 if cfg.get("refine_reset_wdir", True):
                     base_model.graph_learner.W_dir.data.zero_()
                     if is_main_process() and not sweep_mode:
@@ -5254,7 +5269,7 @@ def train(
             final_edges_02 = int((A_final_np > 0.2).sum())
             
             print("\n" + "=" * 70)
-            print("TRAINING COMPLETE (V8.39 - Enforced Skeleton Freeze)")
+            print("TRAINING COMPLETE (V8.40 - Code Review Fixes)")
             print("=" * 70)
             print("CONVENTION INFO (for paper writeup):")
             print(" Model output: A[i,j] = 'i causes j' (causal convention)")
