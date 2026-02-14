@@ -417,6 +417,15 @@ DEFAULT_CONFIG = {
     # invariance gradient dominates W_dir updates.
     "refine_recon_factor": 0.1, # V8.36: λ_recon *= 0.1 in REFINE (0.5→0.05)
     "refine_inv_factor": 5.0, # V8.36: λ_inv *= 5.0 in REFINE (2.0→10.0)
+
+    # V8.39: ENFORCE skeleton freeze contract in REFINE
+    # PROBLEM: "Skeleton FROZEN with 16 edges" was a message, not a constraint.
+    # K_dir=30 still used, edge swaps still ran, direction losses on 30 edges.
+    # FIX: Store E_frozen explicitly, mask everything to it in REFINE.
+    "refine_hard_freeze": True,      # V8.39: Hard-enforce freeze (no swaps, E_frozen mask)
+    "refine_reset_wdir": True,       # V8.39: Reset W_dir at REFINE start (fresh direction)
+    "refine_dir_lr_boost": 5.0,      # V8.39: Multiply W_dir LR by this for first N REFINE epochs
+    "refine_dir_lr_boost_epochs": 10, # V8.39: Number of REFINE epochs with LR boost
     
     # V8.34: Temperature must stay high enough for direction learning.
     # V8.22 set final=0.1 → sigmoid saturates, direction gradients die.
@@ -2746,6 +2755,7 @@ def train_epoch(
     lambda_direction_boost: float = 2.0, # V8.11: Boost direction loss when frozen
     frozen_lambda_budget: float = None, # V8.16: Frozen budget after early_excellence
     peakiness: Dict = None, # V8.17: Peakiness metrics from previous epoch
+    E_frozen_mask: Optional[torch.Tensor] = None, # V8.39: Frozen skeleton edge mask for REFINE
 ) -> Tuple[Dict[str, float], Optional[Dict[int, float]]]:
     """Train one epoch with all bells and whistles."""
     model.train()
@@ -2936,6 +2946,10 @@ def train_epoch(
         edge_explore_n_swaps = config.get("edge_explore_n_swaps", 3)
         edge_explore_start = config.get("edge_explore_start_epoch", 10)
         
+        # V8.39: Hard-disable edge swaps in REFINE when E_frozen is active
+        if E_frozen_mask is not None and config.get("refine_hard_freeze", True):
+            edge_explore_enabled = False
+        
         if (edge_explore_enabled and epoch >= edge_explore_start and
             epoch % edge_explore_interval == 0 and batch_idx == 0):
             with torch.no_grad():
@@ -3122,6 +3136,18 @@ def train_epoch(
             batch_metrics["dir_mask_boundary"] = dir_mask_info["boundary_score"]
             batch_metrics["dir_mask_k_min"] = dir_mask_info["k_min"]
             batch_metrics["dir_mask_k_max"] = dir_mask_info["k_max"]
+        
+        # =====================================================================
+        # V8.39: Override dir_mask with E_frozen in REFINE
+        # This is the KEY FIX: all direction losses are now computed ONLY on
+        # the frozen skeleton edges, not on the adaptive K_dir set.
+        # The skeleton freeze becomes a real constraint, not just a message.
+        # =====================================================================
+        if E_frozen_mask is not None and config.get("refine_hard_freeze", True):
+            dir_mask = E_frozen_mask
+            dir_mask_n_edges = int(E_frozen_mask.sum().item()) // 2  # undirected count
+            batch_metrics["dir_mask_n_edges"] = dir_mask_n_edges
+            batch_metrics["dir_mask_source"] = "E_frozen"  # diagnostic
         
         # =====================================================================
         # V8.32 FIX: Direction Decisiveness Penalty
@@ -3678,15 +3704,17 @@ def train(
     """
     # V8.24 VERSION CHECK - if you see this, the new code is running!
     print("=" * 70)
-    print("[V8.38] RC-GNN Training Script — GUARANTEED REFINE PHASE:")
-    print("  - V8.38 FIX: Early stopping blocked in PRUNE (only fires in REFINE)")
-    print("  -   PROBLEM: patience=32 expired at epoch 66, REFINE starts at 78")
-    print("  -   8/10 tasks never reached REFINE — the direction-fixing phase")
-    print("  -   FIX: Reset patience in PRUNE (like DISC), only allow stop in REFINE")
-    print("  - V8.37: Adaptive K_dir via gap heuristic (masking direction losses)")
-    print("  - V8.36: REFINE reweighting (λ_recon×0.1, λ_inv×5.0)")
-    print("  - Inherits V8.35: F1-based edge swap, soft prune, eval consistency")
-    print("  - Inherits V8.34: symmetric W_mag/W_dir, τ floor=0.80, τ_final=0.50")
+    print("[V8.39] RC-GNN Training Script — ENFORCED SKELETON FREEZE:")
+    print("  - V8.39 FIX: REFINE enforces skeleton freeze contract")
+    print("  -   PROBLEM: 'Skeleton FROZEN with 16 edges' was a message, not a constraint")
+    print("  -   K_dir=30 still used, edge swaps ran, direction on 30 edges")
+    print("  -   FIX 1: Store E_frozen explicitly, mask ALL direction losses to E_frozen")
+    print("  -   FIX 2: Disable edge swaps in REFINE (no skeleton mutations)")
+    print("  -   FIX 3: Reset W_dir at REFINE start (escape wrong-direction basin)")
+    print("  -   FIX 4: LR boost for W_dir in early REFINE (5x for 10 epochs)")
+    print("  - Inherits V8.38: Early stopping blocked in PRUNE")
+    print("  - Inherits V8.37: Adaptive K_dir (used only in DISC/PRUNE)")
+    print("  - Inherits V8.36: REFINE reweighting (λ_recon×0.1, λ_inv×5.0)")
     print("=" * 70)
     
     # Merge config with defaults
@@ -4127,6 +4155,10 @@ def train(
     # V8.5: Skeleton mask for Stage D (frozen structure)
     skeleton_mask = None # Will be computed at end of Stage S (PRUNE)
     
+    # V8.39: E_frozen — the frozen skeleton edge mask for REFINE enforcement
+    E_frozen_mask = None  # Will be set at PRUNE→REFINE transition
+    refine_start_epoch = None  # Will be set at PRUNE→REFINE transition
+    
     # V8.11: Skeleton freeze for direction-only training
     skeleton_frozen = False
     skeleton_freeze_counter = 0 # Consecutive epochs with Skel >= threshold
@@ -4147,6 +4179,26 @@ def train(
         if ddp and hasattr(train_loader.sampler, "set_epoch"):
             train_loader.sampler.set_epoch(epoch)
         
+        # =====================================================================
+        # V8.39: LR boost for W_dir in early REFINE epochs
+        # Gives direction parameters extra gradient step size to escape from
+        # the reset zero-init and quickly find invariance-aligned directions.
+        # =====================================================================
+        if E_frozen_mask is not None and refine_start_epoch is not None:
+            refine_epoch = epoch - refine_start_epoch
+            boost_duration = cfg.get("refine_dir_lr_boost_epochs", 10)
+            base_lr_dir = cfg["lr"] * cfg.get("lr_dir_multiplier", 5.0) * 0.5  # 0.5 from Stage3 LR reduction
+            if refine_epoch >= 0 and refine_epoch < boost_duration:
+                boost_factor = cfg.get("refine_dir_lr_boost", 5.0)
+                boosted_lr = base_lr_dir * boost_factor
+                optimizer.param_groups[1]["lr"] = boosted_lr  # param_groups[1] = dir_params
+                if refine_epoch == 0 and is_main_process() and not sweep_mode:
+                    print(f" | [V8.39] W_dir LR boosted: {base_lr_dir:.1e} → {boosted_lr:.1e} (×{boost_factor}) for {boost_duration} epochs")
+            elif refine_epoch == boost_duration:
+                optimizer.param_groups[1]["lr"] = base_lr_dir  # Restore normal
+                if is_main_process() and not sweep_mode:
+                    print(f" | [V8.39] W_dir LR boost ended, restored to {base_lr_dir:.1e}")
+        
         # Train epoch (with calibration parameters and skeleton mask for Stage D)
         train_metrics, dro_weights = train_epoch(
             model, train_loader, optimizer, device,
@@ -4162,6 +4214,7 @@ def train(
             lambda_direction_boost=lambda_direction_boost, # V8.11: Boost factor
             frozen_lambda_budget=frozen_lambda_budget, # V8.16: Cap λb after convergence
             peakiness=prev_peakiness, # V8.17: Data-adaptive scheduling
+            E_frozen_mask=E_frozen_mask, # V8.39: Frozen skeleton mask for REFINE
         )
         
         scheduler.step()
@@ -4610,13 +4663,18 @@ def train(
                 k_dir_n = train_metrics.get("dir_mask_n_edges", -1)
                 k_dir_gap = train_metrics.get("dir_mask_gap", 0)
                 k_dir_bnd = train_metrics.get("dir_mask_boundary", 0)
+                dir_mask_src = train_metrics.get("dir_mask_source", "adaptive")
                 if k_dir_n >= 0:
                     target_e = cfg.get("target_edges", 13)
                     true_e = int(A_true.sum()) if A_true is not None else -1
                     ratio = k_dir_n / max(true_e, 1) if true_e > 0 else -1
-                    status = "[OK]" if 0.5 <= ratio <= 2.5 else ("[TIGHT]" if ratio < 0.5 else "[WIDE]")
-                    print(f" | V8.37: K_dir={k_dir_n} (gap={k_dir_gap:.3f} bnd={k_dir_bnd:.3f}) "
-                          f"true={true_e} target={target_e} ratio={ratio:.1f}x {status}")
+                    if dir_mask_src == "E_frozen":
+                        print(f" | V8.39: K_dir={k_dir_n} [E_FROZEN] "
+                              f"true={true_e} target={target_e} ratio={ratio:.1f}x")
+                    else:
+                        status = "[OK]" if 0.5 <= ratio <= 2.5 else ("[TIGHT]" if ratio < 0.5 else "[WIDE]")
+                        print(f" | V8.37: K_dir={k_dir_n} (gap={k_dir_gap:.3f} bnd={k_dir_bnd:.3f}) "
+                              f"true={true_e} target={target_e} ratio={ratio:.1f}x {status}")
 
                 # V8.36: Log effective loss weights when REFINE reweighting is active
                 refine_start_ep = int(cfg.get("stage2_end", 0.70) * cfg.get("epochs", 110))
@@ -4751,13 +4809,41 @@ def train(
                 
                 skel_edge_count = int(skeleton_mask.sum().item()) // 2 # Undirected
                 
+                # =============================================================
+                # V8.39: Store E_frozen as explicit mask for REFINE enforcement
+                # This mask will be passed to train_epoch to override dir_mask,
+                # ensuring ALL direction losses are computed ONLY on these edges.
+                # =============================================================
+                E_frozen_mask = skeleton_mask.float()  # [d, d] binary symmetric
+                E_frozen_n = skel_edge_count  # undirected edge count
+                
                 if is_main_process() and not sweep_mode:
                     print(f" | [LOCK] STAGE D: Skeleton FROZEN with {skel_edge_count} undirected edges")
                     print(f" | Threshold: {skel_thresh:.4f}, Now learning DIRECTION only")
+                    print(f" | [V8.39] E_frozen stored: {E_frozen_n} undirected edges → ALL direction losses masked to these")
                     
                     # Save skeleton for analysis
                     np.save(output_path / "skeleton_mask.npy", skeleton_mask.cpu().numpy())
                     np.save(output_path / "A_stage_s.npy", A_stage_s_np)
+                
+                # =============================================================
+                # V8.39: Reset W_dir at REFINE start (escape wrong-direction basin)
+                # The old W_dir committed to wrong directions during DISC/PRUNE
+                # under L_recon dominance. A fresh start with boosted LR gives
+                # invariance a fair shot on the frozen skeleton.
+                # =============================================================
+                if cfg.get("refine_reset_wdir", True):
+                    base_model.graph_learner.W_dir.data.zero_()
+                    if is_main_process() and not sweep_mode:
+                        print(f" | [V8.39] W_dir RESET to 0 (all dir=0.5). Fresh direction learning in REFINE.")
+                
+                # V8.39: LR boost for W_dir in early REFINE
+                refine_lr_boost = cfg.get("refine_dir_lr_boost", 5.0)
+                for pg in optimizer.param_groups:
+                    # param_groups[1] is dir_params (W_dir) — set during optimizer creation
+                    pass  # We'll apply per-epoch below
+                # Store refine start epoch for LR boost scheduling
+                refine_start_epoch = epoch
         
         # =================================================================
         # MODEL SELECTION - Strict Budget-Window Guard (V8)
@@ -5110,6 +5196,14 @@ def train(
                     print(f" |   λ_recon: {lr_base:.2f} → {lr_base*rr:.3f} (×{rr})")
                     print(f" |   λ_inv:   {li_base:.2f} → {li_base*ri:.1f} (×{ri})")
                     print(f" |   → Invariance is now the DOMINANT signal for direction")
+                    if E_frozen_mask is not None:
+                        n_frozen = int(E_frozen_mask.sum().item()) // 2
+                        print(f" | [V8.39] ENFORCED FREEZE CONTRACT:")
+                        print(f" |   E_frozen: {n_frozen} undirected edges")
+                        print(f" |   Edge swaps: DISABLED")
+                        print(f" |   Dir losses: MASKED to E_frozen only")
+                        print(f" |   W_dir: {'RESET' if cfg.get('refine_reset_wdir', True) else 'kept'}")
+                        print(f" |   LR boost: ×{cfg.get('refine_dir_lr_boost', 5.0)} for {cfg.get('refine_dir_lr_boost_epochs', 10)} epochs")
             patience_counter = 0  # fresh start for new stage
             prev_stage = cur_stage
         
@@ -5160,7 +5254,7 @@ def train(
             final_edges_02 = int((A_final_np > 0.2).sum())
             
             print("\n" + "=" * 70)
-            print("TRAINING COMPLETE (V8.38 - Guaranteed REFINE Phase)")
+            print("TRAINING COMPLETE (V8.39 - Enforced Skeleton Freeze)")
             print("=" * 70)
             print("CONVENTION INFO (for paper writeup):")
             print(" Model output: A[i,j] = 'i causes j' (causal convention)")
