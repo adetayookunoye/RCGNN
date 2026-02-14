@@ -44,6 +44,7 @@ from scripts.synth_bench import (
     apply_mnar,
     add_heteroscedastic_noise,
     add_drift,
+    apply_missingness,
 )
 
 
@@ -321,11 +322,14 @@ def _generate_benchmark_config(output_dir, config, track_policy=False):
             else: # mnar
                 M = apply_mnar(S, corruption["missing_rate"], seed=seed + env_idx * 10000 + sample_idx * 100 + 1000)
             
-            # Add noise
-            X = add_heteroscedastic_noise(S, M, corruption["noise_scale"], seed=seed + env_idx * 10000 + sample_idx * 100 + 2000)
+            # Add noise to ALL values
+            X = add_heteroscedastic_noise(S, corruption["noise_scale"], seed=seed + env_idx * 10000 + sample_idx * 100 + 2000)
             
-            # Add drift
-            X = add_drift(X, M, corruption["drift_magnitude"], drift_type="ar1", seed=seed + env_idx * 10000 + sample_idx * 100 + 3000)
+            # Add drift to ALL values
+            X = add_drift(X, corruption["drift_magnitude"], drift_type="ar1", seed=seed + env_idx * 10000 + sample_idx * 100 + 3000)
+            
+            # Apply missingness - set missing values to 0 (CORRECT SEMANTICS)
+            X = apply_missingness(X, M)
             
             X_all.append(X)
             M_all.append(M)

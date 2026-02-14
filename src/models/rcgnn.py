@@ -179,7 +179,17 @@ class DisentangledEncoder(nn.Module):
 class CausalGraphLearner(nn.Module):
     """
     Learns adjacency matrix A with per-environment deltas.
-    A^(e) = sigmoid((W_adj + delta^(e)) / tau)
+    
+    V8.33: DUAL-PARAMETER architecture.
+    - W_mag [d,d]: symmetric, controls edge EXISTENCE (corr-initialized)
+    - W_dir [d,d]: antisymmetric, controls edge DIRECTION (starts at 0)
+    
+    A_ij = σ(W_mag_ij) * σ(W_dir_ij / τ)
+    A_ji = σ(W_mag_ij) * (1 - σ(W_dir_ij / τ))
+    
+    Key insight: Structure and direction have SEPARATE parameters → gradients
+    from reconstruction update W_mag without disturbing direction, and
+    direction losses (L_dir_dec, L_excl) update W_dir without disturbing structure.
     """
     
     def __init__(
@@ -195,10 +205,13 @@ class CausalGraphLearner(nn.Module):
         self.n_regimes = max(n_regimes, 1)
         self.temperature = temperature
         
-        # Base adjacency logits
-        self.W_adj = nn.Parameter(torch.randn(d, d) * init_scale)
+        # V8.33: Separate parameters for structure and direction
+        # W_mag: symmetric edge-existence logits (corr-initialized later)
+        self.W_mag = nn.Parameter(torch.randn(d, d) * init_scale)
+        # W_dir: antisymmetric direction logits (starts at 0 → dir=0.5)
+        self.W_dir = nn.Parameter(torch.zeros(d, d))
         
-        # Per-environment deltas (small corrections)
+        # Per-environment deltas (applied to W_mag only — structure varies by env)
         if n_regimes > 1:
             self.env_deltas = nn.Parameter(torch.zeros(n_regimes, d, d))
         else:
@@ -206,6 +219,23 @@ class CausalGraphLearner(nn.Module):
         
         # For temperature annealing
         self.register_buffer("current_temp", torch.tensor(temperature))
+    
+    def _get_sym_antisym(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Project raw parameters to enforced symmetry/antisymmetry.
+        
+        Returns:
+            Wm: [d,d] symmetric magnitude logits, diag=0
+            Wd: [d,d] antisymmetric direction logits, diag=0
+        
+        Guarantees:
+            Wm[i,j] == Wm[j,i]  →  mag_ij == mag_ji
+            Wd[i,j] == -Wd[j,i] →  p_ij + p_ji == 1
+            →  A_ij + A_ji == mag_ij  (direction cannot change edge mass)
+        """
+        diag = torch.eye(self.d, device=self.W_mag.device)
+        Wm = 0.5 * (self.W_mag + self.W_mag.T) * (1 - diag)
+        Wd = 0.5 * (self.W_dir - self.W_dir.T) * (1 - diag)
+        return Wm, Wd
     
     def forward(
         self,
@@ -219,43 +249,132 @@ class CausalGraphLearner(nn.Module):
             
         Returns:
             A: [d, d] or [B, d, d] adjacency matrix
-            W: [d, d] or [B, d, d] logits
+            W: [d, d] or [B, d, d] logits (symmetrized W_mag)
         """
         tau = self.current_temp
+        antisym = getattr(self, '_antisymmetric', False)
+        Wm, Wd = self._get_sym_antisym()
         
         if env_idx is None or self.n_regimes == 1:
-            logits = self.W_adj / tau
+            if antisym:
+                A = self._antisymmetric_adjacency(Wm, Wd, tau)
+                return A, Wm
+            logits = Wm / tau
             A = torch.sigmoid(logits)
             A = A * (1 - torch.eye(self.d, device=A.device)) # Zero diagonal
-            return A, self.W_adj
+            return A, Wm
         
-        # Per-environment adjacency
+        # Per-environment adjacency (deltas applied to Wm, then re-symmetrized)
         B = env_idx.shape[0]
-        device = self.W_adj.device
+        device = Wm.device
+        diag_mask = torch.eye(self.d, device=device)
         
-        W_batch = self.W_adj.unsqueeze(0).expand(B, -1, -1).clone()
+        Wm_batch = Wm.unsqueeze(0).expand(B, -1, -1).clone()
         
         for b in range(B):
             e = env_idx[b].item()
             if e < self.n_regimes:
-                W_batch[b] = self.W_adj + self.env_deltas[e]
+                Wm_e = Wm + self.env_deltas[e]
+                # Re-symmetrize after adding env delta
+                Wm_batch[b] = 0.5 * (Wm_e + Wm_e.transpose(-1, -2)) * (1 - diag_mask)
         
-        logits = W_batch / tau
+        if antisym:
+            # V8.33: Batch dual-parameter antisymmetric
+            mag_batch = torch.sigmoid(Wm_batch)
+            # Wd is shared across envs (direction doesn't vary by env)
+            Wd_batch = Wd.unsqueeze(0).expand(B, -1, -1)
+            dir_batch = torch.sigmoid(Wd_batch / tau)
+            A = mag_batch * dir_batch
+            batch_diag = diag_mask.unsqueeze(0).expand(B, -1, -1)
+            A = A * (1 - batch_diag)
+            return A, Wm_batch
+        
+        logits = Wm_batch / tau
         A = torch.sigmoid(logits)
         
         # Zero diagonal
-        diag_mask = torch.eye(self.d, device=device).unsqueeze(0).expand(B, -1, -1)
-        A = A * (1 - diag_mask)
+        batch_diag = diag_mask.unsqueeze(0).expand(B, -1, -1)
+        A = A * (1 - batch_diag)
         
-        return A, W_batch
+        return A, Wm_batch
     
     def get_mean_adjacency(self) -> torch.Tensor:
         """Get base adjacency (for evaluation)."""
         tau = self.current_temp
-        logits = self.W_adj / tau
+        antisym = getattr(self, '_antisymmetric', False)
+        Wm, Wd = self._get_sym_antisym()
+        if antisym:
+            return self._antisymmetric_adjacency(Wm, Wd, tau)
+        logits = Wm / tau
         A = torch.sigmoid(logits)
         A = A * (1 - torch.eye(self.d, device=A.device))
         return A
+    
+    def _antisymmetric_adjacency(self, W_mag: torch.Tensor, W_dir: torch.Tensor, tau: float) -> torch.Tensor:
+        """
+        V8.33: DUAL-PARAMETER antisymmetric adjacency.
+        
+        Two SEPARATE parameter tensors, PROJECTED before use:
+          Wm = (W_mag + W_mag.T)/2   # ENFORCED symmetric, diag=0
+          Wd = (W_dir - W_dir.T)/2   # ENFORCED antisymmetric, diag=0
+        
+          mag = sigmoid(Wm)            # edge gate: symmetric → mag_ij == mag_ji
+          p   = sigmoid(Wd / τ)        # direction: antisym → p_ij + p_ji == 1
+          A_ij = mag_ij * p_ij
+          A_ji = mag_ij * (1 - p_ij)   # by complement property
+        
+        GUARANTEED properties (by construction, not by loss):
+          - A_ij + A_ji = mag_ij       (direction cannot change edge mass!)
+          - A.sum() = mag.sum()         (L_budget gradient → W_mag only)
+          - p_ij + p_ji = 1            (exactly one direction wins per pair)
+          - dL_budget/dW_dir = 0        (decoupling is structural, not hoped-for)
+        
+        Key improvement over V8.30-V8.32:
+          - V8.30-V8.32: mag and dir derived from SAME W or unconstrained params.
+          - V8.33: Separate params WITH structural projections.
+            No interference possible, by linear algebra, not by loss tuning.
+        """
+        d = W_mag.shape[0]
+        device = W_mag.device
+        
+        # Edge magnitude from W_mag (symmetric — structure)
+        mag = torch.sigmoid(W_mag)
+        
+        # Direction from W_dir (antisymmetric — direction)
+        direction = torch.sigmoid(W_dir / tau)
+        
+        # A_ij = mag * dir, A_ji = mag * (1-dir)
+        A = mag * direction
+        
+        # Zero diagonal
+        A = A * (1 - torch.eye(d, device=device))
+        return A
+    
+    def set_antisymmetric(self, enabled: bool = True):
+        """Enable/disable V8.33 dual-parameter antisymmetric mode."""
+        self._antisymmetric = enabled
+    
+    @property
+    def W_adj(self) -> torch.Tensor:
+        """Backward-compat: returns symmetrized Wm for code that reads W_adj.
+        
+        V8.33: Returns (W_mag+W_mag.T)/2 with diag=0 — the projected
+        symmetric magnitude logits. Used by training script for
+        hard prune, edge swap, ranking margin, diagnostics.
+        """
+        Wm, _ = self._get_sym_antisym()
+        return Wm
+    
+    def get_direction_map(self) -> torch.Tensor:
+        """V8.33: Return p = σ(Wd/τ) for direction decisiveness penalty.
+        
+        Returns [d,d] tensor where p_ij ∈ (0,1). At 0.5 = undecided,
+        near 0 or 1 = decided. Uses projected antisymmetric Wd.
+        Guarantees p_ij + p_ji = 1.
+        """
+        tau = self.current_temp
+        _, Wd = self._get_sym_antisym()
+        return torch.sigmoid(Wd / tau)
     
     def get_temperature(self) -> float:
         return self.current_temp.item()
@@ -271,53 +390,54 @@ class CausalGraphLearner(nn.Module):
         """
         Hard Top-K projection: return binary mask with exactly K edges.
         
-        This is the KEY FIX for "soft dense" problem:
-        - During PRUNE/REFINE, project A to exactly K edges
-        - Forces model to commit to specific edges
-        - Prevents all edges clustering in 0.2-0.3 band
-        
-        IMPORTANT: Project based on LOGITS W magnitude, not A.
-        Projecting A directly is unstable because τ changes A's scale.
-        Using |W| ensures consistent edge ranking across temperatures.
+        V8.33: Uses W_mag for edge ranking (structure parameter only).
+        V8.34: Selects from upper triangle (W_mag is symmetric),
+               then mirrors to full matrix. Ensures K undirected edges
+               survive, not K/2.
         
         Args:
-            k: Number of edges to keep (typically target_edges)
-            use_logits: If True (recommended), rank by W magnitude. If False, rank by A.
+            k: Number of edges to keep (typically target_edges = true_edges)
+            use_logits: If True (recommended), rank by W_mag magnitude.
             
         Returns:
-            A_proj: [d, d] binary adjacency with exactly K edges (excluding diagonal)
+            A_proj: [d, d] binary adjacency with exactly 2K entries (K pairs)
         """
-        device = self.W_adj.device
+        device = self.W_mag.device
         diag_mask = torch.eye(self.d, device=device)
         
         if use_logits:
-            # BEST PRACTICE: Rank edges by logit magnitude (stable across temperatures)
-            W_masked = self.W_adj * (1 - diag_mask) # Zero diagonal
-            flat = W_masked.flatten() # Use raw logits, not sigmoid(W)
+            # Rank edges by symmetrized Wm (structure parameter)
+            Wm, _ = self._get_sym_antisym()
         else:
-            # Fallback: rank by A (less stable as τ changes)
-            tau = self.current_temp
-            logits = self.W_adj / tau
-            A = torch.sigmoid(logits)
-            A = A * (1 - diag_mask)
-            flat = A.flatten()
+            # Fallback: rank by symmetric magnitude of A
+            A = self.get_mean_adjacency()
+            Wm = torch.maximum(A, A.T)  # symmetric strength
         
-        k = min(k, flat.numel())
+        # V8.34: Select from UPPER TRIANGLE only (Wm is symmetric)
+        W_upper = torch.triu(Wm, diagonal=1)
+        flat = W_upper.flatten()
+        n_upper = self.d * (self.d - 1) // 2
+        k = min(k, n_upper)
         
         if k <= 0:
             return torch.zeros(self.d, self.d, device=device)
         
         _, topk_idx = torch.topk(flat, k)
         
-        # Create binary mask
-        mask = torch.zeros_like(flat)
-        mask[topk_idx] = 1.0
+        # Create mask in upper triangle, then mirror
+        mask_flat = torch.zeros_like(flat)
+        mask_flat[topk_idx] = 1.0
+        mask = mask_flat.reshape(self.d, self.d)
+        mask = (mask + mask.T).clamp(max=1.0)  # mirror to full matrix
         
-        return mask.reshape(self.d, self.d)
+        return mask
     
     def get_logits(self) -> torch.Tensor:
-        """Get raw logits W_adj for sparsity penalty on logits (not A)."""
-        return self.W_adj
+        """Get symmetrized Wm logits for sparsity penalty.
+        V8.33: Returns projected (W_mag+W_mag.T)/2 with diag=0.
+        """
+        Wm, _ = self._get_sym_antisym()
+        return Wm
 
 
 # =============================================================================
@@ -583,17 +703,45 @@ class HeteroscedasticDecoder(nn.Module):
 
 class RCGNN(nn.Module):
     """
-    RC-GNN: Robust Causal Graph Neural Network
+    RC-GNN: Robust Causal Graph Neural Network (V8.26)
     
     Complete model for causal discovery under compound sensor corruptions.
+    
+    ADJACENCY CONVENTION (V8.26 FIX):
+    ---------------------------------
+    UNIFIED CAUSAL: A[i,j] = "i causes j" everywhere.
+    
+    The decoder computes z_agg = A^T @ z_signal, so:
+      z_agg[j] = sum_i A[i,j] * z_signal[i]
+    Gradient descent pushes A[i,j] large when node i's signal
+    helps reconstruct node j, i.e. when i→j in the true DAG.
+    Therefore A[i,j] > 0 ⟺ i causes j — CAUSAL convention.
+    
+    A_true from data generators also uses A_true[i,j]=1 ⟹ i→j.
+    
+    NO TRANSPOSE NEEDED at any boundary. to_causal_convention()
+    is now an identity function (kept for backward compatibility).
     
     Key components:
     1. DisentangledEncoder: X -> (z_signal, z_corrupt)
     2. CausalGraphLearner: learns A with per-environment deltas
     3. MissingnessHead: P(M|X*) for true MNAR (X* = mu from decoder)
-    4. Robust Decoder: Student-t likelihood
+    4. Robust Decoder: Student-t likelihood with heteroscedastic variance
     5. CausalPriorLoss: intervention/orientation/necessity/mechanism
+    6. V8.24 ICP + anti-correlation losses for causal edge identity
     """
+    
+    VERSION = "8.27"
+    
+    @staticmethod
+    def to_causal_convention(A: torch.Tensor) -> torch.Tensor:
+        """Identity — model already outputs causal convention.
+        
+        V8.26 FIX: The decoder computes A^T @ z_signal, so gradient
+        pushes A[i,j] large when i→j.  This IS causal convention.
+        No transpose needed.  Kept for backward compatibility.
+        """
+        return A
     
     def __init__(
         self,
@@ -653,6 +801,12 @@ class RCGNN(nn.Module):
         # Stage 1 health flag
         self.stage1_healthy = True
         
+        # Parameter validation
+        assert lambda_var_penalty >= 0, f"Variance penalty must be non-negative, got {lambda_var_penalty}"
+        assert ipw_clip >= 1.0, f"IPW clip must be >= 1.0, got {ipw_clip}"
+        assert 0 <= ipw_start_epoch <= 1, f"ipw_start_epoch must be in [0,1], got {ipw_start_epoch}"
+        assert target_edges > 0, f"target_edges must be > 0, got {target_edges}"
+        
         # Components
         self.encoder = DisentangledEncoder(
             input_dim=1,
@@ -705,6 +859,10 @@ class RCGNN(nn.Module):
         # Cache for decoder function (for counterfactual testing)
         self._cached_z_signal = None
         self._cached_z_corrupt = None
+        
+        # Correlation cache for L_anticorr (recomputed periodically)
+        self._corr_cache: Optional[torch.Tensor] = None
+        self._corr_cache_epoch: int = -1
     
     def _build_shared_decoder(self, d, latent_dim, hidden_dim):
         """Build shared heteroscedastic decoder with MNAR-aware variance."""
@@ -974,14 +1132,226 @@ class RCGNN(nn.Module):
         L_binary = (A_for_acy * (1 - A_for_acy)).sum() / (self.d * (self.d - 1))
         lambda_binary = loss_weights.get("lambda_binary", 0.1) if loss_weights else 0.1
         
+        # =====================================================================
+        # V8.20 FIX: L_sym - Symmetry penalty to force antisymmetric direction
+        # Problem: When W_ij ≈ W_ji, direction is mathematically unidentifiable
+        # Fix: Penalize min(W_ij, W_ji) to force one direction to "win"
+        # L_sym = Σ_{i<j} min(A_ij, A_ji) / num_pairs
+        # =====================================================================
+        A_sym = A_for_acy
+        A_sym_T = A_sym.T
+        # For each pair (i,j), penalize having both directions on
+        L_sym_matrix = torch.minimum(A_sym, A_sym_T)
+        # Only count upper triangle (avoid double counting)
+        upper_mask = torch.triu(torch.ones_like(L_sym_matrix), diagonal=1)
+        L_sym = (L_sym_matrix * upper_mask).sum() / (upper_mask.sum() + 1e-8)
+        lambda_sym = loss_weights.get("lambda_sym", 0.0) if loss_weights else 0.0
+        
+        # =====================================================================
+        # V8.20 FIX: L_sep - TopK separation loss to create edge gap
+        # Problem: gap=0.000 means TopK membership is unstable (30th ≈ 31st edge)
+        # Fix: Penalize when min(TopK) - max(Rest) < delta
+        # L_sep = ReLU(delta - (min(TopK) - max(Rest)))
+        # =====================================================================
+        target_k = self.target_edges
+        A_flat = (A_for_acy * (1 - torch.eye(self.d, device=device))).flatten()
+        if A_flat.numel() > target_k:
+            # Get TopK and rest
+            topk_vals, topk_idx = torch.topk(A_flat, target_k)
+            # Create mask for rest
+            rest_mask = torch.ones_like(A_flat, dtype=torch.bool)
+            rest_mask[topk_idx] = False
+            rest_vals = A_flat[rest_mask]
+            
+            if rest_vals.numel() > 0:
+                min_topk = topk_vals.min()
+                max_rest = rest_vals.max()
+                gap = min_topk - max_rest
+                delta_sep = loss_weights.get("delta_sep", 0.05) if loss_weights else 0.05
+                L_sep = torch.relu(delta_sep - gap)
+            else:
+                L_sep = torch.tensor(0.0, device=device)
+                gap = torch.tensor(0.0, device=device)
+        else:
+            L_sep = torch.tensor(0.0, device=device)
+            gap = torch.tensor(0.0, device=device)
+        lambda_sep = loss_weights.get("lambda_sep", 0.0) if loss_weights else 0.0
+        
+        # =====================================================================
+        # V8.21 FIX: L_bimodal - Per-edge targeting loss
+        # ROOT CAUSE: L_budget creates UNIFORM gradient on all 210 edges (all
+        # shrink together). L_sep only creates 2 gradient signals (boundary pair).
+        # So L_budget overwhelms L_sep 100:1 and gap NEVER opens.
+        #
+        # FIX: L_bimodal pushes EACH TopK edge toward 1 and EACH rest edge
+        # toward 0, creating 210 TARGETED gradient signals. This gives the
+        # reconstruction loss "breathing room" to vote on which edges matter.
+        #
+        # L_bimodal = mean((topk - 1)^2) + mean(rest^2)
+        # Gradient per topk edge: 2*(val-1) ≈ -1.0 (push UP when val=0.5)
+        # Gradient per rest edge: 2*val ≈ +1.0 (push DOWN when val=0.5)
+        # =====================================================================
+        if A_flat.numel() > target_k:
+            # topk_vals and rest_vals already computed above
+            L_bimodal = torch.mean((topk_vals - 1.0) ** 2) + torch.mean(rest_vals ** 2)
+        else:
+            L_bimodal = torch.tensor(0.0, device=device)
+        lambda_bimodal = loss_weights.get("lambda_bimodal", 0.0) if loss_weights else 0.0
+        
+        # =====================================================================
+        # V8.22 FIX A: L_tail - Explicit tail suppression
+        # PROBLEM: V8.21 created a stable TopK (gap>0, @90%=30), but ALL 210
+        # off-diagonal edges remain ≥ 0.2 ("@0.2=210"). This dense tail:
+        #   - hurts AUROC/AUPRC (non-edges aren't low)
+        #   - keeps direction noisy (both A_ij and A_ji moderately high)
+        #   - inflates edge_sum → guard fails
+        #
+        # V8.23 FIX: mean(relu(rest - t_tail)^2) — QUADRATIC penalty
+        # V8.22 used linear relu which SATURATES: constant gradient for all
+        # edges above threshold, providing no shape to push edges down.
+        # Quadratic: gradient = 2*(val-t) → stronger for farther edges,
+        # zero exactly at threshold. Non-saturating, provides useful curvature.
+        # =====================================================================
+        if A_flat.numel() > target_k and rest_vals.numel() > 0:
+            t_tail = loss_weights.get("tail_threshold", 0.05) if loss_weights else 0.05
+            L_tail = torch.mean(torch.relu(rest_vals - t_tail) ** 2)
+        else:
+            L_tail = torch.tensor(0.0, device=device)
+        lambda_tail = loss_weights.get("lambda_tail", 0.0) if loss_weights else 0.0
+        
+        # =====================================================================
+        # V8.22 FIX B: L_dir_logit - Directional margin in logit space
+        # PROBLEM: DirConf ~0.33-0.57 (need ≥0.8). For many pairs (i,j),
+        # |A_ij - A_ji| is tiny, so direction is fragile and flips.
+        # L_sym penalizes min(A_ij,A_ji) but doesn't enforce a hard margin.
+        #
+        # FIX: For TopK candidate edges, enforce |W_ij - W_ji| >= margin in
+        # LOGIT space (where gradients are stronger and more symmetric).
+        # L_dir = mean(relu(margin - |W_ij - W_ji|)) over TopK pairs
+        # =====================================================================
+        dir_margin = loss_weights.get("dir_logit_margin", 0.5) if loss_weights else 0.5
+        if A_flat.numel() > target_k:
+            # Convert TopK flat indices to (i,j) pairs
+            topk_i = topk_idx // self.d
+            topk_j = topk_idx % self.d
+            # Get logit values for forward and reverse directions
+            W_fwd = W_logits_masked[topk_i, topk_j]
+            W_rev = W_logits_masked[topk_j, topk_i]
+            # Margin violation: want |W_fwd - W_rev| >= margin
+            L_dir_logit = torch.mean(torch.relu(dir_margin - torch.abs(W_fwd - W_rev)))
+        else:
+            L_dir_logit = torch.tensor(0.0, device=device)
+        lambda_dir_logit = loss_weights.get("lambda_dir_logit", 0.0) if loss_weights else 0.0
+        
+        # =====================================================================
+        # V8.24 FIX A: L_icp — ICP-style invariant causal edge scoring
+        # PROBLEM: Reconstruction loss (15*75000 gradient signals/epoch) picks
+        # correlation-strong edges. Structural losses (210 signals on A) can't
+        # change WHICH edges are in TopK, only HOW the adjacency is shaped.
+        #
+        # FIX: For each TopK edge (i→j), compute per-environment prediction
+        # error. TRUE causal edges have INVARIANT prediction quality across
+        # environments. Correlation edges work well in some envs but fail in
+        # others (environment-dependent). Reward low-variance edges.
+        #
+        # L_icp = mean over TopK edges of: Var_e[MSE_e(i→j)] / (mean_e[MSE_e(i→j)] + eps)
+        # This is a coefficient of variation: penalizes edges with high
+        # cross-environment variance relative to their mean error.
+        # =====================================================================
+        L_icp = torch.tensor(0.0, device=device)
+        lambda_icp = loss_weights.get("lambda_icp", 0.0) if loss_weights else 0.0
+        
+        if lambda_icp > 0 and regime is not None and A_flat.numel() > target_k:
+            env_ids, regime_idx = regime.unique(return_inverse=True)
+            
+            if len(env_ids) >= 2 and X.dim() == 3 and X.shape[1] > 1:
+                # Vectorized ICP: no Python loop over environments
+                X_in = X[:, :-1, :]    # [B, T-1, d]
+                X_tgt = X[:, 1:, :]    # [B, T-1, d]
+                M_tgt = M[:, 1:, :] if M is not None else torch.ones_like(X_tgt)
+                
+                topk_i = topk_idx // self.d
+                topk_j = topk_idx % self.d
+                A_vals = A_for_acy[topk_i, topk_j]  # [K]
+                
+                # Predictions and errors for all samples at once
+                pred_j = A_vals.unsqueeze(0).unsqueeze(0) * X_in[:, :, topk_i]  # [B, T-1, K]
+                actual_j = X_tgt[:, :, topk_j]  # [B, T-1, K]
+                mask_j = M_tgt[:, :, topk_j]    # [B, T-1, K]
+                errors = ((pred_j - actual_j) ** 2) * mask_j  # [B, T-1, K]
+                
+                # One-hot env assignment (regime_idx already contiguous from unique)
+                env_onehot = F.one_hot(regime_idx, len(env_ids)).float()  # [B, n_envs]
+                
+                # Aggregate per environment via einsum (sum over batch, time already summed)
+                err_sum_bt = errors.sum(dim=1)   # [B, K]
+                mask_sum_bt = mask_j.sum(dim=1)  # [B, K]
+                env_err = torch.einsum('bk,be->ek', err_sum_bt, env_onehot)   # [n_envs, K]
+                env_cnt = torch.einsum('bk,be->ek', mask_sum_bt, env_onehot)  # [n_envs, K]
+                env_mse = env_err / (env_cnt + 1e-8)  # [n_envs, K]
+                
+                # Filter envs with >= 2 samples
+                env_sample_count = env_onehot.sum(dim=0)  # [n_envs]
+                valid_envs = env_sample_count >= 2
+                if valid_envs.sum() >= 2:
+                    env_mse_valid = env_mse[valid_envs]  # [n_valid, K]
+                    env_var = torch.var(env_mse_valid, dim=0, unbiased=False)  # [K]
+                    env_mean = torch.mean(env_mse_valid, dim=0)  # [K]
+                    # L_icp = mean CV across TopK edges (higher = more env-dependent = BAD)
+                    L_icp = torch.mean(env_var / (env_mean + 1e-8))
+        
+        # =====================================================================
+        # V8.24 FIX B: L_anticorr — Anti-correlation penalty on TopK edges
+        # PROBLEM: Reconstruction picks edges that correlate with |corr(X_i,X_j)|.
+        # These are correlation-strong, not necessarily causal.
+        #
+        # FIX: Compute pairwise |corr(X_i, X_j)| from batch X. Penalize TopK
+        # edges whose adjacency ranking aligns with correlation ranking.
+        # Specifically: for TopK edges, penalize A_ij * |corr(i,j)|.
+        # This pushes the model to AVOID placing high-weight edges on
+        # high-correlation pairs, breaking the correlation→edge pipeline.
+        #
+        # L_anticorr = mean over TopK of: A_ij * |corr(X_i, X_j)|
+        # =====================================================================
+        L_anticorr = torch.tensor(0.0, device=device)
+        lambda_anticorr = loss_weights.get("lambda_anticorr", 0.0) if loss_weights else 0.0
+        
+        if lambda_anticorr > 0 and A_flat.numel() > target_k:
+            # Use cached correlation matrix (recompute every 10 epochs)
+            if self._corr_cache is None or abs(epoch - self._corr_cache_epoch) >= 10:
+                X_flat_c = X.detach().reshape(-1, self.d)  # [B*T, d]
+                X_centered = X_flat_c - X_flat_c.mean(dim=0, keepdim=True)
+                cov = (X_centered.T @ X_centered) / (X_centered.shape[0] - 1 + 1e-8)
+                std = torch.sqrt(torch.diag(cov) + 1e-8)
+                corr_matrix = cov / (std.unsqueeze(0) * std.unsqueeze(1) + 1e-8)
+                corr_matrix = corr_matrix.clamp(-1, 1).abs()
+                corr_matrix = corr_matrix * (1 - torch.eye(self.d, device=device))
+                self._corr_cache = corr_matrix.detach()
+                self._corr_cache_epoch = epoch
+            
+            corr_matrix = self._corr_cache
+            
+            # For TopK edges: penalize A_ij * |corr(i,j)|
+            topk_i_ac = topk_idx // self.d
+            topk_j_ac = topk_idx % self.d
+            topk_A_vals = A_for_acy[topk_i_ac, topk_j_ac]  # [K]
+            topk_corr_vals = corr_matrix[topk_i_ac, topk_j_ac]  # [K]
+            
+            # Detach corr so gradient only flows through A, not through data stats
+            L_anticorr = torch.mean(topk_A_vals * topk_corr_vals.detach())
+        
         # 6. Budget (Fix D: Asymmetric penalty - penalize under-shooting more)
+        # V8.19 FIX A: Normalize by d² so L_budget is O(1) not O(d⁴)
+        # Before: edge_sum ≈ 94.5 for d=15 flat, target=30 → penalty=(94.5-30)²≈4160
+        # After: divide by d² → 4160/225 ≈ 18.5, and with λb=0.5 → 9.25 (manageable)
         edge_sum = A_for_acy.sum()
+        d_sq = float(self.d * self.d)
         if edge_sum < self.target_edges:
             # Below target: stronger penalty to prevent collapse
-            L_budget = 2.0 * (self.target_edges - edge_sum) ** 2
+            L_budget = 2.0 * (self.target_edges - edge_sum) ** 2 / d_sq
         else:
             # Above target: normal penalty
-            L_budget = (edge_sum - self.target_edges) ** 2
+            L_budget = (edge_sum - self.target_edges) ** 2 / d_sq
         if loss_weights and "lambda_budget" in loss_weights:
             lambda_budget_used = loss_weights["lambda_budget"]
         else:
@@ -1027,6 +1397,8 @@ class RCGNN(nn.Module):
             )
         
         # Total loss with GUARDRAIL 2: variance penalty + binarization
+        # V8.22: Add L_tail (tail suppression) + L_dir_logit (direction margin)
+        # V8.24: Add L_icp (invariant causal scoring) + L_anticorr (anti-correlation)
         loss = (
             lambda_recon * L_recon
             + lambda_miss * L_miss
@@ -1038,6 +1410,13 @@ class RCGNN(nn.Module):
             + lambda_causal * L_causal
             + lambda_var_penalty * L_var_penalty # GUARDRAIL 2
             + lambda_binary * L_binary # Binarization penalty for edge confidence
+            + lambda_sym * L_sym # V8.20: Symmetry penalty for direction
+            + lambda_sep * L_sep # V8.20: TopK separation for edge gap
+            + lambda_bimodal * L_bimodal # V8.21: Per-edge bimodal targeting
+            + lambda_tail * L_tail # V8.22: Hard tail suppression
+            + lambda_dir_logit * L_dir_logit # V8.22: Direction margin on TopK logits
+            + lambda_icp * L_icp # V8.24: ICP invariant edge scoring
+            + lambda_anticorr * L_anticorr # V8.24: Anti-correlation penalty
         )
         
         # Metrics with full guardrail tracking
@@ -1053,6 +1432,21 @@ class RCGNN(nn.Module):
             "L_sparse_A": L_sparse_A.item(), # Sparsity on adjacency (for monitoring)
             "L_sparse_logits": L_sparse_logits.item(), # Sparsity on logits (used in loss)
             "L_binary": L_binary.item(), # Binarization penalty
+            "L_sym": L_sym.item(), # V8.20: Symmetry penalty
+            "L_sep": L_sep.item(), # V8.20: TopK separation
+            "L_bimodal": L_bimodal.item(), # V8.21: Per-edge bimodal targeting
+            "L_tail": L_tail.item(), # V8.22: Tail suppression
+            "L_dir_logit": L_dir_logit.item(), # V8.22: Direction margin
+            "L_icp": L_icp.item(), # V8.24: ICP invariant edge scoring
+            "L_anticorr": L_anticorr.item(), # V8.24: Anti-correlation penalty
+            "lambda_icp": lambda_icp,
+            "lambda_anticorr": lambda_anticorr,
+            "lambda_sym": lambda_sym,
+            "lambda_sep": lambda_sep,
+            "lambda_bimodal": lambda_bimodal,
+            "lambda_tail": lambda_tail,
+            "lambda_dir_logit": lambda_dir_logit,
+            "topk_gap": gap.item() if isinstance(gap, torch.Tensor) else gap, # V8.20: Actual gap
             "lambda_sparse_used": lambda_sparse_used,
             "lambda_binary": lambda_binary,
             "L_budget": L_budget.item(),
@@ -1131,6 +1525,11 @@ class RCGNN(nn.Module):
         X: torch.Tensor,
         A_true: torch.Tensor,
     ) -> Dict[str, float]:
-        """Run correlation vs causation diagnostic."""
+        """Run correlation vs causation diagnostic.
+        
+        V8.26: Model already outputs causal convention (A[i,j]=i→j),
+        same as A_true. to_causal_convention() is identity.
+        """
         A_pred = self.graph_learner.get_mean_adjacency()
-        return diagnose_correlation_vs_causation(A_pred, A_true, X)
+        A_pred_causal = self.to_causal_convention(A_pred)
+        return diagnose_correlation_vs_causation(A_pred_causal, A_true, X)

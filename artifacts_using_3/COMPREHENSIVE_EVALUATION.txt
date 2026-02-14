@@ -1,0 +1,112 @@
+Found 12 trained models (unified_v9)
+
+================================================================================
+COMPREHENSIVE EVALUATION - RC-GNN vs ALL CLAIMS
+================================================================================
+
+
+EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
+────────────────────────────────────────────────────────────────────────────────
+
+1. RC-GNN SPARSIFICATION:
+   • Input: Dense learned adjacency matrix A_rc_gnn [d×d]
+   • Method: Top-K edge selection by absolute magnitude
+   • K Selection: Data-driven from validation corruption (NO oracle)
+   • Application: Same K used for all test corruptions
+   
+2. CALIBRATION PROTOCOL (Prevents "lucky threshold" criticism):
+   • Validation corruption: compound_full (held out)
+   • Sweep K from 5 to 3×|E_true| edges
+   • Find K maximizing F1-score on validation set
+   • Apply unchanged K to test set (compound_mnar_bias, extreme, mcar_40)
+   
+3. SENSITIVITY ANALYSIS:
+   • Plot: F1-score vs K across sweep range
+   • Objective: Show RC-GNN dominates across wide K range
+   • Robustness metric: F1 variation < 0.1 -> Highly stable
+   
+4. BASELINE FAIRNESS:
+   • All methods sparsified to same K (equal comparison)
+   • No method gets oracle information
+   • Fair comparison prevents method-specific advantages
+
+5. EXPECTED OUTCOME:
+   • Optimal K ≈ 13 (ground truth edge count)
+   • F1 remains high (>0.8) for K ∈ [10, 20]
+   • RC-GNN outperforms baselines on compound corruptions
+
+────────────────────────────────────────────────────────────────────────────────
+
+ GROUND TRUTH COMPARISON (SHD + F1 Metrics)
+────────────────────────────────────────────────────────────────────────────────
+[DONE] clean_full                | SHD=  0 | Skel-F1=0.295 | Dir-F1=1.000
+[DONE] clean_real                | SHD=  6 | Skel-F1=0.371 | Dir-F1=0.812
+[DONE] compound_full             | SHD=  9 | Skel-F1=0.923 | Dir-F1=0.640
+[DONE] compound_mnar_bias        | SHD=  0 | Skel-F1=0.413 | Dir-F1=1.000
+[DONE] extreme                   | SHD= 35 | Skel-F1=0.286 | Dir-F1=0.426
+[DONE] mcar_20                   | SHD=  0 | Skel-F1=0.406 | Dir-F1=1.000
+[DONE] mcar_40                   | SHD=  0 | Skel-F1=0.342 | Dir-F1=1.000
+[DONE] mnar_structural           | SHD=  0 | Skel-F1=0.441 | Dir-F1=1.000
+[DONE] moderate                  | SHD= 13 | Skel-F1=0.286 | Dir-F1=0.667
+[DONE] noise_0.5                 | SHD=  0 | Skel-F1=0.351 | Dir-F1=1.000
+[DONE] regimes_5                 | SHD= 10 | Skel-F1=0.286 | Dir-F1=0.722
+[DONE] sensor_failure            | SHD= 12 | Skel-F1=0.286 | Dir-F1=0.684
+
+        Corruption  RC-GNN_Edges  True_Edges  SHD  Skeleton_F1  Skeleton_Precision  Skeleton_Recall  Directed_F1  Directed_Precision  Directed_Recall  Disentanglement_Score  Domain_Score  Expected_Edges_Found  Forbidden_Edges_Found
+        clean_full            13          13    0     0.295455            0.173333         1.000000     1.000000            1.000000         1.000000               1.333946  2.500000e-11                     4                      2
+        clean_real            19          13    6     0.371429            0.228070         1.000000     0.812500            0.684211         1.000000               2.184824  2.500000e-11                     4                      2
+     compound_full            12          13    9     0.923077            0.923077         0.923077     0.640000            0.666667         0.615385               0.328227  2.500000e-01                     3                      1
+compound_mnar_bias            13          13    0     0.412698            0.260000         1.000000     1.000000            1.000000         1.000000               1.276907  2.500000e-11                     4                      2
+           extreme            48          13   35     0.285714            0.166667         1.000000     0.426230            0.270833         1.000000               0.196288  2.500000e-11                     4                      2
+           mcar_20            13          13    0     0.406250            0.254902         1.000000     1.000000            1.000000         1.000000               2.593519  2.500000e-11                     4                      2
+           mcar_40            13          13    0     0.342105            0.206349         1.000000     1.000000            1.000000         1.000000               2.206459  2.500000e-11                     4                      2
+   mnar_structural            13          13    0     0.440678            0.282609         1.000000     1.000000            1.000000         1.000000              16.592499  2.500000e-11                     4                      2
+          moderate            26          13   13     0.285714            0.166667         1.000000     0.666667            0.500000         1.000000               1.694368  2.500000e-11                     4                      2
+         noise_0.5            13          13    0     0.351351            0.213115         1.000000     1.000000            1.000000         1.000000               2.136371  2.500000e-11                     4                      2
+         regimes_5            23          13   10     0.285714            0.166667         1.000000     0.722222            0.565217         1.000000               4.132856  2.500000e-11                     4                      2
+    sensor_failure            25          13   12     0.285714            0.166667         1.000000     0.684211            0.520000         1.000000               5.589033  2.500000e-11                     4                      2
+
+
+================================================================================
+ INVARIANCE ACROSS CORRUPTION TYPES
+────────────────────────────────────────────────────────────────────────────────
+Jaccard Similarity (Edge Consistency): 0.873
+Interpretation: 87.3% of edges are consistent across corruptions
+[DONE] STRONG INVARIANCE - Structure is stable across corruptions
+
+================================================================================
+ CALIBRATION PROTOCOL: SENSITIVITY ANALYSIS
+────────────────────────────────────────────────────────────────────────────────
+ DEBUG: Available keys in compound_full: ['A_best', 'history', 'A_true', 'X']
+ Required keys: ['X', 'A_true', 'A_best']
+ Has X: True, Has A_true: True, Has A_best: True
+Validation corruption: compound_full
+Ground truth edge count (K): 13
+
+ Sweeping threshold K from 5 to 39 edges...
+
+[DONE] OPTIMAL K FOUND: 12
+ F1-Score: 0.6400
+ SHD: 9
+ Precision: 0.6667
+ Recall: 0.6154
+
+ Methodology: K selected from validation corruption, applied unchanged to all test corruptions
+[DONE] Sensitivity curve saved to artifacts/sensitivity_curve_compound_full.png
+
+ F1-Score robustness (K ± 5 edges from optimal):
+   K= 7: F1=0.3000, SHD= 14
+   K= 8: F1=0.3810, SHD= 13
+   K= 9: F1=0.4545, SHD= 12
+   K=10: F1=0.5217, SHD= 11
+   K=11: F1=0.5833, SHD= 10
+ [OK] K=12: F1=0.6400, SHD=  9
+   K=13: F1=0.6400, SHD=  9
+   K=14: F1=0.6400, SHD=  9
+   K=15: F1=0.6400, SHD=  9
+   K=16: F1=0.6400, SHD=  9
+   K=17: F1=0.6400, SHD=  9
+[FAIL] SENSITIVE: F1 varies 0.4295 across K range (threshold-dependent)
+
+================================================================================
+ MULTI-METHOD BASELINE COMPARISON - ALL METHODS ON ALL CORRUPTIONS

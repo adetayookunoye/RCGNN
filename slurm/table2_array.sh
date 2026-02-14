@@ -1,11 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=rcgnn_table2
-#SBATCH --partition=gpu_p
-#SBATCH --gres=gpu:A100:1
+#SBATCH --partition=batch
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
-#SBATCH --time=6:00:00
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=512G
+#SBATCH --time=7-00:00:00
 #SBATCH --output=logs/table2_%A_%a.out
 #SBATCH --error=logs/table2_%A_%a.err
 #SBATCH --mail-type=END,FAIL
@@ -39,7 +38,7 @@
 #   4. Writes run_meta.json and evaluation.json
 # ============================================================================
 
-set -euo pipefail
+set -eo pipefail
 
 echo "======================================================"
 echo " RC-GNN TABLE 2 EXPERIMENT"
@@ -57,7 +56,7 @@ cd /scratch/aoo29179/rcgnn
 
 # Load modules
 module load PyTorch/2.1.2-foss-2023a-CUDA-12.1.1
-source ~/.bashrc
+source ~/.bashrc 2>/dev/null || true
 
 # Verify environment
 echo ""

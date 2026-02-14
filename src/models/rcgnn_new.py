@@ -222,8 +222,12 @@ class CausalGraphLearner(nn.Module):
             W: [d, d] or [B, d, d] logits
         """
         tau = self.current_temp
+        antisym = getattr(self, '_antisymmetric', False)
         
         if env_idx is None or self.n_regimes == 1:
+            if antisym:
+                A = self._antisymmetric_adjacency(self.W_adj, tau)
+                return A, self.W_adj
             logits = self.W_adj / tau
             A = torch.sigmoid(logits)
             A = A * (1 - torch.eye(self.d, device=A.device)) # Zero diagonal
@@ -240,6 +244,17 @@ class CausalGraphLearner(nn.Module):
             if e < self.n_regimes:
                 W_batch[b] = self.W_adj + self.env_deltas[e]
         
+        if antisym:
+            # Batch gated antisymmetric (V8.30)
+            S_batch = (W_batch + W_batch.transpose(-1, -2)) / 2
+            mag_batch = torch.sigmoid(S_batch)
+            D_batch = (W_batch - W_batch.transpose(-1, -2)) / (2 * tau)
+            dir_batch = torch.sigmoid(D_batch)
+            A = mag_batch * dir_batch
+            diag_mask = torch.eye(self.d, device=device).unsqueeze(0).expand(B, -1, -1)
+            A = A * (1 - diag_mask)
+            return A, W_batch
+        
         logits = W_batch / tau
         A = torch.sigmoid(logits)
         
@@ -252,10 +267,40 @@ class CausalGraphLearner(nn.Module):
     def get_mean_adjacency(self) -> torch.Tensor:
         """Get base adjacency (for evaluation)."""
         tau = self.current_temp
+        antisym = getattr(self, '_antisymmetric', False)
+        if antisym:
+            return self._antisymmetric_adjacency(self.W_adj, tau)
         logits = self.W_adj / tau
         A = torch.sigmoid(logits)
         A = A * (1 - torch.eye(self.d, device=A.device))
         return A
+    
+    def _antisymmetric_adjacency(self, W: torch.Tensor, tau: float) -> torch.Tensor:
+        """
+        V8.30: GATED antisymmetric adjacency.
+        S = (W+W.T)/2 → mag = σ(S)  (edge existence, sparse)
+        D = (W-W.T)/2τ → dir = σ(D) (direction)
+        A_ij = mag_ij * dir_ij, A_ji = mag_ij * (1-dir_ij)
+        """
+        d = W.shape[0]
+        device = W.device
+        S = (W + W.T) / 2
+        mag = torch.sigmoid(S)
+        D = (W - W.T) / (2 * tau)
+        direction = torch.sigmoid(D)
+        A = mag * direction
+        A = A * (1 - torch.eye(d, device=device))
+        return A
+    
+    def set_antisymmetric(self, enabled: bool = True):
+        """Enable/disable V8.30 gated antisymmetric mode."""
+        self._antisymmetric = enabled
+    
+    def get_direction_map(self) -> torch.Tensor:
+        """V8.32: Return dir = σ((W-W.T)/(2τ)) for direction decisiveness penalty."""
+        tau = self.current_temp
+        D = (self.W_adj - self.W_adj.T) / (2 * tau)
+        return torch.sigmoid(D)
     
     def get_temperature(self) -> float:
         return self.current_temp.item()

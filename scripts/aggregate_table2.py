@@ -150,6 +150,52 @@ def parse_one(eval_path: Path):
             }
             rows.append(row)
     
+    # Method 3: Look for "baselines" dict and "rc_gnn" dict (new format)
+    if not rows and ("baselines" in results or "rc_gnn" in results):
+        # 3a. Process baselines
+        baselines = results.get("baselines", {})
+        if isinstance(baselines, dict):
+            for method_name, metrics in baselines.items():
+                if not isinstance(metrics, dict): continue
+                row = {
+                    "table": table,
+                    "config": config,
+                    "seed": seed,
+                    "method": method_name,
+                    "SHD": metrics.get("SHD"),
+                    "Skeleton_F1": metrics.get("Skeleton_F1"),
+                    "Directed_F1": metrics.get("Directed_F1"),
+                    "AUROC": metrics.get("AUROC"),
+                    "AUPRC": metrics.get("AUPRC"),
+                    "Precision": metrics.get("Directed_Precision"), 
+                    "Recall": metrics.get("Directed_Recall"),     
+                }
+                rows.append(row)
+        
+        # 3b. Process RC-GNN
+        rc_gnn = results.get("rc_gnn", {})
+        # RC-GNN might have "topk" sub-key containing the metrics
+        if "topk" in rc_gnn:
+            metrics = rc_gnn["topk"]
+        else:
+            metrics = rc_gnn
+            
+        if isinstance(metrics, dict) and metrics:
+             row = {
+                "table": table,
+                "config": config,
+                "seed": seed,
+                "method": "RC-GNN",
+                "SHD": metrics.get("SHD"),
+                "Skeleton_F1": metrics.get("Skeleton_F1"),
+                "Directed_F1": metrics.get("Directed_F1"),
+                "AUROC": metrics.get("AUROC"),
+                "AUPRC": metrics.get("AUPRC"),
+                "Precision": metrics.get("Directed_Precision"),
+                "Recall": metrics.get("Directed_Recall"),
+            }
+             rows.append(row)
+
     return rows
 
 

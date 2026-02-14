@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
 """
-Proper evaluation: RC-GNN vs baselines on UCI Air.
+Proper evaluation: RC-GNN vs ALL 7 baselines on UCI Air.
 - Loads best checkpoint
-- Evaluates at optimal threshold
-- Runs NOTEARS baseline
+- Evaluates at optimal threshold and Top-K
+- Runs ALL 7 IID-appropriate baselines with mask handling
 - Reports fair comparison
+
+BASELINES (all IID-appropriate, NO temporal methods):
+  - PC: Constraint-based (Fisher z-test, Meek rules)
+  - GES: Score-based (BIC-greedy DAG search)
+  - NOTEARS: Single-shot acyclicity penalty (linear)
+  - NOTEARS-MLP: Neural NOTEARS (MLP)
+  - GOLEM: Likelihood-based neural DAG learning
+  - DAG-GNN: Graph neural network DAG learning  
+  - GraN-DAG: Gradient-based neural DAG learning
+  - Correlation: Simple correlation baseline (undirected)
 """
 
 import os
@@ -18,6 +28,19 @@ from sklearn.metrics import precision_recall_curve, average_precision_score
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.models.rcgnn import RCGNN
+
+# Import ALL 7 IID-appropriate baselines from centralized module
+from src.training.baselines import (
+    pc_algorithm,
+    ges_algorithm,
+    notears_linear,
+    notears_mlp,
+    golem,
+    dag_gnn,
+    gran_dag,
+    correlation_baseline,
+    impute_with_mask,
+)
 
 
 def compute_metrics(A_pred, A_true, threshold=0.5):
@@ -101,67 +124,17 @@ def top_k_metrics(A_pred, A_true, k=None):
     }
 
 
-def notears_baseline(X, A_true, lambda1=0.1, max_iter=100):
-    """
-    Simple NOTEARS implementation for baseline comparison.
-    X: [N, T, d] or [N, d]
-    """
-    # Flatten time if needed
-    if X.ndim == 3:
-        X_flat = X.reshape(-1, X.shape[-1]) # [N*T, d]
-    else:
-        X_flat = X
-    
-    # Handle NaN by mean imputation
-    X_flat = np.nan_to_num(X_flat, nan=np.nanmean(X_flat, axis=0))
-    
-    # Standardize
-    X_flat = (X_flat - X_flat.mean(axis=0)) / (X_flat.std(axis=0) + 1e-8)
-    
-    d = X_flat.shape[1]
-    n = X_flat.shape[0]
-    
-    # Initialize W
-    W = np.zeros((d, d))
-    
-    # Simple gradient descent on least squares + L1
-    lr = 0.01
-    for _ in range(max_iter):
-        # Gradient of ||X - XW||^2
-        residual = X_flat - X_flat @ W
-        grad = -2 * X_flat.T @ residual / n
-        
-        # Add L1 regularization gradient (soft thresholding direction)
-        grad += lambda1 * np.sign(W)
-        
-        # Zero diagonal (no self-loops)
-        np.fill_diagonal(grad, 0)
-        
-        W = W - lr * grad
-        
-        # Zero diagonal
-        np.fill_diagonal(W, 0)
-    
-    # Threshold to get binary adjacency
-    A_notears = np.abs(W)
-    
-    return A_notears
-
-
-def correlation_baseline(X, A_true, quantile=0.9):
-    """Correlation-based baseline (undirected)."""
-    if X.ndim == 3:
-        X_flat = X.reshape(-1, X.shape[-1])
-    else:
-        X_flat = X
-    
-    X_flat = np.nan_to_num(X_flat, nan=np.nanmean(X_flat, axis=0))
-    
-    d = X_flat.shape[1]
-    C = np.abs(np.corrcoef(X_flat, rowvar=False))
-    np.fill_diagonal(C, 0)
-    
-    return C
+# Local baseline implementations REMOVED - now using centralized module
+# from src/training/baselines.py which includes:
+# - pc_algorithm(Xw, Mw) 
+# - ges_algorithm(Xw, Mw)
+# - notears_linear(Xw, Mw)
+# - notears_mlp(Xw, Mw)
+# - golem(Xw, Mw)
+# - dag_gnn(Xw, Mw)
+# - gran_dag(Xw, Mw)
+# - correlation_baseline(Xw, Mw)
+# All methods handle missingness mask properly via mean imputation.
 
 
 def main():
@@ -172,14 +145,21 @@ def main():
     parser.add_argument('--device', default='cpu')
     args = parser.parse_args()
     
-    print("=" * 60)
-    print("RC-GNN vs Baselines Evaluation")
-    print("=" * 60)
+    print("=" * 70)
+    print("RC-GNN vs ALL 7 BASELINES Evaluation")
+    print("=" * 70)
     
     # Load data
     X = np.load(os.path.join(args.data_root, 'X.npy'))
     A_true = np.load(os.path.join(args.data_root, 'A_true.npy'))
-    M = np.load(os.path.join(args.data_root, 'M.npy'))
+    
+    # Load missingness mask (CRITICAL for fair baseline comparison)
+    M_path = os.path.join(args.data_root, 'M.npy')
+    if os.path.exists(M_path):
+        M = np.load(M_path)
+    else:
+        M = np.ones_like(X)  # No missingness
+        print("[WARN] M.npy not found, assuming no missing data")
     
     print(f"\nDataset: {args.data_root}")
     print(f" X shape: {X.shape}")
@@ -192,9 +172,9 @@ def main():
     results = {}
     
     # ========== RC-GNN ==========
-    print("\n" + "-" * 40)
+    print("\n" + "-" * 50)
     print("RC-GNN (Best Checkpoint)")
-    print("-" * 40)
+    print("-" * 50)
     
     if os.path.exists(args.checkpoint):
         # Load model
@@ -227,66 +207,70 @@ def main():
         print(f" AUPRC: {rcgnn_best['auprc']:.4f}")
         print(f" Top-{num_true_edges} F1: {rcgnn_topk['top_k_f1']:.4f}")
         
-        results['rcgnn'] = {**rcgnn_best, **rcgnn_topk}
+        results['RC-GNN'] = {**rcgnn_best, **rcgnn_topk}
     else:
         print(f" Checkpoint not found: {args.checkpoint}")
-        results['rcgnn'] = None
+        results['RC-GNN'] = None
     
-    # ========== NOTEARS Baseline ==========
-    print("\n" + "-" * 40)
-    print("NOTEARS (Linear, λ=0.1)")
-    print("-" * 40)
+    # ========== ALL 7 BASELINES (with mask handling) ==========
+    print("\n" + "=" * 70)
+    print("RUNNING ALL 7 IID-APPROPRIATE BASELINES")
+    print("(All baselines use missingness mask for proper imputation)")
+    print("=" * 70)
     
-    A_notears = notears_baseline(X, A_true, lambda1=0.1)
-    notears_best = best_threshold_metrics(A_notears, A_true)
-    notears_topk = top_k_metrics(A_notears, A_true, k=num_true_edges)
+    # Define all 7 baselines with their functions
+    baseline_methods = {
+        'Correlation': lambda X, M: correlation_baseline(X, Mw=M),
+        'PC': lambda X, M: pc_algorithm(X, Mw=M),
+        'GES': lambda X, M: ges_algorithm(X, Mw=M),
+        'NOTEARS': lambda X, M: notears_linear(X, Mw=M),
+        'NOTEARS-MLP': lambda X, M: notears_mlp(X, Mw=M),
+        'GOLEM': lambda X, M: golem(X, Mw=M),
+        'DAG-GNN': lambda X, M: dag_gnn(X, Mw=M),
+        'GraN-DAG': lambda X, M: gran_dag(X, Mw=M),
+    }
     
-    print(f" Best threshold: {notears_best['threshold']:.3f}")
-    print(f" F1: {notears_best['f1']:.4f}")
-    print(f" Precision: {notears_best['precision']:.4f}")
-    print(f" Recall: {notears_best['recall']:.4f}")
-    print(f" SHD: {notears_best['shd']}")
-    print(f" AUPRC: {notears_best['auprc']:.4f}")
-    print(f" Top-{num_true_edges} F1: {notears_topk['top_k_f1']:.4f}")
-    
-    results['notears'] = {**notears_best, **notears_topk}
-    
-    # ========== Correlation Baseline ==========
-    print("\n" + "-" * 40)
-    print("Correlation Baseline (Top-k edges)")
-    print("-" * 40)
-    
-    A_corr = correlation_baseline(X, A_true)
-    corr_best = best_threshold_metrics(A_corr, A_true)
-    corr_topk = top_k_metrics(A_corr, A_true, k=num_true_edges)
-    
-    print(f" Best threshold: {corr_best['threshold']:.3f}")
-    print(f" F1: {corr_best['f1']:.4f}")
-    print(f" Precision: {corr_best['precision']:.4f}")
-    print(f" Recall: {corr_best['recall']:.4f}")
-    print(f" SHD: {corr_best['shd']}")
-    print(f" AUPRC: {corr_best['auprc']:.4f}")
-    print(f" Top-{num_true_edges} F1: {corr_topk['top_k_f1']:.4f}")
-    
-    results['correlation'] = {**corr_best, **corr_topk}
+    for method_name, method_fn in baseline_methods.items():
+        print(f"\n{'-'*50}")
+        print(f"{method_name}")
+        print(f"{'-'*50}")
+        
+        try:
+            A_pred = method_fn(X, M)
+            method_best = best_threshold_metrics(A_pred, A_true)
+            method_topk = top_k_metrics(A_pred, A_true, k=num_true_edges)
+            
+            print(f" Best threshold: {method_best['threshold']:.3f}")
+            print(f" F1: {method_best['f1']:.4f}")
+            print(f" Precision: {method_best['precision']:.4f}")
+            print(f" Recall: {method_best['recall']:.4f}")
+            print(f" SHD: {method_best['shd']}")
+            print(f" AUPRC: {method_best['auprc']:.4f}")
+            print(f" Top-{num_true_edges} F1: {method_topk['top_k_f1']:.4f}")
+            
+            results[method_name] = {**method_best, **method_topk}
+        except Exception as e:
+            print(f" ERROR: {str(e)[:80]}")
+            results[method_name] = None
     
     # ========== Summary Table ==========
-    print("\n" + "=" * 60)
-    print("SUMMARY COMPARISON")
-    print("=" * 60)
-    print(f"{'Method':<20} {'F1':>8} {'AUPRC':>8} {'SHD':>6} {'Top-k F1':>10}")
-    print("-" * 60)
+    print("\n" + "=" * 70)
+    print("SUMMARY COMPARISON (RC-GNN vs 7 Baselines)")
+    print("=" * 70)
+    print(f"{'Method':<15} {'F1':>8} {'AUPRC':>8} {'SHD':>6} {'Top-k F1':>10}")
+    print("-" * 70)
     
     for method, m in results.items():
         if m is not None:
-            print(f"{method:<20} {m['f1']:>8.4f} {m['auprc']:>8.4f} {m['shd']:>6} {m['top_k_f1']:>10.4f}")
+            print(f"{method:<15} {m['f1']:>8.4f} {m['auprc']:>8.4f} {m['shd']:>6} {m['top_k_f1']:>10.4f}")
     
     # Save results
     os.makedirs('artifacts/baseline_comparison', exist_ok=True)
     with open('artifacts/baseline_comparison/results.json', 'w') as f:
         json.dump(results, f, indent=2)
     
-    print(f"\nResults saved to artifacts/baseline_comparison/results.json")
+    print(f"\n[DONE] Results saved to artifacts/baseline_comparison/results.json")
+    print(f"[INFO] All 7 baselines used missingness mask for fair comparison")
     
     return results
 

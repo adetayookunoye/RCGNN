@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=rcgnn_table2_driver
-#SBATCH --partition=batch_p
+#SBATCH --partition=batch
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=4G
@@ -29,7 +29,7 @@
 #   artifacts/table2/table2A.tex, table2B.tex, table2C.tex - LaTeX tables
 # ============================================================================
 
-set -euo pipefail
+set -eo pipefail  # Removed -u to avoid unbound variable errors from bashrc
 
 REPO="/scratch/aoo29179/rcgnn"
 SEEDS="0,1,2,3,4"
@@ -49,7 +49,7 @@ echo "======================================================"
 
 # Load modules (keep consistent with your cluster env)
 module load PyTorch/2.1.2-foss-2023a-CUDA-12.1.1
-source ~/.bashrc
+source ~/.bashrc 2>/dev/null || true
 
 echo ""
 echo "Python environment:"
@@ -93,22 +93,22 @@ echo "== C) Submit aggregation job (depends on array) =="
 AGG_JOB_ID=$(sbatch --parsable --dependency=afterany:"$ARRAY_JOB_ID" << 'EOF'
 #!/bin/bash
 #SBATCH --job-name=rcgnn_table2_agg
-#SBATCH --partition=batch_p
+#SBATCH --partition=batch
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
-#SBATCH --time=01:00:00
+#SBATCH --mem=120G
+#SBATCH --time=07:00:00
 #SBATCH --output=logs/table2_agg_%j.out
 #SBATCH --error=logs/table2_agg_%j.err
 #SBATCH --mail-type=END,FAIL
 
-set -euo pipefail
+set -eo pipefail
 
 REPO="/scratch/aoo29179/rcgnn"
 cd "$REPO"
 
 module load PyTorch/2.1.2-foss-2023a-CUDA-12.1.1
-source ~/.bashrc
+source ~/.bashrc 2>/dev/null || true
 
 mkdir -p logs artifacts/table2
 

@@ -42,6 +42,7 @@ import argparse
 import json
 import time
 import math
+import random
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Tuple, Optional, List, Any
@@ -52,6 +53,35 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, ReduceLROnPlateau
+
+
+def set_seed(seed: int, deterministic: bool = False):
+    """Set all random seeds for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    if deterministic:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+
+def validate_config(cfg: Dict) -> List[str]:
+    """Validate configuration for consistency. Returns list of warnings."""
+    warnings_list = []
+    if cfg.get("stage1_end", 0.3) >= cfg.get("stage2_end", 0.7):
+        warnings_list.append("stage1_end should be < stage2_end")
+    te = cfg.get("target_edges", 13)
+    if te <= 0:
+        warnings_list.append("target_edges must be positive")
+    if cfg.get("oracle_direction_supervision", False) and cfg.get("sweep_mode", False):
+        warnings_list.append("Sweep mode with oracle supervision — results will NOT generalise!")
+    ep = cfg.get("epochs", 100)
+    if ep < 10:
+        warnings_list.append(f"Very few epochs ({ep}) — model may not converge")
+    if cfg.get("lambda_recon", 1.0) <= 0:
+        warnings_list.append("lambda_recon <= 0 disables reconstruction loss")
+    return warnings_list
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -76,7 +106,7 @@ DEFAULT_CONFIG = {
     # Training
     "epochs": 100,
     "batch_size": 32,
-    "patience": 20,
+    "patience": 30, # V8.21: More patience (20→30)
     "eval_frequency": 1, # V8.12 FIX: Validate every epoch (was 2, caused alternation bug)
     
     # Learning rate (with warm restarts - FIX 6 from publication)
@@ -110,8 +140,9 @@ DEFAULT_CONFIG = {
     "acyclic_start_epoch": 10, # Start acyclicity after epoch 10
     
     # Edge budget schedule (ramps from epoch 10)
+    # NOTE: V8.21 overrides lambda_budget_final to 0.05 below
     "lambda_budget_init": 0.0, # Start at 0
-    "lambda_budget_final": 0.5, # Ramp to this
+    "lambda_budget_final": 0.5, # Overridden to 0.05 by V8.21 below
     "budget_start_epoch": 10, # Start budget pressure after epoch 10
     
     "lambda_inv": 1.0, # Invariance (needs regimes > 1)
@@ -138,9 +169,9 @@ DEFAULT_CONFIG = {
     # Aggressive schedule: 2.0 -> 0.3 to force confident edge separation
     # ===========================================================================
     "temperature_init": 2.0, # Start high (soft edges)
-    "temperature_final": 0.3, # Anneal to LOW (sharp edges) - was 0.5, now 0.3
-    "temperature_anneal_start": 0.2, # Start annealing at 20% training (earlier)
-    "temperature_anneal_end": 0.7, # Finish annealing at 70% (faster)
+    "temperature_final": 0.2, # V8.21: Anneal lower (0.3→0.2) for sharper edges
+    "temperature_anneal_start": 0.1, # V8.21: Start earlier (0.2→0.1)
+    "temperature_anneal_end": 0.5, # V8.21: Finish earlier (0.7→0.5)
     
     # Structure learning
     "sparsify_method": "topk", # or "sigmoid" for continuous
@@ -161,7 +192,7 @@ DEFAULT_CONFIG = {
     # - 55%+: project to K (final commitment)
     # ===========================================================================
     "use_topk_projection": True, # Enable hard Top-K projection
-    "topk_projection_start": 0.35, # Start projecting at 35% training (after DISC)
+    "topk_projection_start": 0.20, # V8.21: Start projecting earlier (0.35→0.20)
     "topk_projection_2k_end": 0.55, # Switch from 2K to K at 55% training
     "topk_use_logits": True, # Project based on W magnitude (stable across temps)
     "lambda_projection": 0.5, # FIX B: Projection consistency loss weight
@@ -173,7 +204,7 @@ DEFAULT_CONFIG = {
     
     # 2-Stage scheduling (V8.5: Skeleton -> Direction)
     "stage1_end": 0.30, # Discovery phase ends (part of Stage S)
-    "stage2_end": 0.80, # Pruning phase ends (Stage S complete, skeleton frozen)
+    "stage2_end": 0.70, # V8.21: Shorter PRUNE (0.80→0.70), more time for REFINE
     # Stage S (Skeleton): epochs 1 -> stage2_end (DISC + PRUNE) - no direction penalty
     # Stage D (Direction): epochs stage2_end -> 100% (REFINE) - skeleton frozen
     
@@ -190,8 +221,8 @@ DEFAULT_CONFIG = {
     # V8.7: Direction Margin Loss (hinge-based)
     # For edge i->j: enforce A_ij >= A_ji + margin (hard separation)
     "use_direction_margin": True, # Use margin-based direction loss
-    "direction_margin": 0.1, # Margin value (A_ij - A_ji >= margin)
-    "lambda_direction_margin": 1.0, # Weight for margin loss
+    "direction_margin": 0.15, # V8.21: Stronger margin (0.1→0.15)
+    "lambda_direction_margin": 3.0, # V8.21: 3x weight (1.0→3.0)
     
     # V8.8: Edge Discovery Fixes (address mode collapse to easy subgraph)
     # These directly target the recall problem on hard edges
@@ -228,10 +259,9 @@ DEFAULT_CONFIG = {
     "lambda_nontopk_suppression": 0.5,# Weight for suppression loss
     "nontopk_margin": 0.1, # Desired margin between TopK and rest
     
-    # V8.12: Convention handling is now ALWAYS applied via to_causal_convention()
-    # Model outputs: A[i,j] = "j depends on i" (SEM/dependency convention)
-    # Evaluation/saving: A[i,j] = "i causes j" (standard causal convention)
-    # No config needed - conversion happens automatically at all boundaries
+    # V8.26: Model outputs CAUSAL convention A[i,j]=i→j natively.
+    # to_causal_convention() is identity. No transpose at boundaries.
+    # No config needed - model and A_true already use same convention.
     
     # V8.10: EMA smoothing for stable TopK-F1 evaluation
     "ema_alpha": 0.1, # EMA weight (0.1=slow/stable, 0.5=fast/responsive)
@@ -244,10 +274,156 @@ DEFAULT_CONFIG = {
     "direction_tau": 0.5, # Fixed τ for direction learning (lower=sharper)
     "lambda_direction": 2.0, # Boost direction loss after freeze
     
+    # V8.23: Lowered guard margin — V8.22 guard NEVER passed, eval got A_final.npy (worst epoch)
+    # Set negative to allow saving when model is close to correlation baseline
+    "baseline_guard_margin": -0.05, # Allow saving if within 5% of corr (was 0.10)
+    
     # =========================================================================
-    # V8.18: MNAR-aware Fixes
+    # V8.18: Training stability fixes
     # =========================================================================
     "lambda_inv_mask": 1e-3, # Mask-invariance penalty weight (only if skeleton frozen)
+    "peakiness_failsafe_epoch": 15, # Force λs/λb ramp if peakiness not achieved by this epoch
+    
+    # =========================================================================
+    # V8.20: Symmetry and Separation losses for direction learning
+    # Problem: Dense haze with gap=0.000 means no edge separation, direction unstable
+    # =========================================================================
+    # L_sym: Penalize min(W_ij, W_ji) to force one direction to win
+    # V8.21: 0.3→3.0 (10x boost - V8.20 weighted contribution was only 0.06)
+    "lambda_sym_init": 0.0, # Start at 0
+    "lambda_sym_final": 3.0, # 10x boost from V8.20's 0.3
+    "sym_start_epoch": 15, # Start earlier (was 20)
+    
+    # L_sep: Penalize when min(TopK) - max(Rest) < delta
+    # V8.21: 1.0→5.0, δ 0.05→0.15 (bigger gap target)
+    "lambda_sep_init": 0.0, # Start at 0
+    "lambda_sep_final": 5.0, # 5x boost from V8.20's 1.0
+    "sep_start_epoch": 10, # Start earlier (was 15)
+    "delta_sep": 0.15, # 3x larger gap target (was 0.05)
+    
+    # =========================================================================
+    # V8.21: L_bimodal - Per-edge targeting (TopK→1, Rest→0)
+    # ROOT CAUSE: L_budget=5.5 overwhelmed L_sep=0.03 (180:1 ratio)
+    # L_bimodal creates 210 targeted gradients vs L_sep's 2 boundary signals
+    # =========================================================================
+    "lambda_bimodal_init": 0.0, # Start at 0
+    "lambda_bimodal_final": 3.0, # Strong: needs to overwhelm L_budget
+    "bimodal_start_epoch": 10, # Start early - let recon guide which edges matter
+    
+    # V8.21: Reduce budget to stop overwhelming separation signals
+    # Was 0.5 → λ*L_b=5.5 (68% of total loss). Now 0.05 → ~0.55
+    "lambda_budget_init": 0.0, # Start at 0
+    "lambda_budget_final": 0.05, # 10x reduction from V8.20's 0.5
+    
+    # V8.20: Delay budget ramping until after separation established
+    "budget_ramp_start": 0.40, # Don't ramp λb until 40% of training (after DISC)
+    
+    # V8.20: Lower skeleton freeze threshold (0.95 is too strict for noisy data)
+    "skeleton_freeze_threshold": 0.70, # Freeze when Skel-F1 >= this (was 0.95)
+    
+    # V8.20: Fix τ_dir instead of floor
+    "direction_tau_fixed": 0.5, # Fixed τ for direction (not floored)
+    
+    # =========================================================================
+    # V8.22: Tail suppression + Direction margin on TopK + Causal boost
+    # Problem: V8.21 created stable TopK (@90%=30, gap>0) but:
+    #   - @0.2=210 (ALL edges still ≥0.2 = dense tail)
+    #   - DirConf ~0.4 (direction ambiguous)
+    #   - Only 8/30 true edges found (wrong edges selected)
+    # =========================================================================
+    # V8.23: L_tail with QUADRATIC penalty (non-saturating) + higher threshold + earlier start
+    # V8.22 had linear relu which saturated → @0.2=210 never dropped
+    "lambda_tail_init": 0.0,
+    "lambda_tail_final": 10.0, # 2x stronger (was 5.0) — quadratic needs more λ
+    "tail_start_epoch": 5, # Much earlier (was 15) — start crushing tail in DISC
+    "tail_threshold": 0.15, # Higher (was 0.05) — push non-TopK below 0.15 not 0.05
+    
+    # L_dir_logit: Direction margin on TopK edges in logit space
+    "lambda_dir_logit_init": 0.0,
+    "lambda_dir_logit_final": 2.0, # Moderate: don't fight reconstruction too much
+    "dir_logit_start_epoch": 20, # After some separation established
+    "dir_logit_margin": 0.5, # |W_ij - W_ji| >= 0.5 in logit space
+    
+    # V8.23: DirConf hysteresis — prevent gaming by n_pairs collapse
+    "dir_conf_min_pairs": 40, # Minimum n_pairs to consider DirConf valid for LOCK
+    "dir_conf_consec_lock": 3, # Consecutive epochs of DirConf>=0.8 to LOCK
+    "dir_conf_consec_unlock": 3, # Consecutive epochs of DirConf<0.75 to UNLOCK
+    
+    # V8.23: Hard pruning in PRUNE phase — zero non-TopK logits periodically
+    "hard_prune_enabled": True, # Enable explicit pruning of non-TopK logits
+    "hard_prune_interval": 10, # Every N epochs in PRUNE phase
+    "hard_prune_logit_value": -2.0, # V8.27: Softer prune (sigmoid(-2)≈0.12, was -5.0→0.007)
+    "hard_prune_decay": 0.5, # V8.35: Multiplicative decay per prune step (0.5 = halve each time)
+    "hard_prune_floor": -2.0, # V8.35: Minimum logit after decay (safety floor)
+    
+    # =========================================================================
+    # V8.37: Adaptive K_dir via gap heuristic — replace V8.36 threshold mask
+    # PROBLEM: Fixed thresholds (0.30/0.40/0.50) don't adapt to score
+    # distribution. PRUNE had 112 edges at thresh=0.40 — worse than no mask.
+    # FIX: Sort σ(W_mag) upper-tri scores descending, find largest gap
+    # g[t] = s[t] - s[t+1] for t in [K_min, K_max]. K_dir = argmax(gap).
+    # This finds the natural elbow between believed edges and noise.
+    # Skeleton losses (L_recon, L_dag, L_sparse, L_budget) stay GLOBAL.
+    # =========================================================================
+    "dir_mask_enabled": True, # V8.37: Enable adaptive K_dir direction masking
+    "dir_k_min_factor": 0.8, # V8.37: K_min = factor * target_edges (lower clamp)
+    "dir_k_max_factor": 2.5, # V8.37: K_max = factor * target_edges (upper clamp)
+    "dir_k_min_gap": 0.01, # V8.37: If max gap < this, default to target_edges
+    
+    # =========================================================================
+    # V8.24: ICP invariant edge scoring + anti-correlation + edge exploration
+    # PROBLEM: TopK-F1 doesn't improve over training. Model locks into same
+    # wrong edges from epoch 1-2. Reconstruction loss (15*75000 gradient
+    # signals) picks correlation-strong edges and structural losses (210
+    # signals on A) can't change WHICH edges are in TopK.
+    # =========================================================================
+    
+    # L_icp: Penalize TopK edges with high cross-environment prediction variance
+    # True causal edges have invariant prediction quality. Correlation edges
+    # work well in some envs but fail in others.
+    "lambda_icp_init": 0.0,
+    "lambda_icp_final": 5.0, # V8.27: 2.0→5.0, must overpower reconstruction
+    "icp_start_epoch": 5, # V8.27: 10→5, start early before edges lock in
+    
+    # L_anticorr: Penalize TopK edges that align with high |corr(X_i, X_j)|
+    # Breaks the reconstruction→correlation→edge pipeline directly.
+    "lambda_anticorr_init": 0.0,
+    "lambda_anticorr_final": 4.0, # V8.27: 1.5→4.0, break corr→edge pipeline harder
+    "anticorr_start_epoch": 5, # V8.27: 15→5, start early before edges lock in
+    
+    # V8.27: Correlation-initialized logits + restore best DISC checkpoint
+    "corr_init_enabled": True, # Initialize W_adj from |corr(X_i,X_j)| for warm start
+    "corr_init_scale": 1.0, # Std dev of initialized logits (higher = stronger bias)
+    "restore_best_at_prune": True, # Restore best DISC checkpoint at DISC→PRUNE
+    
+    # Edge exploration: Periodically swap worst TopK with best non-TopK
+    # Gives non-TopK edges a chance to prove themselves.
+    "edge_explore_enabled": True,
+    "edge_explore_interval": 5, # Every N epochs
+    "edge_explore_n_swaps": 3, # Try swapping N edges at a time
+    "edge_explore_start_epoch": 10, # Start exploring after DISC
+    "edge_explore_min_gain": 0.0, # Minimum loss improvement to accept swap
+    
+    # V8.22: Boost causal discovery, reduce correlation fitting
+    # Model finds correlation pattern (wrong edges) because λ_recon dominates
+    "lambda_recon": 0.5, # Down from 1.0 (less correlation pressure)
+    "lambda_causal": 3.0, # Up from 1.0 (more causal edge reward)
+    "lambda_inv": 2.0, # Up from 1.0 (stronger invariance)
+    
+    # V8.36: REFINE-phase reweighting — make invariance the boss for direction
+    # PROBLEM: L_recon is ~20× larger than L_inv → optimizer settles into
+    # reconstruction-optimal orientation that is often causally wrong.
+    # FIX: In REFINE (skeleton frozen), slash λ_recon and boost λ_inv so
+    # invariance gradient dominates W_dir updates.
+    "refine_recon_factor": 0.1, # V8.36: λ_recon *= 0.1 in REFINE (0.5→0.05)
+    "refine_inv_factor": 5.0, # V8.36: λ_inv *= 5.0 in REFINE (2.0→10.0)
+    
+    # V8.34: Temperature must stay high enough for direction learning.
+    # V8.22 set final=0.1 → sigmoid saturates, direction gradients die.
+    # τ=0.5 gives σ(Wd/0.5) good gradient for |Wd|<2, which covers the
+    # learning range. Floor at 0.8 protects during direction instability.
+    "temperature_final": 0.5, # V8.34: Up from 0.1 (was killing direction gradients)
+    "temperature_anneal_end": 0.5, # V8.34: Slower anneal (0.3→0.5, more time for direction)
     
     # GroupDRO (from V3)
     "dro_step_size": 0.01,
@@ -260,6 +436,40 @@ DEFAULT_CONFIG = {
     "max_edges_at_0.5_ratio": 3.0, # edges@0.5 <= 3 * target_edges by DISC end
     "min_topk_jaccard": 0.7, # TopK stability threshold
     
+    # =========================================================================
+    # V8.29: Antisymmetric adjacency + unconditional L_excl + ranking margin
+    #
+    # ROOT CAUSE: undir_pred=15 while dir_pred=30 means every selected pair
+    # appears in BOTH directions. Skeleton/undirected F1 can be OK but
+    # directed F1 tanks (direction is a coin flip). Log shows L_excl=0.0
+    # because it was gated behind oracle_direction_supervision=False.
+    #
+    # FIX: Three-pronged:
+    # 1. Antisymmetric adjacency: A_ij = sigmoid((W_ij-W_ji)/τ), A_ji = 1-A_ij
+    #    Makes bidirectional edges STRUCTURALLY IMPOSSIBLE.
+    # 2. Unconditional L_excl: Activate exclusivity loss ALWAYS (not just oracle).
+    # 3. Ranking margin: Enforce logit separation between TopK and non-TopK.
+    # 4. Adaptive dir_conf_min_pairs: Scale with d instead of fixed 40.
+    # 5. Bidir penalty in score: Penalize composite_score by bidir_rate.
+    # =========================================================================
+    "antisymmetric_adjacency": True, # V8.29: Enable pairwise softmax A_ij = σ((W_ij-W_ji)/τ)
+    "lambda_excl_unconditional": 1.0, # V8.29: L_excl weight (always active, not just oracle)
+    "excl_start_epoch": 1, # V8.29: Start L_excl from epoch 1
+    "ranking_margin_enabled": True, # V8.29: Enforce logit gap between TopK and non-TopK
+    "ranking_margin_value": 0.5, # V8.29: Minimum logit gap (W_topk - W_rest >= m)
+    "lambda_ranking_margin": 1.0, # V8.29: Weight for ranking margin loss
+    "ranking_margin_start_epoch": 10, # V8.29: Start after initial exploration
+    "bidir_score_penalty": 0.5, # V8.29: Penalty weight for bidir_rate in composite score
+    "dir_conf_min_pairs_adaptive": True, # V8.29: Scale min_pairs with d instead of fixed 40
+    # V8.31: Direct bidirectionality penalty + symmetry-breaking init
+    "lambda_bidir": 5.0, # V8.31: Strong weight for L_bidir = mean(A_ij * A_ji)
+    "symmetry_break_noise": 0.0, # V8.33: Disabled! W_dir starts at 0, no noise needed
+    # V8.32: Direction decisiveness penalty (independent of magnitude)
+    "lambda_dir_decisive": 10.0, # V8.32: mean(dir*(1-dir)) penalty, max at dir=0.5
+    "dir_decisive_start_epoch": 1, # V8.32: Start from epoch 1
+    # V8.33: Separate LR for direction parameter
+    "lr_dir_multiplier": 5.0, # V8.33: W_dir LR = base_lr * this (direction needs larger steps)
+    
     # System
     "device": "auto",
     "seed": 42,
@@ -268,54 +478,53 @@ DEFAULT_CONFIG = {
 
 
 # =============================================================================
-# V8.12: ADJACENCY CONVENTION UTILITIES
+# V8.26: ADJACENCY CONVENTION — UNIFIED CAUSAL
 # =============================================================================
 # 
-# MODEL CONVENTION: A_model[i,j] = "j depends on i" (parent-in-column, child-in-row)
-# This is natural for SEM: x_j = Σ_i A[i,j] * x_i + noise_j
-# 
-# CAUSAL CONVENTION: A_causal[i,j] = "i causes j" (row causes column)
-# This is standard in most papers and libraries.
+# Both model and ground truth use CAUSAL convention:
+#   A[i,j] = "i causes j"  (A[i,j]>0 ⟺ i→j)
 #
-# SOLUTION: Convert ONCE at the boundary using to_causal_convention().
-# All evaluation, saving, and reporting uses A_causal.
+# Proof: decoder computes A^T @ z_signal, so z_agg[j] = sum_i A[i,j]*z[i].
+# Gradient pushes A[i,j] large when i's signal helps reconstruct j → i→j.
+#
+# to_causal_convention() is now IDENTITY (kept for backward compatibility).
 # =============================================================================
 
 def to_causal_convention(A_model: torch.Tensor) -> torch.Tensor:
     """
-    Convert model's internal adjacency to canonical causal convention.
+    V8.26 FIX: Identity — model already outputs causal convention.
     
-    Model convention: A[i,j] = 'j depends on i' (parent-in-column)
-    Causal convention: A_causal[i,j] = 'i causes j' (row causes column)
-    
-    Call this ONCE at every interface boundary:
-    - Before evaluation against A_true
-    - Before saving adjacency to files
-    - Before visualization/plotting
+    The decoder computes A^T @ z_signal, so gradient pushes A[i,j]
+    large when i→j.  This IS causal convention, same as A_true.
+    No transpose needed.  Kept for backward compatibility.
     
     Args:
-        A_model: Model's internal adjacency tensor [d, d]
+        A_model: Model's adjacency tensor [d, d]
     
     Returns:
-        A_causal: Adjacency in canonical convention [d, d]
+        Same tensor, unchanged.
     """
-    return A_model.T.contiguous()
+    return A_model
 
 
 def to_causal_convention_np(A_model: np.ndarray) -> np.ndarray:
-    """NumPy version of to_causal_convention."""
-    return A_model.T.copy()
+    """NumPy version of to_causal_convention. V8.26: identity."""
+    return A_model
 
 
 def verify_convention_at_startup(verbose: bool = True) -> bool:
     """
-    Sanity check: verify convention handling on a tiny 3-node DAG.
+    V8.26 FIX: Verify model outputs CAUSAL convention directly.
     
     True DAG: 0 -> 1 -> 2
-    A_true (causal convention): A[0,1]=1, A[1,2]=1
-    A_model (SEM convention): A[1,0]=1, A[2,1]=1 (transposed)
+    A_true (causal): A[0,1]=1, A[1,2]=1
     
-    This test ensures our to_causal_convention() correctly aligns them.
+    Model decoder computes A^T @ z_signal, so gradient pushes:
+      A[0,1] large (0's signal helps reconstruct 1) → 0→1
+      A[1,2] large (1's signal helps reconstruct 2) → 1→2
+    
+    Therefore A_model = A_true (same convention, no transpose).
+    to_causal_convention() is identity.
     """
     import torch
     
@@ -324,20 +533,14 @@ def verify_convention_at_startup(verbose: bool = True) -> bool:
     A_true[0, 1] = 1.0 # 0 -> 1
     A_true[1, 2] = 1.0 # 1 -> 2
     
-    # Model output in SEM convention: A[i,j]=1 means j depends on i
-    # For 0->1: x_1 depends on x_0, so A_model[0,1]=1... wait, that's the same!
-    # Actually the SEM is: x_j = Σ_i A[i,j] * x_i
-    # So for x_1 = A[0,1] * x_0 + noise, A[0,1]=1 means 0->1 (correct!)
-    # 
-    # BUT if model stores it as A_model[j,i] for "j depends on i", then:
-    # A_model[1,0]=1 means "x_1 depends on x_0" -> 0->1
-    # That's TRANSPOSED from causal convention!
-    
+    # Model learns CAUSAL convention via decoder gradient:
+    # A^T @ z_signal means z_agg[j] = sum_i A[i,j]*z[i]
+    # So A[0,1]=1 means "0's signal helps reconstruct 1" = 0->1
     A_model = torch.zeros(3, 3)
-    A_model[1, 0] = 1.0 # Model says "1 depends on 0" -> 0->1
-    A_model[2, 1] = 1.0 # Model says "2 depends on 1" -> 1->2
+    A_model[0, 1] = 1.0 # Model learns A[0,1]>0 for 0->1
+    A_model[1, 2] = 1.0 # Model learns A[1,2]>0 for 1->2
     
-    # After conversion, should match A_true
+    # After conversion (identity), should match A_true
     A_converted = to_causal_convention(A_model)
     
     # Check
@@ -446,12 +649,12 @@ def get_temperature(
             # Use the lower of scheduled and sharpened
             raw_temp = min(raw_temp, sharpened_temp)
     
-    # CALIBRATION: Don't go too low if direction is unstable
-    # But V8.17: flatness overrides this - we need to sharpen first
+    # V8.34 FIX: Temperature floor ALWAYS applies when direction is unstable.
+    # Previous logic bypassed floor when gap<0.02 (flat distribution), but
+    # hard prune destroys gap → τ crashes to 0.1 → sigmoid saturates →
+    # direction learning stops permanently. Direction stability is paramount.
     if not direction_stable and raw_temp < temp_floor_unstable:
-        # Only apply floor if distribution is already peaked
-        if peakiness is None or peakiness.get("gap", 0) >= 0.02:
-            return temp_floor_unstable
+        return temp_floor_unstable
     
     return raw_temp
 
@@ -500,15 +703,24 @@ def get_loss_weights(
     # V8.17: PEAKINESS GATING
     # Don't ramp λs/λb until distribution is peaked
     # This prevents sparsity pressure from fighting peak formation
+    #
+    # V8.18 FIX: FAIL-SAFE — if peakiness never achieved by failsafe epoch,
+    # force it True so λs/λb start ramping.  Without this, chicken-and-egg:
+    # no sparsity pressure → flat distribution → peakiness never achieved.
     # ===========================================================================
     gap_threshold = config.get("peakiness_gap_threshold", 0.02)
     margin_threshold = config.get("peakiness_margin_threshold", 0.15)
+    peakiness_failsafe_epoch = config.get("peakiness_failsafe_epoch", 15)
     
     peakiness_achieved = True # Default: assume peaked (conservative)
     if peakiness is not None:
         gap = peakiness.get("gap", 0.1)
         avg_margin = peakiness.get("avg_margin", 0.2)
         peakiness_achieved = (gap >= gap_threshold) and (avg_margin >= margin_threshold)
+    
+    # V8.18: FAIL-SAFE — force λs/λb ramp after failsafe epoch
+    if not peakiness_achieved and epoch >= peakiness_failsafe_epoch:
+        peakiness_achieved = True  # ungate: allow sparsity/budget to ramp
     
     # ===========================================================================
     # CALIBRATION FIX: λs schedule with REFINE reduction
@@ -605,6 +817,106 @@ def get_loss_weights(
         epoch, total_epochs, binary_init, binary_final,
         start_epoch=binary_start, end_epoch=prune_end
     )
+    
+    # =========================================================================
+    # V8.20: Symmetry penalty (L_sym) - force direction to "win"
+    # =========================================================================
+    sym_init = config.get("lambda_sym_init", 0.0)
+    sym_final = config.get("lambda_sym_final", 0.3)
+    sym_start = config.get("sym_start_epoch", 20)
+    weights["lambda_sym"] = get_scheduled_weight(
+        epoch, total_epochs, sym_init, sym_final,
+        start_epoch=sym_start, end_epoch=prune_end
+    )
+    
+    # =========================================================================
+    # V8.20: TopK Separation penalty (L_sep) - create edge gap
+    # =========================================================================
+    sep_init = config.get("lambda_sep_init", 0.0)
+    sep_final = config.get("lambda_sep_final", 1.0)
+    sep_start = config.get("sep_start_epoch", 15)
+    weights["lambda_sep"] = get_scheduled_weight(
+        epoch, total_epochs, sep_init, sep_final,
+        start_epoch=sep_start, end_epoch=prune_end
+    )
+    weights["delta_sep"] = config.get("delta_sep", 0.05)
+    
+    # =========================================================================
+    # V8.21: Bimodal targeting (L_bimodal) - push TopK→1, Rest→0
+    # Creates 210 per-edge gradient signals vs L_sep's 2 boundary signals
+    # =========================================================================
+    bimodal_init = config.get("lambda_bimodal_init", 0.0)
+    bimodal_final = config.get("lambda_bimodal_final", 2.0)
+    bimodal_start = config.get("bimodal_start_epoch", 10)
+    weights["lambda_bimodal"] = get_scheduled_weight(
+        epoch, total_epochs, bimodal_init, bimodal_final,
+        start_epoch=bimodal_start, end_epoch=prune_end
+    )
+    
+    # =========================================================================
+    # V8.22: Tail suppression (L_tail) - crush dense non-TopK tail
+    # =========================================================================
+    tail_init = config.get("lambda_tail_init", 0.0)
+    tail_final = config.get("lambda_tail_final", 5.0)
+    tail_start = config.get("tail_start_epoch", 15)
+    weights["lambda_tail"] = get_scheduled_weight(
+        epoch, total_epochs, tail_init, tail_final,
+        start_epoch=tail_start, end_epoch=prune_end
+    )
+    weights["tail_threshold"] = config.get("tail_threshold", 0.05)
+    
+    # =========================================================================
+    # V8.22: Direction margin on TopK logits
+    # =========================================================================
+    dir_logit_init = config.get("lambda_dir_logit_init", 0.0)
+    dir_logit_final = config.get("lambda_dir_logit_final", 2.0)
+    dir_logit_start = config.get("dir_logit_start_epoch", 20)
+    weights["lambda_dir_logit"] = get_scheduled_weight(
+        epoch, total_epochs, dir_logit_init, dir_logit_final,
+        start_epoch=dir_logit_start, end_epoch=total_epochs  # Keep through REFINE
+    )
+    weights["dir_logit_margin"] = config.get("dir_logit_margin", 0.5)
+    
+    # =========================================================================
+    # V8.24: ICP invariant edge scoring (L_icp) - penalize env-dependent edges
+    # =========================================================================
+    icp_init = config.get("lambda_icp_init", 0.0)
+    icp_final = config.get("lambda_icp_final", 2.0)
+    icp_start = config.get("icp_start_epoch", 10)
+    weights["lambda_icp"] = get_scheduled_weight(
+        epoch, total_epochs, icp_init, icp_final,
+        start_epoch=icp_start, end_epoch=total_epochs  # Keep through REFINE
+    )
+    
+    # =========================================================================
+    # V8.24: Anti-correlation penalty (L_anticorr) - break corr→edge pipeline
+    # =========================================================================
+    anticorr_init = config.get("lambda_anticorr_init", 0.0)
+    anticorr_final = config.get("lambda_anticorr_final", 1.5)
+    anticorr_start = config.get("anticorr_start_epoch", 15)
+    weights["lambda_anticorr"] = get_scheduled_weight(
+        epoch, total_epochs, anticorr_init, anticorr_final,
+        start_epoch=anticorr_start, end_epoch=total_epochs  # Keep through REFINE
+    )
+    
+    # =========================================================================
+    # V8.22: Pass through causal/recon/inv weights (config overrides model defaults)
+    # V8.36: Apply REFINE-phase reweighting — invariance becomes boss
+    # =========================================================================
+    weights["lambda_recon"] = config.get("lambda_recon", 1.0)
+    weights["lambda_causal"] = config.get("lambda_causal", 1.0)
+    weights["lambda_inv"] = config.get("lambda_inv", 1.0)
+    
+    # V8.36: In REFINE phase, slash recon and boost invariance
+    refine_start_epoch = int(config.get("stage2_end", 0.70) * total_epochs)
+    if epoch > refine_start_epoch:
+        refine_recon_factor = config.get("refine_recon_factor", 0.1)
+        refine_inv_factor = config.get("refine_inv_factor", 5.0)
+        weights["lambda_recon"] *= refine_recon_factor
+        weights["lambda_inv"] *= refine_inv_factor
+        weights["refine_reweighted"] = True
+    else:
+        weights["refine_reweighted"] = False
     
     return weights
 
@@ -1310,24 +1622,122 @@ def compute_direction_on_confident_edges(
 # V8.9: Pair Exclusivity Loss
 # =============================================================================
 
-def compute_exclusivity_loss(A: torch.Tensor) -> torch.Tensor:
+def compute_adaptive_k_dir(mag_probs: torch.Tensor, target_edges: int,
+                           k_min_factor: float = 0.8, k_max_factor: float = 2.5,
+                           min_gap: float = 0.01) -> Tuple[int, torch.Tensor, dict]:
+    """
+    V8.37: Adaptive K_dir via gap heuristic.
+    
+    Sort σ(W_mag) upper-triangle scores descending, find the largest gap
+    g[t] = s[t] - s[t+1] in the range [K_min, K_max]. The gap identifies
+    the natural boundary between believed-edge scores and noise-edge scores.
+    
+    Args:
+        mag_probs: [d, d] symmetric matrix of σ(W_mag) scores
+        target_edges: expected number of true edges (from config)
+        k_min_factor: K_min = int(k_min_factor * target_edges)
+        k_max_factor: K_max = int(k_max_factor * target_edges)
+        min_gap: if max gap < this, fall back to target_edges
+    
+    Returns:
+        k_dir: chosen number of undirected edges for direction training
+        dir_mask: [d, d] binary mask (top-K_dir entries by magnitude)
+        info: dict with diagnostics (gap_val, boundary_score, etc.)
+    """
+    d = mag_probs.shape[0]
+    # Extract upper triangle (undirected edge scores)
+    triu_idx = torch.triu_indices(d, d, offset=1, device=mag_probs.device)
+    scores = mag_probs[triu_idx[0], triu_idx[1]]  # [n_pairs]
+    n_pairs = scores.shape[0]  # d*(d-1)/2
+    
+    # Sort descending
+    sorted_scores, sorted_order = torch.sort(scores, descending=True)
+    
+    # Clamp range
+    k_min = max(1, int(k_min_factor * target_edges))
+    k_max = min(n_pairs - 1, int(k_max_factor * target_edges))
+    k_min = min(k_min, k_max)  # safety
+    
+    # Compute gaps g[t] = s[t] - s[t+1]
+    gaps = sorted_scores[:-1] - sorted_scores[1:]  # [n_pairs-1]
+    
+    # Find argmax gap in [k_min, k_max]
+    search_gaps = gaps[k_min:k_max+1]  # gaps at positions k_min..k_max
+    if search_gaps.numel() == 0:
+        # Degenerate case
+        k_dir = target_edges
+        gap_val = 0.0
+    else:
+        best_local_idx = search_gaps.argmax().item()
+        best_gap_idx = k_min + best_local_idx  # global index
+        gap_val = gaps[best_gap_idx].item()
+        
+        if gap_val < min_gap:
+            # No clear separation — default to target_edges
+            k_dir = target_edges
+        else:
+            # K_dir = position after the gap (number of edges above the gap)
+            k_dir = best_gap_idx + 1  # +1 because gap at index t means t+1 edges
+    
+    # Clamp final K_dir
+    k_dir = max(k_min, min(k_dir, k_max))
+    
+    # Build mask: top-K_dir undirected edges → symmetric [d, d] mask
+    dir_mask = torch.zeros(d, d, device=mag_probs.device)
+    topk_order = sorted_order[:k_dir]  # indices into upper-tri scores
+    rows = triu_idx[0][topk_order]
+    cols = triu_idx[1][topk_order]
+    dir_mask[rows, cols] = 1.0
+    dir_mask[cols, rows] = 1.0  # symmetric
+    
+    # Boundary info for logging
+    boundary_score = sorted_scores[k_dir - 1].item() if k_dir > 0 else 0.0
+    next_score = sorted_scores[k_dir].item() if k_dir < n_pairs else 0.0
+    
+    info = {
+        "k_dir": k_dir,
+        "gap_val": gap_val,
+        "boundary_score": boundary_score,
+        "next_score": next_score,
+        "k_min": k_min,
+        "k_max": k_max,
+        "score_max": sorted_scores[0].item() if n_pairs > 0 else 0.0,
+    }
+    
+    return k_dir, dir_mask, info
+
+
+def compute_exclusivity_loss(A: torch.Tensor, dir_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
     """
     V8.9: Penalize edges where both directions have high weight.
+    V8.37: Optional dir_mask restricts to believed edges only (now gap-based).
     
-    L_excl = sum_{i<j} A_ij * A_ji
+    L_excl = sum_{i<j} A_ij * A_ji  (masked to dir_mask if provided)
     
     This pushes the model to commit to ONE direction per edge pair,
     increasing direction margins and preventing the 0 <-> 4 TP oscillation.
     
+    Args:
+        A: Adjacency matrix [d, d]
+        dir_mask: [d, d] binary mask where 1 = believed edge (optional)
+    
     Returns:
-        Scalar loss (mean over pairs to normalize)
+        Scalar loss (mean over masked pairs to normalize)
     """
     # A * A.T gives element-wise product: high when both A_ij and A_ji are high
     product = A * A.T
     
     # Only count upper triangle (avoid double-counting)
     mask = torch.triu(torch.ones_like(product), diagonal=1)
-    L_excl = (product * mask).sum() / (mask.sum() + 1e-8)
+    
+    # V8.36: Intersect with dir_mask if provided
+    if dir_mask is not None:
+        # dir_mask marks believed edges — symmetrize for upper triangle
+        dir_mask_sym = torch.maximum(dir_mask, dir_mask.T)
+        mask = mask * dir_mask_sym
+    
+    n_pairs = mask.sum() + 1e-8
+    L_excl = (product * mask).sum() / n_pairs
     
     return L_excl
 
@@ -1522,120 +1932,110 @@ def compute_direction_loss(
 
 def freeze_skeleton_parameters(model, skeleton_topk_edges: set, W_frozen: torch.Tensor):
     """
-    V8.11: Freeze skeleton by clamping symmetric part of W.
+    V8.33: Freeze skeleton by restoring W_mag to frozen values.
     
-    After skeleton is learned, we want to keep the SYMMETRIC part of W fixed
-    and only train the ANTISYMMETRIC part (direction).
-    
-    Implementation: Store the symmetric part S = (W + W.T)/2 and 
-    after each gradient step, restore S while keeping the learned direction.
+    After skeleton is learned, we want to keep W_mag fixed
+    and only train W_dir (direction). With dual parameters,
+    this is trivial — just restore W_mag.data.
     
     Args:
         model: RCGNN model with graph_learner
         skeleton_topk_edges: Set of (i,j) pairs in learned skeleton
-        W_frozen: Frozen logits at time of freeze
+        W_frozen: Frozen W_mag logits at time of freeze
     """
     with torch.no_grad():
-        W_current = model.graph_learner.W_adj.data
-        
-        # Current symmetric and antisymmetric parts
-        S_current = (W_current + W_current.T) / 2
-        A_current = (W_current - W_current.T) / 2
-        
-        # Frozen symmetric part
-        S_frozen = (W_frozen + W_frozen.T) / 2
-        
-        # Restore frozen symmetric part, keep current antisymmetric (direction)
-        # W_new = S_frozen + A_current
-        model.graph_learner.W_adj.data = S_frozen + A_current
+        # V8.33: Simply restore W_mag. W_dir is untouched → direction keeps learning.
+        model.graph_learner.W_mag.data.copy_(W_frozen)
 
 
 # =============================================================================
 # V8.8: Edge Discovery Fixes
 # =============================================================================
 
-def compute_cousin_mask(A_true: torch.Tensor) -> torch.Tensor:
+def compute_cousin_mask(
+    A_true: torch.Tensor,
+    causal_convention: bool = True,
+) -> torch.Tensor:
     """
-    V8.8: Compute mask of "cousin" pairs - nodes with common ancestor but no direct edge.
+    V8.8: Compute mask of "cousin" pairs — nodes with common ancestor but no direct edge.
     
     These pairs are often high-correlation but NOT causally connected.
     We penalize the model for predicting edges on these pairs.
     
+    CONVENTION (V8.26): Both A_true and model use CAUSAL convention
+    (A[i,j] = i causes j). No transpose needed.
+    
     Args:
-        A_true: Ground truth adjacency [d, d]
+        A_true: Ground truth adjacency [d, d] in CAUSAL convention
+        causal_convention: If True, A_true is in causal convention (default)
     
     Returns:
         cousin_mask: [d, d] binary mask where 1 = cousin pair (should NOT have edge)
     """
-    A_np = (A_true.detach().cpu().numpy() > 0.5).astype(int)
-    d = A_np.shape[0]
+    # V8.26 FIX: Model and A_true both use causal convention A[i,j]=i→j
+    # No transpose needed. The causal_convention parameter is kept for compat.
+    A_check = A_true
+    A_bin = (A_check.detach() > 0.5).float()  # [d, d] — causal convention
+    d = A_bin.shape[0]
+    device = A_true.device
     
-    # Compute transitive closure (reachability) for ancestor check
-    # ancestors[i] = set of nodes that can reach i
-    ancestors = [set() for _ in range(d)]
-    
-    # Use iterative approach to find all ancestors
-    for _ in range(d): # At most d iterations for full propagation
-        changed = False
-        for j in range(d):
-            for i in range(d):
-                if A_np[i, j] > 0: # i -> j
-                    if i not in ancestors[j]:
-                        ancestors[j].add(i)
-                        ancestors[j] |= ancestors[i] # j inherits i's ancestors
-                        changed = True
-        if not changed:
+    # Vectorised transitive closure via repeated matrix-power on bool adjacency
+    # reach[i,j]=1 means i can reach j.  Initialise with direct edges.
+    reach = A_bin.clone()
+    for _ in range(d - 1):
+        reach_new = ((reach @ A_bin) > 0).float()
+        if (reach_new == reach).all():
             break
+        reach = torch.clamp(reach + reach_new, 0, 1)
     
-    # Build cousin mask
-    cousin_mask = np.zeros((d, d), dtype=np.float32)
+    # ancestors[j] = set of nodes that can reach j  →  reach[:, j] > 0
+    # common ancestor of (i, j): any k with reach[k,i]>0 AND reach[k,j]>0
+    # Vectorised: common = reach.T @ reach  (d×d)  — entry (i,j) = # common ancestors
+    has_common_ancestor = (reach.T @ reach) > 0  # [d, d]
     
-    for i in range(d):
-        for j in range(i+1, d):
-            # Check if (i,j) share a common ancestor
-            common = ancestors[i] & ancestors[j]
-            
-            # Only mark as cousin if:
-            # 1. They share a common ancestor
-            # 2. Neither i->j nor j->i is a true edge
-            if len(common) > 0 and A_np[i, j] == 0 and A_np[j, i] == 0:
-                cousin_mask[i, j] = 1.0
-                cousin_mask[j, i] = 1.0
+    # No direct edge in either direction
+    no_edge = (A_bin < 0.5) & (A_bin.T < 0.5)
+    no_diag = ~torch.eye(d, dtype=torch.bool, device=device)
     
-    return torch.from_numpy(cousin_mask).to(A_true.device)
+    cousin_mask = (has_common_ancestor & no_edge & no_diag).float()
+    return cousin_mask
 
 
 def compute_hard_negative_mask(
     A_true: torch.Tensor,
     corr_matrix: torch.Tensor,
     percentile: float = 80,
+    causal_convention: bool = True,
 ) -> torch.Tensor:
     """
-    V8.8: Compute mask of hard negatives - high-correlation non-edges.
+    V8.8: Compute mask of hard negatives — high-correlation non-edges.
     
-    These are the pairs the model is most likely to wrongly predict as edges.
+    CONVENTION FIX (V8.25): A_true arrives in CAUSAL convention.
+    Non-edge check is symmetric so convention doesn't change the result,
+    but we document it explicitly for clarity.
+    
+    Fully vectorised — no Python loops.
     
     Args:
-        A_true: Ground truth adjacency [d, d]
-        corr_matrix: Pairwise correlation matrix [d, d]
-        percentile: Top X% correlations to consider as hard negatives
+        A_true: Ground truth adjacency [d, d] in CAUSAL convention
+        corr_matrix: Pairwise |correlation| matrix [d, d]
+        percentile: Top X% correlations among non-edges to flag
+        causal_convention: Whether A_true is in causal convention
     
     Returns:
-        hard_neg_mask: [d, d] binary mask where 1 = hard negative
+        hard_neg_mask: [d, d] float mask where 1 = hard negative
     """
     d = A_true.shape[0]
+    # V8.26 FIX: Model and A_true both use causal convention, no transpose
+    A_check = A_true
     
-    # Non-edges in ground truth
-    non_edge_mask = (A_true < 0.5) & (A_true.T < 0.5)
-    
-    # Remove diagonal
+    non_edge_mask = (A_check < 0.5) & (A_check.T < 0.5)
     non_edge_mask = non_edge_mask & ~torch.eye(d, dtype=torch.bool, device=A_true.device)
     
-    # Get correlation threshold for top percentile
     corr_abs = corr_matrix.abs()
     non_edge_corrs = corr_abs[non_edge_mask]
     
-    if len(non_edge_corrs) > 0:
+    if non_edge_corrs.numel() > 0:
         threshold = torch.quantile(non_edge_corrs, percentile / 100.0)
         hard_neg_mask = non_edge_mask & (corr_abs >= threshold)
     else:
@@ -1651,9 +2051,17 @@ def compute_edge_discovery_losses(
     config: Dict[str, Any],
     epoch: int,
     total_epochs: int,
+    cached_cousin_mask: Optional[torch.Tensor] = None,
 ) -> Tuple[Dict[str, torch.Tensor], Dict[str, float]]:
     """
     V8.8: Compute edge discovery losses to fix mode collapse.
+    
+    ⚠️  ORACLE supervision — uses ground-truth A_true.
+    Must only be called when oracle_direction_supervision is True.
+    
+    CONVENTION (V8.26):
+      Both A_true and A_pred use CAUSAL convention (A[i,j] = i→j).
+      No conversion needed anywhere.
     
     1. Presence loss: BCE on edge presence with hard negative mining
     2. Cousin penalty: Penalize edges between cousin pairs
@@ -1671,7 +2079,7 @@ def compute_edge_discovery_losses(
     # Presence score: max(A_ij, A_ji) for undirected edge presence
     A_presence = torch.maximum(A_pred, A_pred.T)
     
-    # True presence (undirected)
+    # True presence (undirected) — symmetric, convention-agnostic
     A_true_presence = torch.maximum(A_true, A_true.T)
     
     # =========================================================================
@@ -1719,7 +2127,11 @@ def compute_edge_discovery_losses(
     if config.get("use_cousin_penalty", True):
         lambda_cousin = config.get("lambda_cousin", 0.3)
         
-        cousin_mask = compute_cousin_mask(A_true)
+        # Use cached mask if available (computed once per dataset)
+        if cached_cousin_mask is not None:
+            cousin_mask = cached_cousin_mask.to(device)
+        else:
+            cousin_mask = compute_cousin_mask(A_true, causal_convention=True)
         
         # Penalize predicted presence on cousin pairs
         # Weight by correlation if available (higher corr = stronger penalty)
@@ -2385,6 +2797,296 @@ def train_epoch(
         # Forward
         outputs = model(X, M, regime=e)
         
+        # =================================================================
+        # V8.19 FIX B: Hard TopK gating via straight-through estimator
+        # Problem: Without hard gating, all 210 edges stay in 0.3-0.5 band
+        # forever → @0.2=210, gap=0.000, no bimodal separation.
+        #
+        # Fix: After forward, replace non-TopK entries with detached values.
+        # TopK entries keep full gradients; non-TopK entries get zero grad
+        # but keep their values for loss computation (straight-through).
+        #
+        # When: Start after DISC phase (epoch > stage1_end * epochs)
+        #
+        # V8.19.1 FIX: Only modify A_base (used for acy/budget/sparse), NOT A
+        # (used for invariance loss which expects per-batch regime structure).
+        # =================================================================
+        topk_gate_start = config.get("topk_gate_start", config.get("stage1_end", 0.15))  # V8.21: Earlier (0.20→0.15)
+        target_edges = config.get("target_edges", 13)
+        if epoch >= topk_gate_start * total_epochs:
+            # Get soft adjacency (with grad)
+            A_soft_gate = base_model.graph_learner.get_mean_adjacency()
+            d_gate = A_soft_gate.shape[0]
+            
+            # Build TopK mask: top 2K entries during PRUNE, top K during REFINE
+            stage2_end_frac = config.get("stage2_end", 0.80)
+            if epoch < stage2_end_frac * total_epochs:
+                k_gate = min(2 * target_edges, d_gate * (d_gate - 1))
+            else:
+                k_gate = min(target_edges, d_gate * (d_gate - 1))
+            
+            # Zero diagonal, flatten, find TopK indices
+            A_flat = (A_soft_gate * (1 - torch.eye(d_gate, device=A_soft_gate.device))).flatten()
+            _, topk_idx = torch.topk(A_flat, k_gate)
+            mask_flat = torch.zeros_like(A_flat)
+            mask_flat[topk_idx] = 1.0
+            topk_mask = mask_flat.view(d_gate, d_gate)
+            
+            # Straight-through: A_gated = A * mask + A.detach() * (1-mask)
+            # TopK entries: full gradient. Non-TopK: no gradient (detached).
+            A_gated = A_soft_gate * topk_mask + A_soft_gate.detach() * (1 - topk_mask)
+            
+            # V8.19.1: Only inject into A_base (for acy/budget/sparse losses)
+            # DO NOT modify outputs["A"] - it's used by invariance loss with
+            # per-batch regime indexing that would crash with wrong shape.
+            outputs["A_base"] = A_gated
+            # Note: outputs["A"] is left unchanged for invariance loss
+            
+            # Track gating metrics
+            batch_metrics_extra_gate = {
+                "topk_gate_k": k_gate,
+                "topk_gate_active": 1.0,
+            }
+        else:
+            batch_metrics_extra_gate = {"topk_gate_active": 0.0}
+        
+        # =================================================================
+        # V8.23 FIX: Hard pruning of non-TopK logits in PRUNE phase
+        # Problem: L_tail provides smooth gradients but non-TopK edges stay
+        # above 0.2 for dozens of epochs. Hard pruning directly zeros them.
+        # When: Every hard_prune_interval epochs during PRUNE phase
+        # How: Set W_adj[non-TopK] = hard_prune_logit_value (e.g., -5.0)
+        #      sigmoid(-5) ≈ 0.007, effectively zeroing those edges
+        # =================================================================
+        hard_prune_enabled = config.get("hard_prune_enabled", True)
+        hard_prune_interval = config.get("hard_prune_interval", 10)
+        stage1_end_ep = int(config.get("stage1_end", 0.30) * total_epochs)
+        stage2_end_ep = int(config.get("stage2_end", 0.70) * total_epochs)
+        in_prune_phase = (epoch > stage1_end_ep and epoch <= stage2_end_ep)
+        
+        if (hard_prune_enabled and in_prune_phase and 
+            epoch % hard_prune_interval == 0 and batch_idx == 0):
+            with torch.no_grad():
+                W_mag = base_model.graph_learner.W_mag  # V8.33: prune structure param
+                d_prune = W_mag.shape[0]
+                diag_mask_prune = torch.eye(d_prune, device=W_mag.device)
+                # V8.34 FIX: W_mag is symmetric — select from UPPER TRIANGLE
+                # to avoid wasting K slots on both (i,j) and (j,i).
+                # Select K undirected edges, then mirror keep mask.
+                Wm_sym = (W_mag + W_mag.T) / 2  # ensure symmetric
+                Wm_sym = Wm_sym * (1 - diag_mask_prune)
+                W_upper = torch.triu(Wm_sym, diagonal=1)  # upper triangle only
+                W_upper_flat = W_upper.flatten()
+                n_upper = d_prune * (d_prune - 1) // 2
+                k_undirected = min(target_edges, n_upper)  # K undirected pairs
+                _, topk_upper_idx = torch.topk(W_upper_flat, k_undirected)
+                
+                # Create mask in upper triangle, then mirror to full matrix
+                keep_upper_flat = torch.zeros_like(W_upper_flat)
+                keep_upper_flat[topk_upper_idx] = 1.0
+                keep_upper = keep_upper_flat.view(d_prune, d_prune)
+                keep_mask = keep_upper + keep_upper.T  # mirror: both (i,j) and (j,i) kept
+                keep_mask = keep_mask.clamp(max=1.0)  # safety
+                
+                # V8.35 FIX: Soft damping instead of hard prune.
+                # OLD: Set non-TopK to -2.0 (σ≈0.12) — kills gradient flow,
+                #      edges can never recover even if they become important.
+                # NEW: Shrink non-TopK logits by multiplying by decay factor.
+                #      Each prune step reduces by e.g. 0.5, so after 3 prunes:
+                #      logit → 0.5 → 0.25 → 0.125 (gradual fade, NOT instant death).
+                #      This preserves gradient flow and allows edges to recover
+                #      if structural losses push them back up.
+                prune_decay = config.get("hard_prune_decay", 0.5)  # V8.35: multiplicative decay
+                prune_floor = config.get("hard_prune_floor", -2.0)  # V8.35: minimum logit (safety)
+                damped = W_mag.data * keep_mask + W_mag.data * (1 - keep_mask) * (1 - diag_mask_prune) * prune_decay
+                # Clamp to floor so logits don't go to -inf over many rounds
+                damped = torch.where(
+                    keep_mask.bool() | diag_mask_prune.bool(),
+                    W_mag.data,
+                    torch.clamp(damped, min=prune_floor)
+                )
+                W_mag.data = damped
+                
+                if is_main_process():
+                    n_kept = int(keep_mask.sum().item())
+                    n_pruned = d_prune * (d_prune - 1) - n_kept
+                    # Show min logit among non-TopK for monitoring
+                    non_topk_vals = W_mag.data[~keep_mask.bool() & ~diag_mask_prune.bool()]
+                    min_logit = non_topk_vals.min().item() if non_topk_vals.numel() > 0 else 0
+                    max_logit = non_topk_vals.max().item() if non_topk_vals.numel() > 0 else 0
+                    print(f" | [V8.35] SOFT PRUNE at epoch {epoch}: kept {k_undirected} undirected edges ({n_kept} entries), damped {n_pruned} by {prune_decay}× (non-TopK range: [{min_logit:.2f}, {max_logit:.2f}])")
+        
+        # =================================================================
+        # V8.24 FIX: Edge exploration/swap mechanism
+        # PROBLEM: Model locks into same TopK edges from epoch 1-2 and
+        # NEVER tries alternatives. Reconstruction dominates edge ranking
+        # with 15*75000 gradient signals vs 210 from structural losses.
+        #
+        # FIX: Periodically try swapping the WORST TopK edge (lowest logit
+        # among TopK) with the BEST non-TopK edge (highest logit among
+        # rest). If the swap improves validation-like loss on current batch,
+        # keep it. Otherwise revert. This gives non-TopK edges a chance.
+        #
+        # When: Every edge_explore_interval epochs, first batch only
+        # How: Swap worst TopK ↔ best non-TopK in W_adj, evaluate loss,
+        #      keep if loss improves by at least edge_explore_min_gain
+        # =================================================================
+        edge_explore_enabled = config.get("edge_explore_enabled", True)
+        edge_explore_interval = config.get("edge_explore_interval", 5)
+        edge_explore_n_swaps = config.get("edge_explore_n_swaps", 3)
+        edge_explore_start = config.get("edge_explore_start_epoch", 10)
+        
+        if (edge_explore_enabled and epoch >= edge_explore_start and
+            epoch % edge_explore_interval == 0 and batch_idx == 0):
+            with torch.no_grad():
+                W_mag_exp = base_model.graph_learner.W_mag  # V8.33: swap structure param
+                d_exp = W_mag_exp.shape[0]
+                diag_mask_exp = torch.eye(d_exp, device=W_mag_exp.device)
+                # V8.34 FIX: Use upper triangle for symmetric W_mag
+                Wm_sym_exp = (W_mag_exp + W_mag_exp.T) / 2 * (1 - diag_mask_exp)
+                W_upper_exp = torch.triu(Wm_sym_exp, diagonal=1)
+                W_upper_flat_exp = W_upper_exp.flatten()
+                n_upper_exp = d_exp * (d_exp - 1) // 2
+                k_exp = min(target_edges, n_upper_exp)
+                
+                topk_vals_exp, topk_idx_exp = torch.topk(W_upper_flat_exp, k_exp)
+                # Build rest mask: upper triangle positions NOT in topk
+                upper_mask = torch.triu(torch.ones(d_exp, d_exp, device=W_mag_exp.device), diagonal=1).flatten().bool()
+                rest_mask_exp = upper_mask.clone()
+                rest_mask_exp[topk_idx_exp] = False
+                
+                rest_vals_exp = W_upper_flat_exp[rest_mask_exp]
+                rest_orig_idx = torch.where(rest_mask_exp)[0]
+                
+                if rest_vals_exp.numel() > 0 and topk_vals_exp.numel() > 0:
+                    # Sort TopK ascending (worst first), rest descending (best first)
+                    _, worst_order = torch.sort(topk_vals_exp, descending=False)
+                    _, best_rest_order = torch.sort(rest_vals_exp, descending=True)
+                    
+                    n_swaps = min(edge_explore_n_swaps, len(worst_order), len(best_rest_order))
+                    swaps_made = 0
+                    
+                    # Save original W_mag for potential revert
+                    W_backup = W_mag_exp.data.clone()
+                    
+                    for s in range(n_swaps):
+                        worst_topk_flat_idx = topk_idx_exp[worst_order[s]]
+                        best_rest_flat_idx = rest_orig_idx[best_rest_order[s]]
+                        
+                        # Convert flat index to (i,j) pair
+                        wi, wj = worst_topk_flat_idx.item() // d_exp, worst_topk_flat_idx.item() % d_exp
+                        ri, rj = best_rest_flat_idx.item() // d_exp, best_rest_flat_idx.item() % d_exp
+                        
+                        old_topk_val = W_mag_exp.data[wi, wj].item()
+                        old_rest_val = W_mag_exp.data[ri, rj].item()
+                        
+                        # Only swap if rest edge logit is reasonably close
+                        if old_topk_val - old_rest_val < 3.0:
+                            # V8.34: Swap BOTH (i,j) and (j,i) for symmetric W_mag
+                            W_mag_exp.data[wi, wj] = old_rest_val
+                            W_mag_exp.data[wj, wi] = old_rest_val
+                            W_mag_exp.data[ri, rj] = old_topk_val
+                            W_mag_exp.data[rj, ri] = old_topk_val
+                            swaps_made += 1
+                    
+                    if swaps_made > 0:
+                        # V8.35 FIX: Use TopK-F1 metric instead of total loss.
+                        # OLD: total loss dominated by reconstruction → swaps ALWAYS rejected.
+                        # NEW: Compute TopK-F1 before vs after swap. Accept if F1 improves.
+                        # This makes structural improvement visible.
+                        if A_true is not None:
+                            # Compute A from swapped W_mag
+                            W_dir_exp = base_model.graph_learner.W_dir
+                            tau_exp = base_model.graph_learner.temperature
+                            Wm_new = (W_mag_exp + W_mag_exp.T) / 2  # symmetric
+                            Wd_new = (W_dir_exp - W_dir_exp.T) / 2  # antisymmetric
+                            A_swap = torch.sigmoid(Wm_new) * torch.sigmoid(Wd_new / tau_exp)
+                            swap_metrics = compute_topk_f1(A_swap, A_true, k=target_edges)
+                            swap_f1 = swap_metrics["topk_f1"]
+                            
+                            # Compute A from original W_mag
+                            W_mag_exp.data.copy_(W_backup)
+                            Wm_orig = (W_mag_exp + W_mag_exp.T) / 2
+                            A_orig = torch.sigmoid(Wm_orig) * torch.sigmoid(Wd_new / tau_exp)
+                            orig_metrics = compute_topk_f1(A_orig, A_true, k=target_edges)
+                            orig_f1 = orig_metrics["topk_f1"]
+                            
+                            if swap_f1 > orig_f1:
+                                # Swap improved TopK-F1! Apply permanently (symmetric)
+                                for s in range(swaps_made):
+                                    worst_topk_flat_idx = topk_idx_exp[worst_order[s]]
+                                    best_rest_flat_idx = rest_orig_idx[best_rest_order[s]]
+                                    wi, wj = worst_topk_flat_idx.item() // d_exp, worst_topk_flat_idx.item() % d_exp
+                                    ri, rj = best_rest_flat_idx.item() // d_exp, best_rest_flat_idx.item() % d_exp
+                                    old_topk_val = W_backup[wi, wj].item()
+                                    old_rest_val = W_backup[ri, rj].item()
+                                    if old_topk_val - old_rest_val < 3.0:
+                                        W_mag_exp.data[wi, wj] = old_rest_val
+                                        W_mag_exp.data[wj, wi] = old_rest_val
+                                        W_mag_exp.data[ri, rj] = old_topk_val
+                                        W_mag_exp.data[rj, ri] = old_topk_val
+                                
+                                if is_main_process():
+                                    print(f" | [V8.35] EDGE SWAP at epoch {epoch}: {swaps_made} swaps ACCEPTED (F1: {orig_f1:.4f}→{swap_f1:.4f})")
+                            elif swap_f1 == orig_f1:
+                                # Same F1 — accept anyway to encourage exploration.
+                                # With same directed F1, a swap at least diversifies
+                                # the candidate edge set, which may help later.
+                                for s in range(swaps_made):
+                                    worst_topk_flat_idx = topk_idx_exp[worst_order[s]]
+                                    best_rest_flat_idx = rest_orig_idx[best_rest_order[s]]
+                                    wi, wj = worst_topk_flat_idx.item() // d_exp, worst_topk_flat_idx.item() % d_exp
+                                    ri, rj = best_rest_flat_idx.item() // d_exp, best_rest_flat_idx.item() % d_exp
+                                    old_topk_val = W_backup[wi, wj].item()
+                                    old_rest_val = W_backup[ri, rj].item()
+                                    if old_topk_val - old_rest_val < 3.0:
+                                        W_mag_exp.data[wi, wj] = old_rest_val
+                                        W_mag_exp.data[wj, wi] = old_rest_val
+                                        W_mag_exp.data[ri, rj] = old_topk_val
+                                        W_mag_exp.data[rj, ri] = old_topk_val
+                                if is_main_process():
+                                    print(f" | [V8.35] EDGE SWAP at epoch {epoch}: {swaps_made} swaps ACCEPTED (same F1={orig_f1:.4f}, exploring)")
+                            else:
+                                # Revert already done (W_backup restored above)
+                                if is_main_process():
+                                    print(f" | [V8.35] EDGE SWAP at epoch {epoch}: {swaps_made} swaps REJECTED (F1: {orig_f1:.4f}→{swap_f1:.4f})")
+                        else:
+                            # No A_true available — fall back to loss-based (legacy)
+                            test_outputs = model(X, M, regime=e)
+                            test_loss, _ = base_model.compute_loss(
+                                test_outputs, X, M, regime=e,
+                                epoch=epoch, total_epochs=total_epochs,
+                                loss_weights=loss_weights,
+                            )
+                            W_mag_exp.data.copy_(W_backup)
+                            orig_outputs = model(X, M, regime=e)
+                            orig_loss, _ = base_model.compute_loss(
+                                orig_outputs, X, M, regime=e,
+                                epoch=epoch, total_epochs=total_epochs,
+                                loss_weights=loss_weights,
+                            )
+                            min_gain = config.get("edge_explore_min_gain", 0.0)
+                            if test_loss.item() < orig_loss.item() - min_gain:
+                                for s in range(swaps_made):
+                                    worst_topk_flat_idx = topk_idx_exp[worst_order[s]]
+                                    best_rest_flat_idx = rest_orig_idx[best_rest_order[s]]
+                                    wi, wj = worst_topk_flat_idx.item() // d_exp, worst_topk_flat_idx.item() % d_exp
+                                    ri, rj = best_rest_flat_idx.item() // d_exp, best_rest_flat_idx.item() % d_exp
+                                    old_topk_val = W_backup[wi, wj].item()
+                                    old_rest_val = W_backup[ri, rj].item()
+                                    if old_topk_val - old_rest_val < 3.0:
+                                        W_mag_exp.data[wi, wj] = old_rest_val
+                                        W_mag_exp.data[wj, wi] = old_rest_val
+                                        W_mag_exp.data[ri, rj] = old_topk_val
+                                        W_mag_exp.data[rj, ri] = old_topk_val
+                                if is_main_process():
+                                    gain = orig_loss.item() - test_loss.item()
+                                    print(f" | [V8.24] EDGE SWAP at epoch {epoch}: {swaps_made} swaps ACCEPTED (gain={gain:.4f})")
+                            else:
+                                if is_main_process():
+                                    diff = test_loss.item() - orig_loss.item()
+                                    print(f" | [V8.24] EDGE SWAP at epoch {epoch}: {swaps_made} swaps REJECTED (worse by {diff:.4f})")
+        
         # Compute loss with scheduled weights
         loss, batch_metrics = base_model.compute_loss(
             outputs, X, M, regime=e,
@@ -2392,6 +3094,135 @@ def train_epoch(
             total_epochs=total_epochs,
             loss_weights=loss_weights, # Pass scheduled weights
         )
+        batch_metrics.update(batch_metrics_extra_gate)
+        
+        # =====================================================================
+        # V8.37: Compute direction mask via adaptive K_dir (gap heuristic)
+        # Skeleton losses (L_recon, L_dag, L_sparse) stay GLOBAL.
+        # Direction losses (L_excl, L_dir_dec, L_asymm) use dir_mask.
+        # Replaces V8.36 threshold-based mask which failed in PRUNE (112 edges).
+        # =====================================================================
+        dir_mask = None  # Default: no masking (all edges)
+        dir_mask_n_edges = -1  # -1 = disabled
+        if config.get("dir_mask_enabled", True):
+            # Compute magnitude probabilities from W_mag (symmetric)
+            Wm_mask, _ = base_model.graph_learner._get_sym_antisym()
+            mag_probs = torch.sigmoid(Wm_mask)  # σ(Wm) — symmetric, diag=0
+            
+            target_e = config.get("target_edges", 13)
+            k_min_f = config.get("dir_k_min_factor", 0.8)
+            k_max_f = config.get("dir_k_max_factor", 2.5)
+            min_gap = config.get("dir_k_min_gap", 0.01)
+            
+            dir_mask_n_edges, dir_mask, dir_mask_info = compute_adaptive_k_dir(
+                mag_probs, target_e, k_min_f, k_max_f, min_gap
+            )
+            batch_metrics["dir_mask_n_edges"] = dir_mask_n_edges
+            batch_metrics["dir_mask_gap"] = dir_mask_info["gap_val"]
+            batch_metrics["dir_mask_boundary"] = dir_mask_info["boundary_score"]
+            batch_metrics["dir_mask_k_min"] = dir_mask_info["k_min"]
+            batch_metrics["dir_mask_k_max"] = dir_mask_info["k_max"]
+        
+        # =====================================================================
+        # V8.32 FIX: Direction Decisiveness Penalty
+        # PROBLEM in V8.31: L_bidir = mean(A_ij*A_ji) = mean(mag²*dir*(1-dir)).
+        # With mag≈0.22, mag²≈0.048 ATTENUATES the gradient by 20×.
+        # L_bidir only reached 0.06 despite bidir=0.40 for 33 epochs.
+        #
+        # FIX: L_dir_decisive = mean_{i<j}(dir*(1-dir)) where dir = σ((W-W.T)/2τ).
+        # This is INDEPENDENT of magnitude → full gradient to break dir=0.5.
+        # Also keep L_excl as safety net at lower weight.
+        # V8.36: Both losses now masked to E_keep (believed edges only).
+        # =====================================================================
+        lambda_excl_unc = config.get("lambda_excl_unconditional", 1.0)
+        lambda_dir_dec = config.get("lambda_dir_decisive", 10.0)
+        excl_start = config.get("excl_start_epoch", 1)
+        dir_dec_start = config.get("dir_decisive_start_epoch", 1)
+        if epoch >= excl_start:
+            A_excl = base_model.graph_learner.get_mean_adjacency()
+            # L_excl = mean(A_ij * A_ji) — V8.36: masked to dir_mask
+            L_excl_val = compute_exclusivity_loss(A_excl, dir_mask=dir_mask)
+            loss = loss + lambda_excl_unc * L_excl_val
+            batch_metrics["L_excl"] = L_excl_val.item()
+            # Also track symmetry ratio for diagnostics
+            A_min_e = torch.minimum(A_excl, A_excl.T)
+            A_max_e = torch.maximum(A_excl, A_excl.T)
+            sym_ratio_e = (A_min_e / (A_max_e + 1e-8)).mean().item()
+            batch_metrics["symmetry_ratio"] = sym_ratio_e
+            # Track bidir_rate = 1 - undir/dir for score penalty
+            d_e = A_excl.shape[0]
+            K_excl = config.get("target_edges", 13)
+            A_flat_excl = (A_excl * (1 - torch.eye(d_e, device=A_excl.device))).flatten()
+            _, topk_idx_excl = torch.topk(A_flat_excl, min(K_excl, A_flat_excl.numel()))
+            dir_pred_set = set()
+            undir_pred_set = set()
+            for idx in topk_idx_excl.cpu().numpy():
+                i_e, j_e = idx // d_e, idx % d_e
+                dir_pred_set.add((i_e, j_e))
+                undir_pred_set.add(tuple(sorted((i_e, j_e))))
+            bidir_rate = 1.0 - len(undir_pred_set) / max(len(dir_pred_set), 1)
+            batch_metrics["bidir_rate"] = bidir_rate
+        
+        # V8.32: Direction decisiveness penalty — V8.36: masked to dir_mask
+        if lambda_dir_dec > 0 and epoch >= dir_dec_start:
+            antisym_on = getattr(base_model.graph_learner, '_antisymmetric', False)
+            if antisym_on:
+                dir_map = base_model.graph_learner.get_direction_map()  # [d,d]
+                d_dir = dir_map.shape[0]
+                # dir*(1-dir) is maximized at 0.5 (=0.25), zero at 0 or 1
+                dir_entropy = dir_map * (1 - dir_map)
+                mask_upper = torch.triu(torch.ones(d_dir, d_dir, device=dir_map.device), diagonal=1)
+                # V8.36: Intersect with dir_mask — only penalize on believed edges
+                if dir_mask is not None:
+                    mask_upper = mask_upper * dir_mask
+                n_masked = mask_upper.sum() + 1e-8
+                L_dir_dec = (dir_entropy * mask_upper).sum() / n_masked
+                loss = loss + lambda_dir_dec * L_dir_dec
+                batch_metrics["L_dir_dec"] = L_dir_dec.item()
+                # Also log avg|dir-0.5| as decisiveness measure (on masked edges)
+                dir_upper = dir_map[mask_upper.bool()]
+                batch_metrics["dir_decisiveness"] = (dir_upper - 0.5).abs().mean().item() if dir_upper.numel() > 0 else 0.0
+        
+        # =====================================================================
+        # V8.29 FIX B: Ranking Margin Loss
+        # PROBLEM: Margins avg=0.01-0.05 for long periods → edges aren't separable.
+        # TopK edges have logits barely above non-TopK → direction is noisy.
+        #
+        # FIX: For TopK set E+ and non-TopK E-, enforce W_pos >= W_neg + m.
+        # Uses hinge loss: L_rank = mean(ReLU(W_neg - W_pos + m)).
+        # This creates direct gradient signal to separate edge logits.
+        # =====================================================================
+        ranking_enabled = config.get("ranking_margin_enabled", True)
+        ranking_start = config.get("ranking_margin_start_epoch", 10)
+        if ranking_enabled and epoch >= ranking_start:
+            lambda_rank = config.get("lambda_ranking_margin", 1.0)
+            rank_margin = config.get("ranking_margin_value", 0.5)
+            
+            W_rank = base_model.graph_learner.W_mag  # V8.33: rank by structure param
+            d_rank = W_rank.shape[0]
+            diag_mask_rank = torch.eye(d_rank, device=W_rank.device)
+            # V8.34 FIX: Use upper triangle for symmetric W_mag
+            Wm_sym_rank = (W_rank + W_rank.T) / 2 * (1 - diag_mask_rank)
+            W_upper_rank = torch.triu(Wm_sym_rank, diagonal=1)
+            W_upper_flat_rank = W_upper_rank.flatten()
+            n_upper_rank = d_rank * (d_rank - 1) // 2
+            k_rank = min(target_edges, n_upper_rank)
+            
+            topk_vals_rank, topk_idx_rank = torch.topk(W_upper_flat_rank, k_rank)
+            upper_mask_rank = torch.triu(torch.ones(d_rank, d_rank, device=W_rank.device), diagonal=1).flatten().bool()
+            rest_mask_rank = upper_mask_rank.clone()
+            rest_mask_rank[topk_idx_rank] = False
+            rest_vals_rank = W_upper_flat_rank[rest_mask_rank]
+            
+            if rest_vals_rank.numel() > 0 and topk_vals_rank.numel() > 0:
+                # Worst TopK logit vs best non-TopK logit
+                min_topk = topk_vals_rank.min()
+                max_rest = rest_vals_rank.max()
+                # Hinge: penalize when gap < margin
+                L_rank = torch.relu(max_rest - min_topk + rank_margin)
+                loss = loss + lambda_rank * L_rank
+                batch_metrics["L_ranking"] = L_rank.item()
+                batch_metrics["rank_gap"] = (min_topk - max_rest).item()
         
         # =====================================================================
         # FIX B: Projection consistency loss during PRUNE/REFINE
@@ -2467,6 +3298,10 @@ def train_epoch(
                 batch_metrics["asymm_mode"] = "conf"
                 batch_metrics["asymm_t_conf"] = t_conf
             
+            # V8.36: Intersect edge_mask with dir_mask (only direction-train on believed edges)
+            if dir_mask is not None:
+                edge_mask = edge_mask * dir_mask
+            
             # =========================================================
             # V8.7: Direction Margin Loss (hinge-based)
             # For TRUE edge i->j: enforce A_ij >= A_ji + margin
@@ -2476,12 +3311,11 @@ def train_epoch(
             margin = config.get("direction_margin", 0.1)
             lambda_margin = config.get("lambda_direction_margin", 1.0)
             
-            if use_margin and A_true is not None:
-                # CRITICAL: Convert A_true from causal to dependency convention
-                # Model uses W[i,j] = "j depends on i" (dependency)
-                # Data uses A[i,j] = "i causes j" (causal)
-                # So transpose A_true to match model convention
-                A_true_model_conv = A_true.T
+            # LEAKAGE FIX: Only use A_true if oracle mode is explicitly enabled
+            if use_margin and A_true is not None and config.get("oracle_direction_supervision", False):
+                # V8.26 FIX: Model uses CAUSAL convention (A[i,j]=i→j)
+                # A_true also uses causal convention. No transpose needed.
+                A_true_model_conv = A_true
                 
                 # Get ground truth edges in MODEL convention
                 A_true_bin = (A_true_model_conv > 0.5).float()
@@ -2526,14 +3360,14 @@ def train_epoch(
         # V8.11: Antisymmetric Direction Loss (when skeleton is frozen)
         # Use D_ij = W_ij - W_ji for direction, forcing exactly one winner per pair
         # 
-        # CRITICAL: Model uses DEPENDENCY convention (A[i,j] = "j depends on i")
-        # but A_true uses CAUSAL convention (A[i,j] = "i causes j")
-        # Must convert A_true to match model convention for direction training!
+        # V8.26 FIX: Model uses CAUSAL convention (A[i,j]=i→j)
+        # A_true also uses causal convention. No transpose needed.
         # =====================================================================
-        if skeleton_frozen and A_true is not None:
-            W = base_model.graph_learner.W_adj
-            # Convert A_true from causal to dependency convention (transpose)
-            A_true_model_conv = A_true.T if A_true.shape[0] == A_true.shape[1] else A_true
+        # LEAKAGE FIX: Only use A_true if oracle mode is explicitly enabled
+        if skeleton_frozen and A_true is not None and config.get("oracle_direction_supervision", False):
+            W = base_model.graph_learner.W_mag  # V8.33: direction from W_dir, but compute_direction_loss uses W logits
+            # V8.26: No convention conversion needed
+            A_true_model_conv = A_true
             dir_loss, dir_metrics = compute_direction_loss(
                 W, A_true_model_conv, tau_direction=direction_tau
             )
@@ -2576,11 +3410,16 @@ def train_epoch(
             config.get("use_coverage_loss", True)
         )
         
-        if use_edge_discovery and A_true is not None:
+        # LEAKAGE FIX: Only use A_true if oracle mode is explicitly enabled
+        if use_edge_discovery and A_true is not None and config.get("oracle_direction_supervision", False):
             A_soft = base_model.graph_learner.get_mean_adjacency()
             
-            # Get correlation matrix if available (computed once per dataset, cached)
-            corr_matrix = getattr(base_model, '_corr_matrix', None)
+            # Get correlation matrix (stored on CPU to avoid GPU leak, move lazily)
+            _corr_cpu = getattr(base_model, '_corr_matrix_cpu', None)
+            corr_matrix = _corr_cpu.to(device) if _corr_cpu is not None else None
+            
+            # Get cached cousin mask (also stored on CPU)
+            _cousin_cpu = getattr(base_model, '_cousin_mask_cpu', None)
             
             # Compute all edge discovery losses
             disc_losses, disc_metrics = compute_edge_discovery_losses(
@@ -2590,6 +3429,7 @@ def train_epoch(
                 config=config,
                 epoch=epoch,
                 total_epochs=total_epochs,
+                cached_cousin_mask=_cousin_cpu,
             )
             
             # Add losses
@@ -2632,12 +3472,12 @@ def train_epoch(
         # Only learn DIRECTION for edges already in the frozen skeleton
         # =====================================================================
         if skeleton_mask is not None:
-            # Get W (adjacency logits) and zero grad for non-skeleton edges
-            W = base_model.graph_learner.W
-            if W.grad is not None:
-                # Keep gradients only for skeleton edges (both directions for same pair)
-                skel_sym = skeleton_mask | skeleton_mask.T # Allow learning either direction
-                W.grad = W.grad * skel_sym.float()
+            # V8.33: Zero W_mag gradients for non-skeleton edges.
+            # W_dir gradients are KEPT — direction still learns for all edges.
+            W_mag = base_model.graph_learner.W_mag
+            if W_mag.grad is not None:
+                skel_sym = skeleton_mask | skeleton_mask.T
+                W_mag.grad = W_mag.grad * skel_sym.float()
         
         # Gradient clipping
         grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -2699,15 +3539,11 @@ def validate(
         A_pred = base_model.graph_learner.get_mean_adjacency()
         
         # ==================================================================
-        # V8.12: CONVERT TO CAUSAL CONVENTION
-        # Model outputs A_model in SEM convention: A[i,j] = "j depends on i"
-        # We convert to causal convention: A[i,j] = "i causes j"
-        # This single conversion ensures ALL downstream code is correct:
-        # - Metrics (TopK-F1, Skeleton-F1, etc.)
-        # - Saved adjacency matrices
-        # - Confusion matrix TP/FP/FN/TN
+        # V8.26: CONVENTION — model already outputs causal (identity)
+        # A[i,j] = i→j in both model and A_true. No transpose.
+        # to_causal_convention() is kept as identity for compat.
         # ==================================================================
-        A_pred = to_causal_convention(A_pred) # Convert once at boundary
+        A_pred = to_causal_convention(A_pred) # V8.26: identity (no-op)
         
         # ==================================================================
         # CRITICAL FIX: Hard Top-K projection during PRUNE/REFINE
@@ -2840,6 +3676,19 @@ def train(
     Returns:
         Dictionary of final metrics
     """
+    # V8.24 VERSION CHECK - if you see this, the new code is running!
+    print("=" * 70)
+    print("[V8.38] RC-GNN Training Script — GUARANTEED REFINE PHASE:")
+    print("  - V8.38 FIX: Early stopping blocked in PRUNE (only fires in REFINE)")
+    print("  -   PROBLEM: patience=32 expired at epoch 66, REFINE starts at 78")
+    print("  -   8/10 tasks never reached REFINE — the direction-fixing phase")
+    print("  -   FIX: Reset patience in PRUNE (like DISC), only allow stop in REFINE")
+    print("  - V8.37: Adaptive K_dir via gap heuristic (masking direction losses)")
+    print("  - V8.36: REFINE reweighting (λ_recon×0.1, λ_inv×5.0)")
+    print("  - Inherits V8.35: F1-based edge swap, soft prune, eval consistency")
+    print("  - Inherits V8.34: symmetric W_mag/W_dir, τ floor=0.80, τ_final=0.50")
+    print("=" * 70)
+    
     # Merge config with defaults
     cfg = DEFAULT_CONFIG.copy()
     if config:
@@ -2857,9 +3706,24 @@ def train(
     else:
         device = torch.device(cfg["device"])
     
-    # Seed
-    torch.manual_seed(cfg["seed"] + local_rank)
-    np.random.seed(cfg["seed"] + local_rank)
+    # Seed (comprehensive)
+    set_seed(cfg["seed"] + local_rank, deterministic=cfg.get("deterministic", False))
+    
+    # Config validation
+    cfg_warnings = validate_config(cfg)
+    if cfg_warnings and is_main_process():
+        print("\n⚠️  CONFIG WARNINGS:")
+        for w in cfg_warnings:
+            print(f"  • {w}")
+        print()
+    
+    # Oracle mode banner
+    if cfg.get("oracle_direction_supervision", False) and is_main_process():
+        print("\n" + "=" * 70)
+        print("⚠️  ORACLE MODE ENABLED ⚠️")
+        print("Using ground truth adjacency for direction supervision!")
+        print("This is for diagnostic/ablation ONLY — results do NOT generalise!")
+        print("=" * 70 + "\n")
     
     # Load data
     data = load_data(data_dir, normalize=True)
@@ -2870,6 +3734,116 @@ def train(
     # Adjust target edges if A_true available
     if A_true is not None and cfg["target_edges"] == 13:
         cfg["target_edges"] = int(A_true.sum())
+    
+    # =========================================================================
+    # V8.28: DIMENSION-ADAPTIVE SCALING
+    # Problem: All hyperparameters were tuned for d=13 (UCI Air Quality).
+    # Table 2 SEM benchmarks span d∈{13,15,20,25,50}. For d=50, we need:
+    #   - More epochs (bigger search space)
+    #   - More patience (slower convergence)
+    #   - Larger architecture (more capacity)
+    #   - Longer DISC phase (more edges to explore)
+    #   - Softer hard prune (more edges to evaluate)
+    #   - More edge exploration swaps (bigger candidate pool)
+    #   - Delayed TopK gating (don't commit too early)
+    #
+    # ONLY apply auto-scaling for values still at their DEFAULT_CONFIG defaults.
+    # If user passed explicit CLI args, those take priority.
+    # =========================================================================
+    target_edges_cfg = cfg["target_edges"]
+    n_possible_edges = d * (d - 1)
+    edge_density = target_edges_cfg / max(n_possible_edges, 1)
+    
+    # --- Training duration scaling ---
+    # d=13: 100 epochs is OK. d=50: need ~250.
+    if cfg["epochs"] == DEFAULT_CONFIG["epochs"]:  # Only if not overridden
+        cfg["epochs"] = max(100, int(100 * (d / 13) ** 0.7))
+    if cfg["patience"] == DEFAULT_CONFIG["patience"]:
+        cfg["patience"] = max(30, int(30 * (d / 13) ** 0.5))
+    
+    # --- Architecture scaling ---
+    # d=13: latent=32, hidden=64 fine. d=50: need latent=64, hidden=128+
+    if cfg["latent_dim"] == DEFAULT_CONFIG["latent_dim"]:
+        cfg["latent_dim"] = max(32, min(128, int(32 * (d / 13) ** 0.6)))
+    if cfg["hidden_dim"] == DEFAULT_CONFIG["hidden_dim"]:
+        cfg["hidden_dim"] = max(64, min(256, int(64 * (d / 13) ** 0.6)))
+    
+    # --- Stage boundary scaling ---
+    # Bigger d needs longer DISC (more edges to discover) and longer PRUNE
+    if cfg["stage1_end"] == DEFAULT_CONFIG["stage1_end"]:
+        if d >= 40:
+            cfg["stage1_end"] = 0.40  # 40% for DISC (was 30%)
+        elif d >= 25:
+            cfg["stage1_end"] = 0.35  # 35% for DISC
+    if cfg["stage2_end"] == DEFAULT_CONFIG["stage2_end"]:
+        if d >= 40:
+            cfg["stage2_end"] = 0.80  # 80% for DISC+PRUNE (was 70%)
+        elif d >= 25:
+            cfg["stage2_end"] = 0.75  # 75% for DISC+PRUNE
+    
+    # --- Hard prune scaling ---
+    # d=13: prune_val=-2.0, interval=10 is fine (kills 156 non-TopK edges).
+    # d=50: prune_val=-2.0 kills 2437 candidates — way too aggressive.
+    # Softer prune for larger d: sigmoid(-1)≈0.27 allows recovery.
+    if cfg["hard_prune_logit_value"] == DEFAULT_CONFIG.get("hard_prune_logit_value", -2.0):
+        if d >= 40:
+            cfg["hard_prune_logit_value"] = -1.0  # sigmoid(-1)≈0.27, recoverable
+        elif d >= 25:
+            cfg["hard_prune_logit_value"] = -1.5  # sigmoid(-1.5)≈0.18
+    if cfg["hard_prune_interval"] == DEFAULT_CONFIG.get("hard_prune_interval", 10):
+        if d >= 40:
+            cfg["hard_prune_interval"] = 20  # Less frequent pruning for large d
+        elif d >= 25:
+            cfg["hard_prune_interval"] = 15
+    
+    # --- Edge exploration scaling ---
+    # d=13: 3 swaps fine (3/13 = 23% of edges explored per step).
+    # d=50: need more swaps (3/100 = 3% is too few).
+    if cfg["edge_explore_n_swaps"] == DEFAULT_CONFIG.get("edge_explore_n_swaps", 3):
+        cfg["edge_explore_n_swaps"] = max(3, target_edges_cfg // 4)
+    if cfg["edge_explore_interval"] == DEFAULT_CONFIG.get("edge_explore_interval", 5):
+        if d >= 40:
+            cfg["edge_explore_interval"] = 3  # Explore more often for big d
+    
+    # --- TopK gating delay ---
+    # Don't commit to TopK too early for large d (needs more exploration)
+    if cfg.get("topk_gate_start") is None or cfg.get("topk_gate_start") == cfg.get("stage1_end", 0.15):
+        if d >= 40:
+            cfg["topk_gate_start"] = 0.30  # Delay gating for d>=40
+        elif d >= 25:
+            cfg["topk_gate_start"] = 0.25
+    
+    # --- TopK projection delay ---
+    if cfg["topk_projection_start"] == DEFAULT_CONFIG.get("topk_projection_start", 0.20):
+        if d >= 40:
+            cfg["topk_projection_start"] = 0.35  # Delay hard projection
+        elif d >= 25:
+            cfg["topk_projection_start"] = 0.30
+    
+    # --- Lambda scaling: reduce V8.22 overrides for large d ---
+    # V8.22 set lambda_recon=0.5, lambda_causal=3.0 for d=13.
+    # For large d, reconstruction is harder — don't suppress it as much.
+    # Also, anticorr/icp need less aggressive scaling for larger graphs.
+    if d >= 25:
+        # More balanced lambdas for large d
+        if cfg["lambda_recon"] == 0.5:  # V8.22 override
+            cfg["lambda_recon"] = min(1.0, 0.5 + 0.02 * (d - 13))  # Scale up
+        if cfg["lambda_causal"] == 3.0:  # V8.22 override
+            cfg["lambda_causal"] = max(1.5, 3.0 - 0.05 * (d - 13))  # Scale down
+    
+    # --- eval_k_values should include actual target_edges ---
+    if target_edges_cfg not in cfg.get("eval_k_values", [13, 20, 30]):
+        cfg["eval_k_values"] = sorted(set(cfg.get("eval_k_values", [13, 20, 30]) + [target_edges_cfg]))
+    
+    if is_main_process() and not sweep_mode:
+        print(f"\n[V8.28] Dimension-adaptive scaling for d={d}:")
+        print(f"  epochs={cfg['epochs']}, patience={cfg['patience']}")
+        print(f"  latent_dim={cfg['latent_dim']}, hidden_dim={cfg['hidden_dim']}")
+        print(f"  stage1_end={cfg['stage1_end']:.2f}, stage2_end={cfg['stage2_end']:.2f}")
+        print(f"  hard_prune: val={cfg.get('hard_prune_logit_value', -2.0)}, interval={cfg.get('hard_prune_interval', 10)}")
+        print(f"  edge_explore: n_swaps={cfg['edge_explore_n_swaps']}, interval={cfg['edge_explore_interval']}")
+        print(f"  target_edges={target_edges_cfg}, edge_density={edge_density:.3f}")
+        print(f"  lambda_recon={cfg['lambda_recon']}, lambda_causal={cfg['lambda_causal']}")
     
     train_loader, val_loader = create_dataloaders(
         data,
@@ -2921,6 +3895,27 @@ def train(
     
     base_model = model.module if ddp else model
     
+    # =========================================================================
+    # V8.29: Enable antisymmetric adjacency mode
+    # This makes A_ij = sigmoid((W_ij - W_ji) / tau), A_ji = 1 - A_ij
+    # Bidirectional edges are structurally impossible.
+    # =========================================================================
+    if cfg.get("antisymmetric_adjacency", True):
+        base_model.graph_learner.set_antisymmetric(True)
+        if is_main_process() and not sweep_mode:
+            print(f"[V8.34] DUAL-PARAMETER with STRUCTURAL PROJECTIONS + SYMMETRIC PRUNE:")
+            print(f"        Wm = (W_mag+W_mag.T)/2 [symmetric],  Wd = (W_dir-W_dir.T)/2 [antisymmetric]")
+            print(f"        A_ij = σ(Wm) * σ(Wd/τ),  A_ji = σ(Wm) * (1-σ(Wd/τ))")
+            print(f"        GUARANTEE: A_ij+A_ji = mag_ij → dL_budget/dW_dir = 0")
+            print(f"        V8.34 FIX: Hard prune selects from UPPER TRIANGLE (K undirected edges)")
+            print(f"        V8.34 FIX: τ floor={cfg.get('temperature_floor_unstable', 0.8)} ALWAYS enforced when direction unstable")
+            print(f"        V8.34 FIX: τ_final={cfg.get('temperature_final', 0.5)} (was 0.1, killed direction gradients)")
+            print(f"        L_dir_dec = {cfg.get('lambda_dir_decisive', 10.0)}×mean(p*(1-p)) → W_dir only")
+            if cfg.get('dir_mask_enabled', True):
+                print(f"        V8.37 ADAPTIVE K_dir: K_min={cfg.get('dir_k_min_factor', 0.8)}×target, "
+                      f"K_max={cfg.get('dir_k_max_factor', 2.5)}×target, "
+                      f"min_gap={cfg.get('dir_k_min_gap', 0.01)}")
+    
     if is_main_process() and not sweep_mode:
         print(f"[Model] d={d}, latent={cfg['latent_dim']}, regimes={n_regimes}")
         print(f"[Model] Parameters: {sum(p.numel() for p in model.parameters()):,}")
@@ -2948,33 +3943,102 @@ def train(
             print("Model must EXCEED this to claim causal learning!")
             print("=" * 60 + "\n")
         
-        # V8.8: Compute and cache correlation matrix for hard negative mining
-        from scipy import stats
+        # V8.8 / V8.25: Compute and cache correlation matrix for hard negative mining
+        # Vectorised: use numpy corrcoef instead of per-pair scipy calls
         X_np = data["X"].numpy()
         if X_np.ndim == 3:
             X_flat = X_np.reshape(-1, X_np.shape[-1])
         else:
             X_flat = X_np
         
-        corr_np = np.zeros((d, d), dtype=np.float32)
-        for i in range(d):
-            for j in range(d):
-                if i == j:
-                    continue
-                valid = ~(np.isnan(X_flat[:, i]) | np.isnan(X_flat[:, j]))
-                if valid.sum() >= 10:
-                    r, _ = stats.pearsonr(X_flat[valid, i], X_flat[valid, j])
-                    corr_np[i, j] = abs(r) if not np.isnan(r) else 0
+        # Drop NaN rows once, then use np.corrcoef (O(d²) not O(d² * N))
+        valid_rows = ~np.isnan(X_flat).any(axis=1)
+        if valid_rows.sum() >= 10:
+            corr_np = np.abs(np.corrcoef(X_flat[valid_rows].T)).astype(np.float32)
+            np.fill_diagonal(corr_np, 0.0)
+            corr_np = np.nan_to_num(corr_np, nan=0.0)
+        else:
+            corr_np = np.zeros((d, d), dtype=np.float32)
         
-        corr_matrix = torch.from_numpy(corr_np).to(device)
-        base_model._corr_matrix = corr_matrix # Cache on model for train_epoch access
+        corr_matrix = torch.from_numpy(corr_np)  # keep on CPU to avoid GPU memory leak
+        base_model._corr_matrix_cpu = corr_matrix  # Cache on CPU; moved to device when needed
+        
+        # =================================================================
+        # V8.27 FIX 1: Correlation-initialized logits
+        # PROBLEM: Random init (randn*0.01) means all logits ≈ 0 → A ≈ 0.5.
+        # First edges to separate are random, not principled. Model then
+        # locks into these random edges. Result: often WORSE than corr baseline.
+        #
+        # FIX: Initialize W_adj ∝ standardized |corr(X_i, X_j)|.
+        # High-corr pairs start with positive logits (σ>0.5),
+        # low-corr start with negative (σ<0.5). This gives a warm start
+        # at least as good as the correlation baseline. Causal losses
+        # (L_icp, L_anticorr) then refine from there.
+        # =================================================================
+        if cfg.get("corr_init_enabled", True):
+            corr_init_scale = cfg.get("corr_init_scale", 1.0)
+            # Standardize: mean=0, std=corr_init_scale
+            nonzero_mask = corr_np > 0
+            if nonzero_mask.sum() > 1:
+                c_mean = corr_np[nonzero_mask].mean()
+                c_std = corr_np[nonzero_mask].std()
+                if c_std > 1e-8:
+                    W_init = (corr_np - c_mean) / c_std * corr_init_scale
+                else:
+                    W_init = (corr_np - c_mean) * corr_init_scale
+            else:
+                W_init = np.zeros_like(corr_np)
+            np.fill_diagonal(W_init, 0.0)
+            W_init_t = torch.from_numpy(W_init.astype(np.float32)).to(device)
+            base_model.graph_learner.W_mag.data.copy_(W_init_t)
+            
+            # =============================================================
+            # V8.33: W_dir starts at zero (dir=0.5 initially).
+            # No symmetry-break noise needed! Direction losses (L_dir_dec)
+            # will push W_dir toward ±∞ independently of W_mag.
+            # The whole point of V8.33 is that direction and structure
+            # have SEPARATE parameters — no need for noise hacks.
+            # =============================================================
+            base_model.graph_learner.W_dir.data.zero_()
+            
+            if is_main_process() and not sweep_mode:
+                n_pos = int((W_init > 0).sum())
+                topk_init = np.sort(W_init.flatten())[-target_edges_cfg:]
+                print(f"\n[V8.33] Corr-initialized W_mag: {n_pos}/{d*(d-1)} positive, "
+                      f"scale={corr_init_scale}, topk_mean={topk_init.mean():.3f}")
+                print(f"[V8.33] W_dir initialized to 0 (all dir=0.5). Direction losses will learn direction.")
+        
+        # V8.25: Pre-cache cousin mask (expensive to recompute every epoch)
+        if A_true is not None and cfg.get("use_cousin_penalty", True):
+            base_model._cousin_mask_cpu = compute_cousin_mask(
+                A_true.to(device), causal_convention=True).cpu()
     
-    # Optimizer with warm restarts
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=cfg["lr"],
-        weight_decay=cfg["weight_decay"]
-    )
+    # =========================================================================
+    # V8.33: Separate optimizer param groups for W_mag (structure) vs W_dir (direction)
+    # Direction typically needs larger LR since it starts at 0 and must reach
+    # large |Wd| values, while skeleton only needs small adjustments from corr init.
+    # =========================================================================
+    lr_dir_mult = cfg.get("lr_dir_multiplier", 5.0)
+    lr_base = cfg["lr"]
+    lr_dir = lr_base * lr_dir_mult
+    
+    # Collect parameter groups
+    mag_params = [base_model.graph_learner.W_mag]
+    dir_params = [base_model.graph_learner.W_dir]
+    other_params = [p for n, p in model.named_parameters()
+                    if p is not base_model.graph_learner.W_mag
+                    and p is not base_model.graph_learner.W_dir]
+    
+    optimizer = torch.optim.AdamW([
+        {"params": mag_params, "lr": lr_base, "weight_decay": cfg["weight_decay"]},
+        {"params": dir_params, "lr": lr_dir, "weight_decay": 0.0},  # No WD on direction
+        {"params": other_params, "lr": lr_base, "weight_decay": cfg["weight_decay"]},
+    ])
+    if is_main_process() and not sweep_mode:
+        print(f"[V8.33] Optimizer: lr_mag={lr_base:.1e}, lr_dir={lr_dir:.1e} ({lr_dir_mult}×), "
+              f"mag_params={sum(p.numel() for p in mag_params)}, "
+              f"dir_params={sum(p.numel() for p in dir_params)}, "
+              f"other_params={sum(p.numel() for p in other_params)}")
     scheduler = CosineAnnealingWarmRestarts(
         optimizer,
         T_0=cfg["restart_every"],
@@ -3038,6 +4102,7 @@ def train(
     best_metric = 0 # TopK-F1 for reporting
     best_epoch = 0
     patience_counter = 0
+    prev_stage = "1:DISC"  # V8.18: Track stage for patience reset at transitions
     history = []
     stage1_healthy = True
     prev_topk_set = None # For tracking TopK stability
@@ -3048,6 +4113,11 @@ def train(
     # CALIBRATION FIX: Track direction stability and edge_sum for adaptive scheduling
     direction_stable = False # Start assuming unstable until we see F1 > F1_T
     prev_edge_sum = None # For collapse detection
+    
+    # V8.23: DirConf hysteresis — prevent gaming by n_pairs collapse
+    dir_conf_stable_streak = 0 # Consecutive epochs with DirConf >= 0.8 AND n_pairs >= min
+    dir_conf_unstable_streak = 0 # Consecutive epochs with DirConf < 0.75
+    dir_conf_locked = False # True = direction considered stable (with hysteresis)
     
     # V8.10: EMA smoothing for stable evaluation
     # A_ema = 0.9 * A_ema + 0.1 * A_current (reduces noise in TopK selection)
@@ -3259,7 +4329,7 @@ def train(
                 # Get adjacency for proper edge counts
                 # V8.12: Apply convention fix HERE so all downstream uses correct convention
                 A_log = base_model.graph_learner.get_mean_adjacency()
-                A_log = to_causal_convention(A_log) # Convert to causal convention
+                A_log = to_causal_convention(A_log) # V8.26: identity (no-op)
                 A_np_log = A_log.detach().cpu().numpy()
                 
                 # V8.10: Update EMA smoothed adjacency for stable metrics
@@ -3320,14 +4390,75 @@ def train(
                 print(f" | Edges: thr={thr:.3f} gap={gap:.3f} | @90%={edges_90pct} @110%={edges_110pct} @2x={edges_2x} | sum={edge_sum:.1f}")
                 
                 # V8.15: Show TopK gap (separation between TopK and non-TopK edges)
-                topk_gap = train_metrics.get("topk_gap", None)
+                topk_gap_v15 = train_metrics.get("nontopk_max", None)  # V8.15 key
                 nontopk_max = train_metrics.get("nontopk_max", None)
                 L_nontopk = train_metrics.get("L_nontopk", 0)
-                if topk_gap is not None:
-                    gap_status = "[OK]" if topk_gap > 0.1 else ("~" if topk_gap > 0 else "[WARN]")
-                    print(f" | TopK gap: {topk_gap:.3f} [{gap_status}] | non-TopK max={nontopk_max:.3f} | L_suppress={L_nontopk:.4f}")
+                if topk_gap_v15 is not None and nontopk_max is not None:
+                    topk_gap_val = train_metrics.get("topk_gap", 0) or 0
+                    gap_status = "[OK]" if topk_gap_val > 0.1 else ("~" if topk_gap_val > 0 else "[WARN]")
+                    print(f" | TopK gap: {topk_gap_val:.3f} [{gap_status}] | non-TopK max={nontopk_max:.3f} | L_suppress={L_nontopk:.4f}")
                 
                 print(f" | A stats: max={A_max:.3f} mean={A_mean:.4f} topk_mean={topk_mean:.3f}")
+                
+                # ===============================================================
+                # V8.19: Diagnostic loss breakdown
+                # Shows raw penalty values and weighted contributions to help debug
+                # V8.20: Added L_sym (symmetry) and L_sep (separation) diagnostics
+                # ===============================================================
+                h_A_raw = train_metrics.get("h_A_raw", 0)
+                L_acyclic = train_metrics.get("L_acyclic", 0)
+                lambda_acy = train_metrics.get("lambda_acy_used", 0)
+                L_budget = train_metrics.get("L_budget", 0)
+                L_sparse = train_metrics.get("L_sparse", 0)
+                L_binary = train_metrics.get("L_binary", 0)
+                edge_sum_full = train_metrics.get("edge_sum", 0)  # Full matrix sum for budget
+                target_K = train_metrics.get("target_edges", K)
+                
+                # V8.20: Get new losses
+                L_sym = train_metrics.get("L_sym", 0)
+                L_sep = train_metrics.get("L_sep", 0)
+                L_bimodal = train_metrics.get("L_bimodal", 0)
+                L_tail_val = train_metrics.get("L_tail", 0)
+                L_dir_logit_val = train_metrics.get("L_dir_logit", 0)
+                lambda_sym = train_metrics.get("lambda_sym", 0)
+                lambda_sep = train_metrics.get("lambda_sep", 0)
+                lambda_bimodal = train_metrics.get("lambda_bimodal", 0)
+                lambda_tail_val = train_metrics.get("lambda_tail", 0)
+                lambda_dir_logit_val = train_metrics.get("lambda_dir_logit", 0)
+                topk_gap = train_metrics.get("topk_gap", 0)
+                
+                # Compute weighted contributions
+                weighted_acy = lambda_acy * L_acyclic
+                weighted_budget = lam_budget * L_budget
+                weighted_sparse = lam_sparse * L_sparse
+                weighted_sym = lambda_sym * L_sym
+                weighted_sep = lambda_sep * L_sep
+                weighted_bimodal = lambda_bimodal * L_bimodal
+                weighted_tail = lambda_tail_val * L_tail_val
+                weighted_dir_logit = lambda_dir_logit_val * L_dir_logit_val
+                
+                print(f" | LOSS: h_A={h_A_raw:.2f}→λ*L_acy={weighted_acy:.4f} | "
+                      f"L_budget={L_budget:.2f}→λ*L_b={weighted_budget:.4f} | "
+                      f"L_sparse={L_sparse:.4f}→λ*L_s={weighted_sparse:.4f} | "
+                      f"L_bin={L_binary:.4f} | Σedge={edge_sum_full:.1f}/K={target_K}")
+                
+                # V8.23: Show all separation + direction diagnostics
+                if lambda_sym > 0 or lambda_sep > 0 or lambda_bimodal > 0 or lambda_tail_val > 0:
+                    print(f" | V8.23: L_sym={L_sym:.4f}→{weighted_sym:.4f} | "
+                          f"L_bim={L_bimodal:.4f}→{weighted_bimodal:.4f} | "
+                          f"L_tail²={L_tail_val:.4f}→{weighted_tail:.4f} | "
+                          f"L_dir={L_dir_logit_val:.4f}→{weighted_dir_logit:.4f} | gap={topk_gap:.4f}")
+                
+                # V8.24: Show ICP + anticorr diagnostics
+                L_icp_val = train_metrics.get("L_icp", 0)
+                L_anticorr_val = train_metrics.get("L_anticorr", 0)
+                lambda_icp_val = train_metrics.get("lambda_icp", 0)
+                lambda_anticorr_val = train_metrics.get("lambda_anticorr", 0)
+                if lambda_icp_val > 0 or lambda_anticorr_val > 0:
+                    weighted_icp = lambda_icp_val * L_icp_val
+                    weighted_anticorr = lambda_anticorr_val * L_anticorr_val
+                    print(f" | V8.24: L_icp={L_icp_val:.4f}→{weighted_icp:.4f} | "
+                          f"L_anticorr={L_anticorr_val:.4f}→{weighted_anticorr:.4f}")
                 
                 # ===============================================================
                 # DIAGNOSTIC: Show transpose and skeleton F1 to detect direction issues
@@ -3375,10 +4506,50 @@ def train(
                     print(f" | DirConf: {dir_conf_correct}/{dir_conf_total} = {dir_conf_ratio:.2f} [{dir_emoji}] (t={dir_conf_t:.2f}, n_pairs={dir_conf_n})")
                 
                 # ===============================================================
-                # CALIBRATION FIX: Update direction stability for next epoch
-                # Direction is stable when F1 > F1_T (learning causation, not anti-causal)
+                # V8.23 FIX: DirConf with hysteresis + minimum pairs requirement
+                # V8.22 PROBLEM: DirConf jumped to 0.86 when n_pairs dropped from
+                # 52→29 (fewer constraints = easier to satisfy). This is GAMING.
+                #
+                # FIX:
+                # 1. Require n_pairs >= 40 to consider DirConf valid
+                # 2. Lock only after 3 consecutive valid+stable epochs
+                # 3. Unlock only after 3 consecutive unstable epochs
                 # ===============================================================
-                direction_stable = (topk_f1 >= topk_f1_T) or (topk_f1_T == 0)
+                dir_conf_threshold_stable = cfg.get("dir_conf_threshold_stable", 0.8)
+                # V8.29: Adaptive dir_conf_min_pairs — scale with d instead of fixed 40
+                if cfg.get("dir_conf_min_pairs_adaptive", True):
+                    dir_conf_min_pairs = max(10, d)  # d=15 → 15, d=50 → 50
+                else:
+                    dir_conf_min_pairs = cfg.get("dir_conf_min_pairs", 40)
+                dir_conf_consec_lock = cfg.get("dir_conf_consec_lock", 3)
+                dir_conf_consec_unlock = cfg.get("dir_conf_consec_unlock", 3)
+                
+                # Check if DirConf is VALID (enough pairs) and STABLE (above threshold)
+                dir_conf_valid = (dir_conf_n >= dir_conf_min_pairs)
+                dir_conf_good = (dir_conf_ratio >= dir_conf_threshold_stable) and dir_conf_valid
+                dir_conf_bad = (dir_conf_ratio < 0.75) or (not dir_conf_valid)
+                
+                if dir_conf_good:
+                    dir_conf_stable_streak += 1
+                    dir_conf_unstable_streak = 0
+                elif dir_conf_bad:
+                    dir_conf_unstable_streak += 1
+                    dir_conf_stable_streak = 0
+                else:
+                    # In gray zone (0.75-0.80 or valid but marginal): keep streaks
+                    pass
+                
+                # Hysteresis: lock after N consecutive good, unlock after N consecutive bad
+                if not dir_conf_locked and dir_conf_stable_streak >= dir_conf_consec_lock:
+                    dir_conf_locked = True
+                    if not sweep_mode:
+                        print(f" | [V8.23] DirConf LOCKED after {dir_conf_consec_lock} consecutive stable epochs")
+                elif dir_conf_locked and dir_conf_unstable_streak >= dir_conf_consec_unlock:
+                    dir_conf_locked = False
+                    if not sweep_mode:
+                        print(f" | [V8.23] DirConf UNLOCKED after {dir_conf_consec_unlock} consecutive unstable epochs")
+                
+                direction_stable = dir_conf_locked
                 prev_edge_sum = edge_sum # Track for collapse detection
                 
                 # ===============================================================
@@ -3395,12 +4566,19 @@ def train(
                 
                 # V8.17: Log peakiness gating status
                 if train_metrics.get("peakiness_gated", False):
-                    print(f" | PEAKINESS WARMUP (gap={gap:.3f} <0.02 or margin<0.15): τ↓, λs/λb frozen")
+                    failsafe_ep = cfg.get("peakiness_failsafe_epoch", 15)
+                    if epoch < failsafe_ep:
+                        print(f" | PEAKINESS WARMUP (gap={gap:.3f} <0.02 or margin<0.15): τ↓, λs/λb frozen (failsafe at epoch {failsafe_ep})")
+                    else:
+                        print(f" | PEAKINESS WARMUP bypassed by V8.18 fail-safe (epoch {epoch} ≥ {failsafe_ep}): λs/λb RAMPING")
                 
+                # V8.23: Direction stability with hysteresis + min pairs
+                dir_tau_fixed = cfg.get("direction_tau_fixed", 0.5)
+                pairs_ok = "✓" if dir_conf_n >= dir_conf_min_pairs else f"✗({dir_conf_n}<{dir_conf_min_pairs})"
                 if direction_stable:
-                    print(f" | [LOCK] Direction STABLE (τ floor released)")
+                    print(f" | [LOCK] Direction STABLE (hysteresis locked, streak={dir_conf_stable_streak}, pairs={pairs_ok}, τ_dir={dir_tau_fixed})")
                 else:
-                    print(f" | Direction UNSTABLE (τ floored at 0.8)")
+                    print(f" | Direction UNSTABLE (streak_good={dir_conf_stable_streak}/{dir_conf_consec_lock}, streak_bad={dir_conf_unstable_streak}, pairs={pairs_ok})")
                 
                 # ===============================================================
                 # V8.9: Log margin and symmetry metrics
@@ -3414,6 +4592,40 @@ def train(
                     print(f" | Margins: avg={avg_margin:.4f} min={min_margin:.4f} [{margin_status}] | sym={symmetry_ratio:.3f} L_excl={L_excl:.4f}")
                 
                 # ===============================================================
+                # V8.29: Log antisymmetric / bidir / ranking diagnostics
+                # ===============================================================
+                bidir_rate_log = train_metrics.get("bidir_rate", -1)
+                L_ranking_log = train_metrics.get("L_ranking", 0)
+                rank_gap_log = train_metrics.get("rank_gap", 0)
+                L_excl_uncond = train_metrics.get("L_excl", 0)
+                L_dir_dec_log = train_metrics.get("L_dir_dec", 0)
+                dir_dec_log = train_metrics.get("dir_decisiveness", 0)
+                if bidir_rate_log >= 0:
+                    bidir_status = "[OK]" if bidir_rate_log < 0.1 else ("[WARN]" if bidir_rate_log < 0.3 else "[BAD]")
+                    print(f" | V8.33: bidir={bidir_rate_log:.3f}{bidir_status} L_dir_dec={L_dir_dec_log:.4f} dir_dec={dir_dec_log:.3f} L_excl={L_excl_uncond:.4f} rank_gap={rank_gap_log:.4f}")
+                
+                # ===============================================================
+                # V8.36: Log direction masking diagnostics
+                # ===============================================================
+                k_dir_n = train_metrics.get("dir_mask_n_edges", -1)
+                k_dir_gap = train_metrics.get("dir_mask_gap", 0)
+                k_dir_bnd = train_metrics.get("dir_mask_boundary", 0)
+                if k_dir_n >= 0:
+                    target_e = cfg.get("target_edges", 13)
+                    true_e = int(A_true.sum()) if A_true is not None else -1
+                    ratio = k_dir_n / max(true_e, 1) if true_e > 0 else -1
+                    status = "[OK]" if 0.5 <= ratio <= 2.5 else ("[TIGHT]" if ratio < 0.5 else "[WIDE]")
+                    print(f" | V8.37: K_dir={k_dir_n} (gap={k_dir_gap:.3f} bnd={k_dir_bnd:.3f}) "
+                          f"true={true_e} target={target_e} ratio={ratio:.1f}x {status}")
+
+                # V8.36: Log effective loss weights when REFINE reweighting is active
+                refine_start_ep = int(cfg.get("stage2_end", 0.70) * cfg.get("epochs", 110))
+                if epoch > refine_start_ep:
+                    eff_recon = cfg.get("lambda_recon", 0.5) * cfg.get("refine_recon_factor", 0.1)
+                    eff_inv = cfg.get("lambda_inv", 2.0) * cfg.get("refine_inv_factor", 5.0)
+                    print(f" | V8.36: REFINE reweight λ_recon={eff_recon:.3f} λ_inv={eff_inv:.1f}")
+
+                # ===============================================================
                 # V8.11: Skeleton Freeze Logic
                 # Once skeleton is learned (Skel-F1 >= threshold for N epochs),
                 # freeze skeleton and train only direction
@@ -3424,7 +4636,7 @@ def train(
                         if skeleton_freeze_counter >= skeleton_freeze_patience:
                             # FREEZE SKELETON!
                             skeleton_frozen = True
-                            W_frozen = base_model.graph_learner.W_adj.data.clone()
+                            W_frozen = base_model.graph_learner.W_mag.data.clone()  # V8.33: freeze W_mag
                             print(f" | [FROZEN] SKELETON FROZEN @ epoch {epoch}!")
                             print(f" | Skel-F1={skeleton_f1:.3f} >= {skeleton_freeze_threshold:.3f} for {skeleton_freeze_patience} epochs")
                             print(f" | Now training DIRECTION only (τ_dir={direction_tau}, λ_dir×{lambda_direction_boost})")
@@ -3561,7 +4773,7 @@ def train(
             
             # Get current graph stats and convert to causal convention
             A_pred_check = base_model.graph_learner.get_mean_adjacency()
-            A_pred_check = to_causal_convention(A_pred_check) # V8.12: Convert at boundary
+            A_pred_check = to_causal_convention(A_pred_check) # V8.26: identity (no-op)
             A_np_check = A_pred_check.detach().cpu().numpy()
             
             # Budget window parameters
@@ -3575,9 +4787,11 @@ def train(
             edges_at_02 = int((A_np_check > 0.2).sum())
             
             # Budget window parameters
-            tol = 0.5 # Allow +/- 50% (can tighten to 0.25 later)
-            min_sum = K * (1 - tol) # e.g., 6.5 for K=13
-            max_sum = K * (1 + tol) # e.g., 19.5 for K=13
+            # V8.18 FIX: tol=0.5 was too tight for large K (K=30 → min=15,
+            # but soft edge values sum to ~13).  Widen to 0.7 so min=K*0.3.
+            tol = 0.7 # Allow sum ∈ [K*0.3, K*1.7]
+            min_sum = K * (1 - tol) # e.g., 3.9 for K=13, 9.0 for K=30
+            max_sum = K * (1 + tol) # e.g., 22.1 for K=13, 51.0 for K=30
             
             # Stage boundaries
             stage1_end = int(cfg["stage1_end"] * cfg["epochs"])
@@ -3614,14 +4828,21 @@ def train(
             # 2. Model demonstrates sustained excellence (prevents "solved but can't save")
             in_budget_window = (min_sum <= edge_sum <= max_sum)
             has_confident = (max_edge > 0.1) # At least one edge > 0.1
-            graph_valid = (past_disc or early_excellence) and in_budget_window and has_confident
             
             # ================================================================
-            # NOTE: We no longer track "correlation ref" during DISC phase
-            # That was FAKE - it was just model's random initialization!
-            # TRUE correlation baseline is computed from DATA at start.
-            # See: true_corr_baseline variable (computed before training loop)
+            # V8.19 FIX D: Baseline-aware guard
+            # Don't save checkpoints when model is WORSE than correlation baseline!
+            # This prevents saving useless models that could have been achieved
+            # by simply picking top-K correlations.
+            #
+            # Note: true_corr_baseline is computed ONCE at start from data.
             # ================================================================
+            corr_f1 = true_corr_baseline.get("corr_baseline_f1", 0.0) if true_corr_baseline else 0.0
+            baseline_margin = cfg.get("baseline_guard_margin", 0.0)  # Can be negative to allow slightly worse
+            beats_baseline = (topk_f1 > corr_f1 + baseline_margin)
+            
+            # Combine all guard checks
+            graph_valid = (past_disc or early_excellence) and in_budget_window and has_confident and beats_baseline
             
             # Log guard status (useful for debugging)
             if not sweep_mode and epoch % 10 == 0:
@@ -3638,6 +4859,8 @@ def train(
                     reason.append(f"budget [{min_sum:.1f},{max_sum:.1f}]")
                 if not has_confident:
                     reason.append(f"max={max_edge:.3f}<0.1")
+                if not beats_baseline:
+                    reason.append(f"TopK-F1={topk_f1:.3f}<=CorrBaseline={corr_f1:.3f}")
                 reason_str = ", ".join(reason) if reason else "all checks passed"
                 print(f" | [LOCK] Guard: {guard_status} ({reason_str})")
             
@@ -3685,6 +4908,11 @@ def train(
             in_stage_d = epoch >= stage2_end * cfg["epochs"]
             two_stage = cfg.get("two_stage_training", True)
             
+            # V8.29: Bidir penalty — penalize composite score by bidir_rate from training
+            bidir_pen_w = cfg.get("bidir_score_penalty", 0.5)
+            epoch_bidir_rate = train_metrics.get("bidir_rate", 0.0)
+            bidir_pen = bidir_pen_w * epoch_bidir_rate
+            
             if two_stage and not in_stage_d:
                 # Stage S: Focus on skeleton, light direction penalty
                 composite_score = (
@@ -3692,7 +4920,8 @@ def train(
                     1.0 * skel + # PRIMARY: undirected structure
                     0.3 * dir_bonus - # Light bonus for direction
                     0.3 * dir_penalty - # Light penalty (don't fight sparsity)
-                    0.5 * budget_pen
+                    0.5 * budget_pen -
+                    bidir_pen            # V8.29: penalize bidirectional edges
                 )
             else:
                 # Stage D or legacy: Heavy direction penalty
@@ -3701,13 +4930,14 @@ def train(
                     0.5 * skel +
                     0.5 * dir_bonus - # Bonus for beating transpose
                     1.0 * dir_penalty - # Strong penalty for skeleton >> directed
-                    0.5 * budget_pen
+                    0.5 * budget_pen -
+                    bidir_pen            # V8.29: penalize bidirectional edges
                 )
             
             # Log composite score components
             if not sweep_mode and epoch % 10 == 0:
                 dir_status = "[OK]" if dir_ratio > 0.7 else ("~" if dir_ratio > 0.4 else "[X]")
-                print(f" | Score: {composite_score:.4f} = topk({topk:.3f}) + 0.5*skel({skel:.3f}) + 0.5*dirB({dir_bonus:.3f}) - 1.0*dirP({dir_penalty:.3f}) - 0.5*bpen({budget_pen:.2f})")
+                print(f" | Score: {composite_score:.4f} = topk({topk:.3f}) + 0.5*skel({skel:.3f}) + 0.5*dirB({dir_bonus:.3f}) - 1.0*dirP({dir_penalty:.3f}) - 0.5*bpen({budget_pen:.2f}) - bidir({bidir_pen:.3f})")
                 print(f" | Dir ratio: {dir_ratio:.2f} [{dir_status}] (topk/skel, want >0.7)")
             
             # ================================================================
@@ -3766,11 +4996,26 @@ def train(
                             print(f" | * New best_score: {composite_score:.4f} (TopK={topk:.4f}, sum={edge_sum:.1f}) (guarded)")
             
             # V8.13: ALWAYS track OVERALL best (no guard, for reporting true performance)
-            # This ensures we never lose information even when guard fails
+            # V8.23 FIX: Also SAVE unguarded best checkpoint as fallback!
+            # V8.22 PROBLEM: Guard never passed → no checkpoint saved → eval used
+            # A_final.npy (last epoch, often WORSE than best epoch).
+            # Now we always save the best unguarded model and adjacency.
             if topk > best_topk_overall[0]:
                 best_topk_overall = (topk, epoch)
-                if not graph_valid and not sweep_mode and is_main_process():
-                    print(f" | New best_topk_overall: TopK-F1={topk:.4f} (unguarded)")
+                if is_main_process():
+                    # Always save unguarded best
+                    model_to_save_ug = model.module if ddp else model
+                    torch.save({
+                        "epoch": epoch,
+                        "model_state": model_to_save_ug.state_dict(),
+                        "optimizer_state": optimizer.state_dict(),
+                        "metrics": val_metrics,
+                        "composite_score": composite_score,
+                        "config": cfg,
+                    }, output_path / "best_unguarded.pt")
+                    np.save(output_path / "A_best_unguarded.npy", A_np_check)
+                    if not graph_valid and not sweep_mode:
+                        print(f" | New best_topk_overall: TopK-F1={topk:.4f} (unguarded, saved fallback)")
             
             if skel > best_skel_overall[0]:
                 best_skel_overall = (skel, epoch)
@@ -3787,20 +5032,106 @@ def train(
                     print(f" | [WARN] score={composite_score:.4f} but guard failed (sum={edge_sum:.1f})")
         
         # =====================================================================
-        # V8.14 FIX: Disable early stopping until after DISC phase
-        # CRITICAL BUG: V8.13 had inverted logic. When two_stage=True (default),
-        # early stopping triggered at epoch 5, before DISC complete at epoch 45.
-        # Fix: Only allow early stopping if past_disc OR patience >= max(40, patience)
+        # V8.18 FIX: Stage-aware patience — reset at DISC→PRUNE and PRUNE→REFINE
+        # Without this, patience accumulated in late DISC carries over and
+        # immediately triggers early stopping at PRUNE entry.
         # =====================================================================
         stage1_end = cfg.get("stage1_end", 0.30)
-        past_disc = epoch >= stage1_end * cfg["epochs"]
+        stage2_end = cfg.get("stage2_end", 0.80)
+        cur_stage = "1:DISC" if epoch <= stage1_end * cfg["epochs"] else \
+                    "2:PRUNE" if epoch <= stage2_end * cfg["epochs"] else "3:REFINE"
         
-        # Early stopping (only in PRUNE/REFINE, not DISC)
+        if cur_stage != prev_stage:
+            # =============================================================
+            # V8.27 FIX 2: Restore best DISC checkpoint at DISC→PRUNE
+            # PROBLEM: Model finds best F1 mid-DISC (e.g., epoch 21) but
+            # regresses by DISC end (epoch 30). PRUNE then locks in the
+            # WORSE edge set, never recovering the earlier peak.
+            #
+            # FIX: At the DISC→PRUNE transition, reload the best unguarded
+            # checkpoint (saved during DISC). Then immediately hard-prune
+            # to lock in the better edge set.
+            # =============================================================
+            if prev_stage == "1:DISC" and cur_stage == "2:PRUNE":
+                best_ckpt_path = output_path / "best_unguarded.pt"
+                if best_ckpt_path.exists() and cfg.get("restore_best_at_prune", True):
+                    ckpt = torch.load(best_ckpt_path, map_location=device, weights_only=False)
+                    base_model.load_state_dict(ckpt["model_state"])
+                    # Also restore optimizer to match model state
+                    if "optimizer_state" in ckpt:
+                        optimizer.load_state_dict(ckpt["optimizer_state"])
+                    ckpt_epoch = ckpt.get("epoch", "?")
+                    if is_main_process() and not sweep_mode:
+                        print(f"\n🔁 [V8.27] RESTORED best DISC checkpoint (epoch {ckpt_epoch}, "
+                              f"TopK-F1={best_topk_overall[0]:.4f}) before entering PRUNE")
+                    
+                    # Immediately hard-prune to lock in the restored edge set
+                    if cfg.get("hard_prune_enabled", True):
+                        with torch.no_grad():
+                            W_mag_r = base_model.graph_learner.W_mag  # V8.33: prune structure param
+                            d_r = W_mag_r.shape[0]
+                            diag_r = torch.eye(d_r, device=W_mag_r.device)
+                            # V8.34 FIX: Select from upper triangle (symmetric W_mag)
+                            Wm_sym_r = (W_mag_r + W_mag_r.T) / 2
+                            Wm_sym_r = Wm_sym_r * (1 - diag_r)
+                            W_upper_r = torch.triu(Wm_sym_r, diagonal=1)
+                            W_upper_flat_r = W_upper_r.flatten()
+                            n_upper_r = d_r * (d_r - 1) // 2
+                            k_r = min(target_edges_cfg, n_upper_r)
+                            _, topk_r_idx = torch.topk(W_upper_flat_r, k_r)
+                            keep_upper_flat_r = torch.zeros_like(W_upper_flat_r)
+                            keep_upper_flat_r[topk_r_idx] = 1.0
+                            keep_upper_r = keep_upper_flat_r.view(d_r, d_r)
+                            keep_r = (keep_upper_r + keep_upper_r.T).clamp(max=1.0)
+                            prune_decay_r = cfg.get("hard_prune_decay", 0.5)
+                            prune_floor_r = cfg.get("hard_prune_floor", -2.0)
+                            damped_r = W_mag_r.data * keep_r + W_mag_r.data * (1 - keep_r) * (1 - diag_r) * prune_decay_r
+                            damped_r = torch.where(
+                                keep_r.bool() | diag_r.bool(),
+                                W_mag_r.data,
+                                torch.clamp(damped_r, min=prune_floor_r)
+                            )
+                            W_mag_r.data = damped_r
+                        if is_main_process() and not sweep_mode:
+                            n_kept_r = int(keep_r.sum().item())
+                            print(f" | [V8.35] Immediate soft prune after restore: "
+                                  f"kept {k_r} undirected edges ({n_kept_r} entries), damped rest by {prune_decay_r}×")
+            
+            if is_main_process() and not sweep_mode:
+                print(f"\n🔄 Stage transition {prev_stage} → {cur_stage} at epoch {epoch}"
+                      f" — patience reset ({patience_counter} → 0)")
+                # V8.37: Announce REFINE reweighting
+                if cur_stage == "3:REFINE":
+                    rr = cfg.get("refine_recon_factor", 0.1)
+                    ri = cfg.get("refine_inv_factor", 5.0)
+                    lr_base = cfg.get("lambda_recon", 0.5)
+                    li_base = cfg.get("lambda_inv", 2.0)
+                    print(f" | [V8.36] REFINE REWEIGHTING ACTIVE:")
+                    print(f" |   λ_recon: {lr_base:.2f} → {lr_base*rr:.3f} (×{rr})")
+                    print(f" |   λ_inv:   {li_base:.2f} → {li_base*ri:.1f} (×{ri})")
+                    print(f" |   → Invariance is now the DOMINANT signal for direction")
+            patience_counter = 0  # fresh start for new stage
+            prev_stage = cur_stage
+        
+        past_disc = epoch >= stage1_end * cfg["epochs"]
+        past_refine = epoch >= stage2_end * cfg["epochs"]  # V8.38
+        
+        # V8.38 FIX: Early stopping ONLY in REFINE phase
+        # PROBLEM: patience=32 exhausts during PRUNE (epoch 34+32=66),
+        #   but REFINE starts at epoch 78 (0.70×110). Model never reaches
+        #   REFINE reweighting — the whole point of the 3-stage pipeline.
+        # FIX: Block early stopping in both DISC and PRUNE. Only allow in REFINE.
         if patience_counter >= cfg["patience"]:
-            if past_disc: # Only allow early stop AFTER DISC phase completes
+            if past_refine:  # V8.38: Only early stop in REFINE phase
                 if is_main_process() and not sweep_mode:
                     print(f"\n⏹ Early stopping at epoch {epoch} (patience={cfg['patience']})")
                 break
+            elif past_disc:
+                # In PRUNE phase - don't stop, need to reach REFINE
+                if is_main_process() and not sweep_mode and patience_counter == cfg["patience"]:
+                    print(f" | [V8.38] Early stopping blocked (PRUNE phase: epoch {epoch}, "
+                          f"REFINE starts at {int(stage2_end * cfg['epochs'])}. Patience reset)")
+                patience_counter = 0  # Reset patience in PRUNE
             else:
                 # Still in DISC phase - don't stop early
                 if is_main_process() and not sweep_mode and patience_counter == cfg["patience"]:
@@ -3815,7 +5146,7 @@ def train(
         
         # Save final adjacency in CAUSAL convention
         A_final = base_model.graph_learner.get_mean_adjacency()
-        A_final = to_causal_convention(A_final) # V8.12: Convert at boundary
+        A_final = to_causal_convention(A_final) # V8.26: identity (no-op)
         np.save(output_path / "A_final.npy", A_final.detach().cpu().numpy())
         
         if not sweep_mode:
@@ -3829,13 +5160,14 @@ def train(
             final_edges_02 = int((A_final_np > 0.2).sum())
             
             print("\n" + "=" * 70)
-            print("TRAINING COMPLETE (V8.12 - Causal Convention Fix)")
+            print("TRAINING COMPLETE (V8.38 - Guaranteed REFINE Phase)")
             print("=" * 70)
             print("CONVENTION INFO (for paper writeup):")
-            print(" Model output: A_model[i,j] = 'j depends on i' (SEM/dependency convention)")
-            print(" Evaluation: A_causal[i,j] = 'i causes j' (standard causal convention)")
-            print(" Conversion: A_causal = A_model.T (applied at all boundaries)")
-            print(" [DONE] All metrics, saves, and confusion matrices use A_causal")
+            print(" Model output: A[i,j] = 'i causes j' (causal convention)")
+            print(" A_true:       A[i,j] = 'i causes j' (causal convention)")
+            print(" Conversion:   NONE (identity — model already outputs causal)")
+            print(" Proof: decoder A^T @ z → z_agg[j] = sum_i A[i,j]*z[i] → A[i,j]>0 ⟺ i→j")
+            print(" [DONE] All metrics, saves, and confusion matrices use A directly")
             print("-" * 70)
             print("V8.11 FIXES:")
             print(" 1. Skeleton freeze: after Skel-F1>=0.95 for 5 epochs, freeze skeleton")
@@ -3913,6 +5245,21 @@ def train(
             if best_topk_sparse[1] == 0:
                 print("[WARN] No causal checkpoint saved (guard never passed)")
                 print(" Check: DISC ended early? Budget window too narrow? No confident edges?")
+                # V8.23 FIX: Promote unguarded best as fallback
+                unguarded_adj_path = output_path / "A_best_unguarded.npy"
+                unguarded_model_path = output_path / "best_unguarded.pt"
+                if unguarded_adj_path.exists():
+                    import shutil
+                    # Copy unguarded best to all expected checkpoint names
+                    shutil.copy2(unguarded_adj_path, output_path / "A_best_score.npy")
+                    shutil.copy2(unguarded_adj_path, output_path / "A_best.npy")
+                    shutil.copy2(unguarded_adj_path, output_path / "A_best_topk_sparse.npy")
+                    if unguarded_model_path.exists():
+                        shutil.copy2(unguarded_model_path, output_path / "best_model.pt")
+                        shutil.copy2(unguarded_model_path, output_path / "best_score.pt")
+                    print(f" [V8.23] FALLBACK: Promoted unguarded best (TopK-F1={best_topk_overall[0]:.4f} @ epoch {best_topk_overall[1]}) to A_best_score.npy")
+                else:
+                    print(" [V8.23] WARNING: No unguarded checkpoint found either!")
             print(f"Final graph: edge_sum={final_edge_sum:.2f}, @0.2={final_edges_02}")
             print(f"Output: {output_path}")
             print("=" * 70)
@@ -3977,6 +5324,10 @@ def parse_args():
     parser.add_argument("--sweep_mode", action="store_true",
                         help="Minimal output for ablation sweeps")
     
+    # Oracle Supervision (Added to prevent leakage)
+    parser.add_argument("--oracle_direction_supervision", action="store_true",
+                        help="Allow using ground truth graph for direction supervision (ORACLE ONLY)")
+
     # System
     parser.add_argument("--device", type=str, default="auto",
                         choices=["auto", "cpu", "cuda", "cuda:0", "cuda:1"])

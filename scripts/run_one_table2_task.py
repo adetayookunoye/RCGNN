@@ -56,6 +56,33 @@ def dataset_ready(data_dir: Path) -> bool:
     return all((data_dir / n).exists() for n in required)
 
 
+def merge_split_files(data_dir: Path):
+    """
+    Merge *_train.npy and *_val.npy files into single files.
+    
+    synth_corruption_benchmark.py produces X_train.npy/X_val.npy but
+    train_rcgnn_unified.py expects X.npy. This merges them.
+    """
+    import numpy as np
+    
+    pairs = [("X", "X_train", "X_val"),
+             ("M", "M_train", "M_val"),
+             ("S", "S_train", "S_val"),
+             ("e", "e_train", "e_val")]
+    
+    for merged_name, train_name, val_name in pairs:
+        train_file = data_dir / f"{train_name}.npy"
+        val_file = data_dir / f"{val_name}.npy"
+        merged_file = data_dir / f"{merged_name}.npy"
+        
+        if train_file.exists() and val_file.exists() and not merged_file.exists():
+            train_data = np.load(train_file)
+            val_data = np.load(val_file)
+            merged = np.concatenate([train_data, val_data], axis=0)
+            np.save(merged_file, merged)
+            print(f"  [OK] Merged {train_name} + {val_name} → {merged_name} ({merged.shape})")
+
+
 def generate_dataset(table, config, seed, data_dir: Path):
     """Generate dataset using the appropriate script."""
     ensure_dir(data_dir)
@@ -63,23 +90,29 @@ def generate_dataset(table, config, seed, data_dir: Path):
     if table == "2A":
         # H1/H2/H3 hypothesis benchmarks
         # synth_corruption_benchmark.py --benchmark {h1_easy,...}
-        return sh([
+        rc = sh([
             "python", "scripts/synth_corruption_benchmark.py",
             "--benchmark", config,
             "--seed", str(seed),
             "--output", str(data_dir),
         ])
+        if rc == 0:
+            merge_split_files(data_dir)
+        return rc
     elif table == "2B":
         # SEM benchmark grid
         # synth_corruption_benchmark.py --table2 --config {er_d13_lin,...}
         # Note: --seeds expects comma-separated, but we pass single seed
-        return sh([
+        rc = sh([
             "python", "scripts/synth_corruption_benchmark.py",
             "--table2",
             "--config", config,
             "--seeds", str(seed),
             "--output", str(data_dir.parent.parent),  # Output to sem_table2/, script adds config/seed_N
         ])
+        if rc == 0:
+            merge_split_files(data_dir)
+        return rc
     elif table == "2C":
         # Causal validity ablation (known DAG by construction)
         # run_synthetic_benchmark.py --benchmark compound_sem_medium
@@ -94,47 +127,65 @@ def generate_dataset(table, config, seed, data_dir: Path):
 
 
 def train_rcgnn(seed, data_dir: Path, art_dir: Path):
-    """Train RC-GNN on the dataset."""
+    """Train RC-GNN on the dataset with dimension-adaptive hyperparameters."""
     ensure_dir(art_dir)
 
-    # Try --data_dir first (unified script), then fallback to --data_root
-    cmd1 = [
+    # Detect device: use CUDA if available, else CPU
+    import torch
+    import numpy as np
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"[INFO] Using device: {device}")
+
+    # =========================================================================
+    # V8.28: Detect dimension & true edges from dataset for scaling
+    # train_rcgnn_unified.py does its own internal scaling, but we also pass
+    # explicit --target_edges so it doesn't rely on default=13 detection.
+    # =========================================================================
+    cmd = [
         "python", "scripts/train_rcgnn_unified.py",
         "--data_dir", str(data_dir),
         "--output_dir", str(art_dir),
         "--seed", str(seed),
-        "--device", "cuda",
+        "--device", device,
     ]
-    rc = sh(cmd1)
-    if rc == 0:
-        return 0
 
-    # Fallback: try --data_root
-    print("[INFO] Retrying with --data_root flag...")
-    cmd2 = [
-        "python", "scripts/train_rcgnn_unified.py",
-        "--data_root", str(data_dir),
-        "--output_dir", str(art_dir),
-        "--seed", str(seed),
-        "--device", "cuda",
-    ]
-    return sh(cmd2)
+    # Pass target_edges from A_true if available (so train script knows immediately)
+    a_true_path = data_dir / "A_true.npy"
+    if a_true_path.exists():
+        A_true = np.load(str(a_true_path))
+        d = A_true.shape[0]
+        n_edges = int(A_true.sum())
+        cmd += ["--target_edges", str(n_edges)]
+        print(f"[INFO] Detected d={d}, true_edges={n_edges}")
+
+    return sh(cmd)
 
 
 def eval_all(data_dir: Path, art_dir: Path):
-    """Run comprehensive evaluation."""
+    """
+    Run comprehensive evaluation for Table 2 task.
+    
+    Uses comprehensive_evaluation.py with --single-run mode for full baseline comparison.
+    """
     ensure_dir(art_dir)
     out_json = art_dir / "evaluation.json"
     
-    # Try different argument combinations for comprehensive_evaluation.py
+    # Use comprehensive_evaluation.py with --single-run flag
     cmd = [
         "python", "scripts/comprehensive_evaluation.py",
         "--artifacts-dir", str(art_dir),
         "--data-dir", str(data_dir),
         "--output", str(out_json),
+        "--single-run",
     ]
     rc = sh(cmd)
+    
+    if rc != 0:
+        print(f"[WARN] comprehensive_evaluation.py returned {rc}")
+    
     return rc
+    
+    return 0
 
 
 def main():
