@@ -388,16 +388,15 @@ DEFAULT_CONFIG = {
     "anticorr_start_epoch": 5, # V8.27: 15→5, start early before edges lock in
     
     # V9.1: Lead-lag direction loss — gives EdgeDirectionScorer a DEDICATED signal
-    # Computes temporal cross-correlation asymmetry g_ij = E[X_i(t-1)*X_j(t)] - E[X_j(t-1)*X_i(t)]
-    # If g_ij > 0, node i "leads" node j → pseudo-label for direction
-    "lambda_dir_leadlag_init": 0.5, # Start immediately (direction needs signal from epoch 1)
-    "lambda_dir_leadlag_final": 2.0, # Ramp up to match structural losses
+    # V9.2.1: Bumped lambdas (old 0.5→2.0 was too weak with confidence weighting)
+    "lambda_dir_leadlag_init": 2.0, # V9.2.1: 0.5→2.0 (strong from start)
+    "lambda_dir_leadlag_final": 5.0, # V9.2.1: 2.0→5.0 (direction is critical)
     "dir_leadlag_start_epoch": 1, # From the very start
     
     # V9.1: Direction entropy regularizer — pushes d_ij away from 0.5
-    # L_ent = E[d_ij * (1 - d_ij)], minimized when d_ij ∈ {0, 1}
-    "lambda_dir_entropy_init": 0.5, # Start moderate
-    "lambda_dir_entropy_final": 2.0, # Increase as training proceeds
+    # V9.2.1: Bumped to match lead-lag
+    "lambda_dir_entropy_init": 2.0, # V9.2.1: 0.5→2.0
+    "lambda_dir_entropy_final": 5.0, # V9.2.1: 2.0→5.0
     "dir_entropy_start_epoch": 1, # From the very start
     
     # V9.2: TTUR — Two-Time-Scale Update Rule for scorer
@@ -491,7 +490,8 @@ DEFAULT_CONFIG = {
     "lambda_dir_decisive": 10.0, # V8.32: mean(dir*(1-dir)) penalty, max at dir=0.5
     "dir_decisive_start_epoch": 1, # V8.32: Start from epoch 1
     # V8.33: Separate LR for direction parameter
-    "lr_dir_multiplier": 5.0, # V8.33: W_dir LR = base_lr * this (direction needs larger steps)
+    # V9.2: Bumped 5→20 (TTUR — scorer needs faster LR to track detached z_signal)
+    "lr_dir_multiplier": 20.0, # V9.2 TTUR: scorer LR = base_lr * 20
     
     # System
     "device": "auto",

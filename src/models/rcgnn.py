@@ -834,7 +834,7 @@ class RCGNN(nn.Module):
     - Dead L_dir_dec removed from training script
     """
     
-    VERSION = "9.2"
+    VERSION = "9.2.1"
     
     @staticmethod
     def to_causal_convention(A: torch.Tensor) -> torch.Tensor:
@@ -1182,15 +1182,11 @@ class RCGNN(nn.Module):
         # =====================================================================
         # Weighted BCE loss on direction probabilities
         # =====================================================================
-        # Stop-grad on magnitude so only scorer gets gradient
-        if mag is not None:
-            w_mag = mag.detach()
-        else:
-            Wm = self.graph_learner._get_sym_mag()
-            w_mag = torch.sigmoid(Wm).detach()
-        
-        # Weight = magnitude * confidence (both stop-graded)
-        w = w_mag * confidence.detach()
+        # V9.2.1: NO magnitude weighting — w_mag ≈ 0.22 attenuated gradients
+        # to ~1e-5, making the scorer take thousands of steps to move from 0.5.
+        # Use confidence-only weighting: edges with stronger lead-lag get more weight,
+        # but we DON'T gate by magnitude (which is uniform early in training).
+        w = confidence.detach()  # [d,d] — just lead-lag signal strength
         
         # Mask: only active edges (off-diagonal, optionally TopK)
         diag_mask = 1 - torch.eye(d, device=device)
@@ -1210,10 +1206,10 @@ class RCGNN(nn.Module):
         # BCE per edge
         bce = -y * torch.log(dp_clamped) - (1 - y) * torch.log(1 - dp_clamped)
         
-        # Weighted sum
-        weighted_bce = w * bce * edge_mask
-        denom = (w * edge_mask).sum() + 1e-8
-        L_dir_leadlag = weighted_bce.sum() / denom
+        # V9.2.1: SIMPLE MEAN over active edges (no magnitude gate)
+        # This gives uniform-strength gradient ≈ 1-2 per edge at d=0.5,
+        # vs ~0.01 with the old w_mag*confidence weighting.
+        L_dir_leadlag = (bce * w * edge_mask).sum() / (w * edge_mask).sum().clamp(min=1e-8)
         
         # =====================================================================
         # Diagnostics
