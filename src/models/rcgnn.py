@@ -418,7 +418,8 @@ class CausalGraphLearner(nn.Module):
         if antisym and dir_probs is not None:
             mag_batch = torch.sigmoid(Wm_batch)
             # Direction is shared across envs (from embedding average)
-            dir_batch = dir_probs.unsqueeze(0).expand(B, -1, -1)
+            # V9.2.4: Detach dir_probs so reconstruction gradient doesn't reach scorer
+            dir_batch = dir_probs.detach().unsqueeze(0).expand(B, -1, -1)
             A = mag_batch * dir_batch
             batch_diag = diag_mask.unsqueeze(0).expand(B, -1, -1)
             A = A * (1 - batch_diag)
@@ -448,7 +449,11 @@ class CausalGraphLearner(nn.Module):
         d = W_mag.shape[0]
         device = W_mag.device
         mag = torch.sigmoid(W_mag)
-        A = mag * dir_probs
+        # V9.2.4: Detach dir_probs from A so reconstruction gradient flows
+        # only to W_mag, NOT to the scorer. Scorer learns direction exclusively
+        # from L_dir_leadlag + L_dir_entropy via _live_dir_probs.
+        # Without this, L_recon overwhelms the direction labels.
+        A = mag * dir_probs.detach()
         A = A * (1 - torch.eye(d, device=device))
         return A
     
