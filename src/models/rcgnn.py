@@ -478,8 +478,9 @@ class CausalGraphLearner(nn.Module):
                 dir_probs = self.direction_scorer(z_for_dir, tau=tau)
             # Cache detached copy for eval / get_direction_map()
             self._cached_dir_probs = dir_probs.detach()
-            self._cached_dir_probs = dir_probs.detach()
-            # Keep live (with grad TO SCORER ONLY) for loss computation
+            # Keep live (with grad) for both direction loss AND reconstruction.
+            # V9.2.5: L_recon gradient flows through A → dir_probs → logit,
+            # allowing reconstruction to correct wrong variance labels.
             self._live_dir_probs = dir_probs
         elif antisym:
             # No embeddings — use cached (e.g. during eval)
@@ -513,8 +514,9 @@ class CausalGraphLearner(nn.Module):
         if antisym and dir_probs is not None:
             mag_batch = torch.sigmoid(Wm_batch)
             # Direction is shared across envs (from embedding average)
-            # V9.2.4: Detach dir_probs so reconstruction gradient doesn't reach scorer
-            dir_batch = dir_probs.detach().unsqueeze(0).expand(B, -1, -1)
+            # V9.2.5: Allow reconstruction gradient through dir_probs (see
+            # _edge_local_adjacency comment for rationale)
+            dir_batch = dir_probs.unsqueeze(0).expand(B, -1, -1)
             A = mag_batch * dir_batch
             batch_diag = diag_mask.unsqueeze(0).expand(B, -1, -1)
             A = A * (1 - batch_diag)
@@ -544,11 +546,15 @@ class CausalGraphLearner(nn.Module):
         d = W_mag.shape[0]
         device = W_mag.device
         mag = torch.sigmoid(W_mag)
-        # V9.2.4: Detach dir_probs from A so reconstruction gradient flows
-        # only to W_mag, NOT to the scorer. Scorer learns direction exclusively
-        # from L_dir_leadlag + L_dir_entropy via _live_dir_probs.
-        # Without this, L_recon overwhelms the direction labels.
-        A = mag * dir_probs.detach()
+        # V9.2.5: Allow reconstruction gradient to flow through dir_probs.
+        # With per-edge logits, there is NO gradient cancellation (each edge
+        # has its own parameter). L_recon naturally learns correct direction
+        # for true edges because A.T @ z_signal aggregates parents → children.
+        #
+        # V9.2.4 FAILURE: detaching dir_probs prevented L_recon from correcting
+        # wrong variance labels (~30% error rate on seed 0). Direction was
+        # locked to noisy variance heuristic → F1(A.T)=0.40 > F1(A)=0.17.
+        A = mag * dir_probs
         A = A * (1 - torch.eye(d, device=device))
         return A
     
@@ -942,9 +948,21 @@ class RCGNN(nn.Module):
     - In V9.2.2 (noise labels): stalemate invisible because noise has zero expected
       signal — reconstruction dominated and bidir dropped. In V9.2.3 (correct labels):
       variance signal fought reconstruction to stalemate → ll_agree stuck at 0.50.
+    
+    V9.2.5: Re-enable reconstruction gradient through dir_probs.
+    - V9.2.4 achieved ll_agree=1.000 but F1(A.T)=0.40 > F1(A)=0.17 — direction
+      FLIPPED. Root cause: variance heuristic only ~70% accurate for seed 0.
+      With dir_probs.detach(), direction was locked to noisy labels with no
+      correction from reconstruction loss.
+    - FIX: Remove .detach() from dir_probs in A computation. With per-edge logits
+      (not MLP scorer), there is NO gradient cancellation — each edge's logit has
+      independent gradient. L_recon naturally corrects wrong variance labels because
+      decoder uses A.T @ z_signal (parents contribute to children's reconstruction).
+    - TTUR inner loop KEPT for warm-up: variance labels provide initial direction
+      signal, then L_recon refines it.
     """
     
-    VERSION = "9.2.4"
+    VERSION = "9.2.5"
     
     @staticmethod
     def to_causal_convention(A: torch.Tensor) -> torch.Tensor:

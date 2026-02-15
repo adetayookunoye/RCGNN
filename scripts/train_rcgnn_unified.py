@@ -402,7 +402,7 @@ DEFAULT_CONFIG = {
     # V9.2: TTUR — Two-Time-Scale Update Rule for scorer
     # Scorer sees detached z_signal (stable inputs per step). Needs higher LR
     # to track the slowly-changing encoder representation.
-    "scorer_inner_steps": 3, # Extra scorer-only optimizer steps per batch
+    "scorer_inner_steps": 1, # V9.2.5: 3→1 (L_recon provides stronger direction signal)
     
     # V8.27: Correlation-initialized logits + restore best DISC checkpoint
     "corr_init_enabled": True, # Initialize W_adj from |corr(X_i,X_j)| for warm start
@@ -491,7 +491,7 @@ DEFAULT_CONFIG = {
     "dir_decisive_start_epoch": 1, # V8.32: Start from epoch 1
     # V8.33: Separate LR for direction parameter
     # V9.2: Bumped 5→20 (TTUR — scorer needs faster LR to track detached z_signal)
-    "lr_dir_multiplier": 20.0, # V9.2 TTUR: scorer LR = base_lr * 20
+    "lr_dir_multiplier": 5.0, # V9.2.5: 20→5 (L_recon now flows through dir_probs)
     
     # System
     "device": "auto",
@@ -4119,7 +4119,7 @@ def train(
     # V9.0: Direction comes from EdgeDirectionScorer (MLP), not W_dir parameter.
     # Direction scorer params get a higher LR like the old W_dir did.
     # =========================================================================
-    lr_dir_mult = cfg.get("lr_dir_multiplier", 20.0)  # V9.2: 5→20 (TTUR)
+    lr_dir_mult = cfg.get("lr_dir_multiplier", 5.0)  # V9.2.5: 20→5 (L_recon now flows through dir_probs)
     lr_base = cfg["lr"]
     lr_dir = lr_base * lr_dir_mult
     
