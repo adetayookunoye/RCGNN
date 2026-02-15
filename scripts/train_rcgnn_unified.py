@@ -387,6 +387,19 @@ DEFAULT_CONFIG = {
     "lambda_anticorr_final": 4.0, # V8.27: 1.5→4.0, break corr→edge pipeline harder
     "anticorr_start_epoch": 5, # V8.27: 15→5, start early before edges lock in
     
+    # V9.1: Lead-lag direction loss — gives EdgeDirectionScorer a DEDICATED signal
+    # Computes temporal cross-correlation asymmetry g_ij = E[X_i(t-1)*X_j(t)] - E[X_j(t-1)*X_i(t)]
+    # If g_ij > 0, node i "leads" node j → pseudo-label for direction
+    "lambda_dir_leadlag_init": 0.5, # Start immediately (direction needs signal from epoch 1)
+    "lambda_dir_leadlag_final": 2.0, # Ramp up to match structural losses
+    "dir_leadlag_start_epoch": 1, # From the very start
+    
+    # V9.1: Direction entropy regularizer — pushes d_ij away from 0.5
+    # L_ent = E[d_ij * (1 - d_ij)], minimized when d_ij ∈ {0, 1}
+    "lambda_dir_entropy_init": 0.5, # Start moderate
+    "lambda_dir_entropy_final": 2.0, # Increase as training proceeds
+    "dir_entropy_start_epoch": 1, # From the very start
+    
     # V8.27: Correlation-initialized logits + restore best DISC checkpoint
     "corr_init_enabled": True, # Initialize W_adj from |corr(X_i,X_j)| for warm start
     "corr_init_scale": 1.0, # Std dev of initialized logits (higher = stronger bias)
@@ -902,6 +915,28 @@ def get_loss_weights(
     weights["lambda_anticorr"] = get_scheduled_weight(
         epoch, total_epochs, anticorr_init, anticorr_final,
         start_epoch=anticorr_start, end_epoch=total_epochs  # Keep through REFINE
+    )
+    
+    # =========================================================================
+    # V9.1: Lead-lag direction loss — dedicated signal for EdgeDirectionScorer
+    # =========================================================================
+    leadlag_init = config.get("lambda_dir_leadlag_init", 0.5)
+    leadlag_final = config.get("lambda_dir_leadlag_final", 2.0)
+    leadlag_start = config.get("dir_leadlag_start_epoch", 1)
+    weights["lambda_dir_leadlag"] = get_scheduled_weight(
+        epoch, total_epochs, leadlag_init, leadlag_final,
+        start_epoch=leadlag_start, end_epoch=total_epochs  # Active throughout
+    )
+    
+    # =========================================================================
+    # V9.1: Direction entropy regularizer — push d_ij away from 0.5
+    # =========================================================================
+    dir_ent_init = config.get("lambda_dir_entropy_init", 0.5)
+    dir_ent_final = config.get("lambda_dir_entropy_final", 2.0)
+    dir_ent_start = config.get("dir_entropy_start_epoch", 1)
+    weights["lambda_dir_entropy"] = get_scheduled_weight(
+        epoch, total_epochs, dir_ent_init, dir_ent_final,
+        start_epoch=dir_ent_start, end_epoch=total_epochs  # Active throughout
     )
     
     # =========================================================================
@@ -3855,12 +3890,15 @@ def train(
     if cfg.get("antisymmetric_adjacency", True):
         base_model.graph_learner.set_antisymmetric(True)
         if is_main_process() and not sweep_mode:
-            print(f"[V9.0] EDGE-LOCAL DIRECTION SCORING:")
+            print(f"[V9.1] EDGE-LOCAL DIRECTION SCORING:")
             print(f"        Magnitude: σ(Wm) from symmetric W_mag parameter")
             print(f"        Direction: d_ij = σ(score(h_i,h_j) - score(h_j,h_i)) from EdgeDirectionScorer MLP")
+            print(f"        V9.1 FIX: Per-sample logit averaging (not embedding mean-pool)")
+            print(f"        V9.1 FIX: Lead-lag pseudo-labels give scorer DEDICATED gradient signal")
             print(f"        A_ij = σ(Wm) * d_ij,  A_ji = σ(Wm) * (1-d_ij)")
             print(f"        GUARANTEE: d_ij + d_ji = 1 (by antisymmetric construction)")
-            print(f"        Direction gradient: L_inv → z → A → d_ij → scorer → encoder (DIRECT path)")
+            print(f"        Direction losses: L_dir_leadlag (λ={cfg.get('lambda_dir_leadlag_init', 0.5)}→{cfg.get('lambda_dir_leadlag_final', 2.0)}) "
+                  f"+ L_dir_entropy (λ={cfg.get('lambda_dir_entropy_init', 0.5)}→{cfg.get('lambda_dir_entropy_final', 2.0)})")
             if cfg.get('dir_mask_enabled', True):
                 print(f"        V8.37 ADAPTIVE K_dir: K_min={cfg.get('dir_k_min_factor', 0.8)}×target, "
                       f"K_max={cfg.get('dir_k_max_factor', 2.5)}×target, "
@@ -3953,9 +3991,9 @@ def train(
             if is_main_process() and not sweep_mode:
                 n_pos = int((W_init > 0).sum())
                 topk_init = np.sort(W_init.flatten())[-target_edges_cfg:]
-                print(f"\n[V9.0] Corr-initialized W_mag: {n_pos}/{d*(d-1)} positive, "
+                print(f"\n[V9.1] Corr-initialized W_mag: {n_pos}/{d*(d-1)} positive, "
                       f"scale={corr_init_scale}, topk_mean={topk_init.mean():.3f}")
-                print(f"[V9.0] Direction from EdgeDirectionScorer (starts at 0.5, learns from embeddings).")
+                print(f"[V9.1] Direction from EdgeDirectionScorer (starts at 0.5, learns from embeddings).")
         
         # V8.25: Pre-cache cousin mask (expensive to recompute every epoch)
         if A_true is not None and cfg.get("use_cousin_penalty", True):
@@ -3985,7 +4023,7 @@ def train(
         {"params": other_params, "lr": lr_base, "weight_decay": cfg["weight_decay"]},
     ])
     if is_main_process() and not sweep_mode:
-        print(f"[V9.0] Optimizer: lr_mag={lr_base:.1e}, lr_dir_scorer={lr_dir:.1e} ({lr_dir_mult}×), "
+        print(f"[V9.1] Optimizer: lr_mag={lr_base:.1e}, lr_dir_scorer={lr_dir:.1e} ({lr_dir_mult}×), "
               f"mag_params={sum(p.numel() for p in mag_params)}, "
               f"dir_scorer_params={sum(p.numel() for p in dir_params)}, "
               f"other_params={sum(p.numel() for p in other_params)}")
@@ -4115,11 +4153,11 @@ def train(
                 boosted_lr = base_lr_dir * boost_factor
                 optimizer.param_groups[1]["lr"] = boosted_lr  # param_groups[1] = dir_scorer params
                 if refine_epoch == 0 and is_main_process() and not sweep_mode:
-                    print(f" | [V9.0] Direction scorer LR boosted: {base_lr_dir:.1e} → {boosted_lr:.1e} (×{boost_factor}) for {boost_duration} epochs")
+                    print(f" | [V9.1] Direction scorer LR boosted: {base_lr_dir:.1e} → {boosted_lr:.1e} (×{boost_factor}) for {boost_duration} epochs")
             elif refine_epoch == boost_duration:
                 optimizer.param_groups[1]["lr"] = base_lr_dir  # Restore normal
                 if is_main_process() and not sweep_mode:
-                    print(f" | [V9.0] Direction scorer LR boost ended, restored to {base_lr_dir:.1e}")
+                    print(f" | [V9.1] Direction scorer LR boost ended, restored to {base_lr_dir:.1e}")
         
         # Train epoch (with calibration parameters and skeleton mask for Stage D)
         train_metrics, dro_weights = train_epoch(
@@ -4434,6 +4472,18 @@ def train(
                     weighted_anticorr = lambda_anticorr_val * L_anticorr_val
                     print(f" | V8.24: L_icp={L_icp_val:.4f}→{weighted_icp:.4f} | "
                           f"L_anticorr={L_anticorr_val:.4f}→{weighted_anticorr:.4f}")
+                
+                # V9.1: Show lead-lag direction + entropy diagnostics
+                L_dir_ll = train_metrics.get("L_dir_leadlag", 0)
+                L_dir_ent = train_metrics.get("L_dir_entropy", 0)
+                lambda_ll = train_metrics.get("lambda_dir_leadlag", 0)
+                lambda_ent = train_metrics.get("lambda_dir_entropy", 0)
+                ll_agree = train_metrics.get("leadlag_agreement", 0)
+                ll_signal = train_metrics.get("leadlag_signal_mean", 0)
+                if lambda_ll > 0 or lambda_ent > 0:
+                    print(f" | V9.1: L_ll={L_dir_ll:.4f}→{lambda_ll*L_dir_ll:.4f} | "
+                          f"L_ent={L_dir_ent:.4f}→{lambda_ent*L_dir_ent:.4f} | "
+                          f"ll_agree={ll_agree:.3f} ll_signal={ll_signal:.4f}")
                 
                 # ===============================================================
                 # DIAGNOSTIC: Show transpose and skeleton F1 to detect direction issues
@@ -4757,8 +4807,8 @@ def train(
                 # =============================================================
                 base_model.graph_learner.W_mag.requires_grad_(False)
                 if is_main_process() and not sweep_mode:
-                    print(f" | [V9.0] W_mag.requires_grad_(False) — skeleton magnitudes fully frozen")
-                    print(f" | [V9.0] Direction scorer keeps learning from embeddings (no reset needed)")
+                    print(f" | [V9.1] W_mag.requires_grad_(False) — skeleton magnitudes fully frozen")
+                    print(f" | [V9.1] Direction scorer keeps learning from embeddings (no reset needed)")
                 
                 # V9.0: LR boost for direction scorer in early REFINE
                 refine_lr_boost = cfg.get("refine_dir_lr_boost", 5.0)
@@ -5176,7 +5226,7 @@ def train(
             final_edges_02 = int((A_final_np > 0.2).sum())
             
             print("\n" + "=" * 70)
-            print("TRAINING COMPLETE (V8.41 - Config Cleanup + Code Review)")
+            print("TRAINING COMPLETE (V9.1 - Lead-lag direction + per-sample logit averaging)")
             print("=" * 70)
             print("CONVENTION INFO (for paper writeup):")
             print(" Model output: A[i,j] = 'i causes j' (causal convention)")

@@ -211,11 +211,28 @@ class EdgeDirectionScorer(nn.Module):
             nn.Linear(hidden_dim, 1),
         )
     
+    def _score_pairs(self, h: torch.Tensor) -> torch.Tensor:
+        """Score all node pairs from embeddings [*, d, L] → [*, d, d].
+        
+        Works on any leading batch dims. Returns raw scores (before antisym).
+        """
+        *batch_dims, d, L = h.shape
+        # Build all pairs: h_i || h_j for each (i,j)
+        h_i = h.unsqueeze(-2).expand(*batch_dims, d, d, L)  # [*, d, d, L]
+        h_j = h.unsqueeze(-3).expand(*batch_dims, d, d, L)  # [*, d, d, L]
+        h_pairs = torch.cat([h_i, h_j], dim=-1)  # [*, d, d, 2L]
+        scores = self.scorer(h_pairs).squeeze(-1)  # [*, d, d]
+        return scores
+    
     def forward(
         self, z_signal: torch.Tensor, tau: float = 1.0
     ) -> torch.Tensor:
         """
-        Compute direction probabilities from node embeddings.
+        V9.1: Compute direction probabilities from node embeddings.
+        
+        KEY FIX: Compute logits PER-SAMPLE, then average logits.
+        V9.0 bug: mean-pooling embeddings before scoring destroyed
+        per-sample direction signal. Now each sample votes on direction.
         
         Args:
             z_signal: [B, T, d, L] or [B, d, L] node embeddings
@@ -224,28 +241,25 @@ class EdgeDirectionScorer(nn.Module):
         Returns:
             dir_probs: [d, d] direction probabilities, d_ij + d_ji = 1
         """
-        # Pool over batch and time to get per-node embeddings: [d, L]
         if z_signal.dim() == 4:
-            h = z_signal.mean(dim=(0, 1))  # [d, L]
+            B, T, d, L = z_signal.shape
+            # Score every (sample, time) independently: [B*T, d, d]
+            h_flat = z_signal.reshape(B * T, d, L)
+            scores_flat = self._score_pairs(h_flat)  # [B*T, d, d]
+            # Antisymmetric logits per sample
+            antisym_flat = scores_flat - scores_flat.transpose(-1, -2)  # [B*T, d, d]
+            # Average LOGITS across samples (preserves per-sample asymmetries)
+            antisym_logits = antisym_flat.mean(dim=0)  # [d, d]
         elif z_signal.dim() == 3:
-            h = z_signal.mean(dim=0)  # [d, L]
+            B, d, L = z_signal.shape
+            scores_flat = self._score_pairs(z_signal)  # [B, d, d]
+            antisym_flat = scores_flat - scores_flat.transpose(-1, -2)
+            antisym_logits = antisym_flat.mean(dim=0)  # [d, d]
         else:
-            h = z_signal  # already [d, L]
-        
-        d = h.shape[0]
-        L = h.shape[1]
-        
-        # Build all pairs: h_i || h_j for each (i,j)
-        h_i = h.unsqueeze(1).expand(d, d, L)  # [d, d, L]
-        h_j = h.unsqueeze(0).expand(d, d, L)  # [d, d, L]
-        h_pairs = torch.cat([h_i, h_j], dim=-1)  # [d, d, 2L]
-        
-        # Score each pair
-        scores = self.scorer(h_pairs).squeeze(-1)  # [d, d]
-        
-        # Antisymmetric logits: score(i,j) - score(j,i)
-        # This GUARANTEES d_ij + d_ji = 1
-        antisym_logits = scores - scores.T  # [d, d]
+            # [d, L] — single set of embeddings (eval fallback)
+            d, L = z_signal.shape
+            scores = self._score_pairs(z_signal.unsqueeze(0)).squeeze(0)  # [d, d]
+            antisym_logits = scores - scores.T
         
         # Direction probabilities with temperature
         dir_probs = torch.sigmoid(antisym_logits / tau)
@@ -807,7 +821,7 @@ class RCGNN(nn.Module):
     6. V8.24 ICP + anti-correlation losses for causal edge identity
     """
     
-    VERSION = "9.0"
+    VERSION = "9.1"
     
     @staticmethod
     def to_causal_convention(A: torch.Tensor) -> torch.Tensor:
@@ -1065,6 +1079,185 @@ class RCGNN(nn.Module):
             return mu
         
         return decoder_fn
+    
+    def compute_lead_lag_direction_loss(
+        self,
+        X: torch.Tensor,
+        M: Optional[torch.Tensor] = None,
+        dir_probs: Optional[torch.Tensor] = None,
+        mag: Optional[torch.Tensor] = None,
+        topk_mask: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, Dict[str, float]]:
+        """
+        V9.1: Lead-lag pseudo-label loss for direction scoring.
+        
+        Computes temporal cross-correlation asymmetry from data X:
+            g_ij = E[X_i(t-1) * X_j(t)] - E[X_j(t-1) * X_i(t)]
+        
+        If g_ij > 0, node i "leads" node j → pseudo-label y_ij = 1.
+        Train direction scorer with BCE(d_ij, y_ij), weighted by
+        magnitude (stop-grad) and |g_ij| (confidence).
+        
+        This gives direction its OWN loss that ONLY the scorer can reduce.
+        No gradient cancellation from A_ij + A_ji invariance.
+        
+        Args:
+            X: [B, T, d] time series data
+            M: [B, T, d] observation mask (optional)
+            dir_probs: [d, d] current direction probabilities (with grad)
+            mag: [d, d] magnitude σ(W_mag) (stop-graded)
+            topk_mask: [d, d] binary mask for active edges (optional)
+            
+        Returns:
+            loss: scalar lead-lag direction loss
+            metrics: dict with diagnostic info
+        """
+        device = X.device
+        d = self.d
+        
+        # Need time dimension for lead-lag
+        if X.dim() < 3 or X.shape[1] < 2:
+            return torch.tensor(0.0, device=device), {"L_dir_leadlag": 0.0, "leadlag_coverage": 0.0}
+        
+        if dir_probs is None:
+            dir_probs = self.graph_learner.get_direction_map()
+        
+        B, T, N = X.shape
+        assert N == d, f"Expected d={d}, got N={N}"
+        
+        # Apply mask: zero out unobserved entries
+        if M is not None:
+            X_masked = X * M
+        else:
+            X_masked = X
+            M = torch.ones_like(X)
+        
+        # =====================================================================
+        # Compute lead-lag cross-correlation: g_ij = E[X_i(t-1)*X_j(t)] - E[X_j(t-1)*X_i(t)]
+        # =====================================================================
+        X_lag = X_masked[:, :-1, :]   # [B, T-1, d]  — time t-1
+        X_lead = X_masked[:, 1:, :]   # [B, T-1, d]  — time t
+        M_lag = M[:, :-1, :]
+        M_lead = M[:, 1:, :]
+        
+        # Valid pairs: both (i at t-1) and (j at t) observed
+        # cross_ij = mean( X_i(t-1) * X_j(t) )  over valid (b,t)
+        # Shape: [B, T-1, d, 1] * [B, T-1, 1, d] → [B, T-1, d, d]
+        cross = X_lag.unsqueeze(-1) * X_lead.unsqueeze(-2)  # [B, T-1, d, d]
+        valid = M_lag.unsqueeze(-1) * M_lead.unsqueeze(-2)   # [B, T-1, d, d]
+        
+        # Sum and normalize
+        cross_sum = (cross * valid).sum(dim=(0, 1))   # [d, d]
+        valid_sum = valid.sum(dim=(0, 1))               # [d, d]
+        cross_mean = cross_sum / (valid_sum + 1e-8)     # [d, d]  E[X_i(t-1)*X_j(t)]
+        
+        # g_ij = E[X_i(t-1)*X_j(t)] - E[X_j(t-1)*X_i(t)]
+        # = cross_mean[i,j] - cross_mean[j,i]
+        g = cross_mean - cross_mean.T  # [d, d] antisymmetric
+        
+        # =====================================================================
+        # Pseudo-labels and confidence
+        # =====================================================================
+        y = (g > 0).float()  # [d, d] — pseudo-label: 1 if i leads j
+        confidence = g.abs()  # [d, d] — how confident the lead-lag signal is
+        
+        # Normalize confidence to [0, 1] range for stable weighting
+        conf_max = confidence.max()
+        if conf_max > 0:
+            confidence = confidence / (conf_max + 1e-8)
+        
+        # =====================================================================
+        # Weighted BCE loss on direction probabilities
+        # =====================================================================
+        # Stop-grad on magnitude so only scorer gets gradient
+        if mag is not None:
+            w_mag = mag.detach()
+        else:
+            Wm = self.graph_learner._get_sym_mag()
+            w_mag = torch.sigmoid(Wm).detach()
+        
+        # Weight = magnitude * confidence (both stop-graded)
+        w = w_mag * confidence.detach()
+        
+        # Mask: only active edges (off-diagonal, optionally TopK)
+        diag_mask = 1 - torch.eye(d, device=device)
+        if topk_mask is not None:
+            edge_mask = diag_mask * topk_mask.detach()
+        else:
+            edge_mask = diag_mask
+        
+        # Only include edges with sufficient coverage
+        min_valid_pairs = 5
+        coverage_mask = (valid_sum > min_valid_pairs).float()
+        edge_mask = edge_mask * coverage_mask
+        
+        # Clamp dir_probs for numerical stability in BCE
+        dp_clamped = dir_probs.clamp(1e-6, 1 - 1e-6)
+        
+        # BCE per edge
+        bce = -y * torch.log(dp_clamped) - (1 - y) * torch.log(1 - dp_clamped)
+        
+        # Weighted sum
+        weighted_bce = w * bce * edge_mask
+        denom = (w * edge_mask).sum() + 1e-8
+        L_dir_leadlag = weighted_bce.sum() / denom
+        
+        # =====================================================================
+        # Diagnostics
+        # =====================================================================
+        with torch.no_grad():
+            # How many edges have active signal
+            n_active = edge_mask.sum().item()
+            # Direction agreement with pseudo-labels
+            pred_dir = (dir_probs > 0.5).float()
+            agree = ((pred_dir == y) * edge_mask).sum() / (edge_mask.sum() + 1e-8)
+            # Lead-lag signal strength
+            g_active = g.abs()[edge_mask.bool()]
+            g_mean = g_active.mean().item() if g_active.numel() > 0 else 0.0
+        
+        metrics = {
+            "L_dir_leadlag": L_dir_leadlag.item(),
+            "leadlag_coverage": n_active,
+            "leadlag_agreement": agree.item(),
+            "leadlag_signal_mean": g_mean,
+        }
+        
+        return L_dir_leadlag, metrics
+    
+    def compute_direction_entropy_loss(
+        self,
+        dir_probs: Optional[torch.Tensor] = None,
+        topk_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        V9.1: Entropy regularizer to push direction away from 0.5.
+        
+        L_ent = E[d_ij * (1 - d_ij)] over active edges.
+        Minimized when d_ij ∈ {0, 1}, maximized at d_ij = 0.5.
+        
+        This is SECONDARY to lead-lag loss — prevents lazy equilibrium
+        but doesn't choose direction.
+        """
+        if dir_probs is None:
+            dir_probs = self.graph_learner.get_direction_map()
+        
+        d = dir_probs.shape[0]
+        device = dir_probs.device
+        diag_mask = 1 - torch.eye(d, device=device)
+        
+        if topk_mask is not None:
+            mask = diag_mask * topk_mask.detach()
+        else:
+            mask = diag_mask
+        
+        # Only upper triangle (d_ij and d_ji are redundant)
+        upper = torch.triu(torch.ones(d, d, device=device), diagonal=1)
+        mask = mask * upper
+        
+        entropy = dir_probs * (1 - dir_probs)
+        L_ent = (entropy * mask).sum() / (mask.sum() + 1e-8)
+        
+        return L_ent
     
     def compute_loss(
         self,
@@ -1476,6 +1669,67 @@ class RCGNN(nn.Module):
         # Total loss with GUARDRAIL 2: variance penalty + binarization
         # V8.22: Add L_tail (tail suppression) + L_dir_logit (direction margin)
         # V8.24: Add L_icp (invariant causal scoring) + L_anticorr (anti-correlation)
+        # V9.1: Add L_dir_leadlag (lead-lag pseudo-labels) + L_dir_entropy (push off 0.5)
+        
+        # =====================================================================
+        # V9.1: Lead-lag direction loss + entropy regularizer
+        # Gives the EdgeDirectionScorer a DEDICATED loss signal
+        # =====================================================================
+        lambda_dir_leadlag = loss_weights.get("lambda_dir_leadlag", 0.5) if loss_weights else 0.5
+        lambda_dir_entropy = loss_weights.get("lambda_dir_entropy", 1.0) if loss_weights else 1.0
+        
+        L_dir_leadlag = torch.tensor(0.0, device=device)
+        L_dir_entropy = torch.tensor(0.0, device=device)
+        leadlag_metrics = {}
+        
+        antisym_on = getattr(self.graph_learner, '_antisymmetric', False)
+        if antisym_on and lambda_dir_leadlag > 0:
+            # Get live direction probs (with grad for scorer)
+            dir_probs_live = getattr(self.graph_learner, '_live_dir_probs', None)
+            if dir_probs_live is None:
+                dir_probs_live = self.graph_learner._cached_dir_probs
+            
+            # Magnitude (stop-graded)
+            Wm = self.graph_learner._get_sym_mag()
+            mag = torch.sigmoid(Wm).detach()
+            
+            # TopK mask for focusing on active edges
+            topk_binary = torch.zeros(self.d, self.d, device=device)
+            if A_flat.numel() > target_k:
+                topk_r = topk_idx // self.d
+                topk_c = topk_idx % self.d
+                topk_binary[topk_r, topk_c] = 1.0
+                # Symmetrize: if (i,j) in TopK, also consider (j,i)
+                topk_sym = torch.maximum(topk_binary, topk_binary.T)
+            else:
+                topk_sym = 1 - torch.eye(self.d, device=device)
+            
+            L_dir_leadlag, leadlag_metrics = self.compute_lead_lag_direction_loss(
+                X=X, M=M,
+                dir_probs=dir_probs_live,
+                mag=mag,
+                topk_mask=topk_sym,
+            )
+        
+        if antisym_on and lambda_dir_entropy > 0:
+            dir_probs_ent = getattr(self.graph_learner, '_live_dir_probs', None)
+            if dir_probs_ent is None:
+                dir_probs_ent = self.graph_learner._cached_dir_probs
+            
+            topk_binary_ent = torch.zeros(self.d, self.d, device=device)
+            if A_flat.numel() > target_k:
+                topk_r_e = topk_idx // self.d
+                topk_c_e = topk_idx % self.d
+                topk_binary_ent[topk_r_e, topk_c_e] = 1.0
+                topk_sym_ent = torch.maximum(topk_binary_ent, topk_binary_ent.T)
+            else:
+                topk_sym_ent = None
+            
+            L_dir_entropy = self.compute_direction_entropy_loss(
+                dir_probs=dir_probs_ent,
+                topk_mask=topk_sym_ent,
+            )
+        
         loss = (
             lambda_recon * L_recon
             + lambda_miss * L_miss
@@ -1494,6 +1748,8 @@ class RCGNN(nn.Module):
             + lambda_dir_logit * L_dir_logit # V8.22: Direction margin on TopK logits
             + lambda_icp * L_icp # V8.24: ICP invariant edge scoring
             + lambda_anticorr * L_anticorr # V8.24: Anti-correlation penalty
+            + lambda_dir_leadlag * L_dir_leadlag # V9.1: Lead-lag direction pseudo-labels
+            + lambda_dir_entropy * L_dir_entropy # V9.1: Direction entropy (push off 0.5)
         )
         
         # Metrics with full guardrail tracking
@@ -1551,6 +1807,11 @@ class RCGNN(nn.Module):
             "sigma_mean": outputs["sigma"].mean().item(),
             "sigma_max": outputs["sigma"].max().item(),
             "sigma_min": outputs["sigma"].min().item(),
+            # V9.1: Direction losses
+            "L_dir_leadlag": L_dir_leadlag.item() if isinstance(L_dir_leadlag, torch.Tensor) else L_dir_leadlag,
+            "L_dir_entropy": L_dir_entropy.item() if isinstance(L_dir_entropy, torch.Tensor) else L_dir_entropy,
+            "lambda_dir_leadlag": lambda_dir_leadlag,
+            "lambda_dir_entropy": lambda_dir_entropy,
         }
         
         # Add variance component metrics if available
@@ -1562,6 +1823,7 @@ class RCGNN(nn.Module):
                 metrics["bias_var_mean"] = var_components["bias_var"].mean().item()
         
         metrics.update(causal_metrics)
+        metrics.update(leadlag_metrics)
         
         return loss, metrics
     
