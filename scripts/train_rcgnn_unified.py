@@ -406,6 +406,18 @@ DEFAULT_CONFIG = {
     "dir_entropy_warmup_epochs": 15, # V9.2.8: Ramp E15→E30 (fully on by PRUNE)
     "tau_dir_entropy_floor": 1.0, # V9.2.8: Clamp tau_dir >= 1.0 during entropy
     
+    # V9.2.9: Logit-margin loss for stuck pairs (|g_ij| < eps → zero entropy grad)
+    # Hinge loss max(0, m - |g_ij|) gives constant gradient at g≈0.
+    "lambda_dir_margin_init": 0.0, # OFF before start_epoch
+    "lambda_dir_margin_final": 0.5, # 0→0.5 (stronger than entropy for stuck pairs)
+    "dir_margin_start_epoch": 15, # After direction corrects (E10)
+    "dir_margin_warmup_epochs": 10, # Ramp E15→E25
+    "dir_margin_m": 0.5, # Target logit separation |g_ij| >= m
+    "dir_margin_eps": 0.05, # Stuck pair threshold: |g_ij| < eps
+    
+    # V9.2.9: Freeze direction logits in REFINE to prevent drift
+    "refine_freeze_dir_logit": True, # requires_grad_(False) at PRUNE→REFINE
+    
     # V9.2: TTUR — Two-Time-Scale Update Rule for scorer
     # Scorer sees detached z_signal (stable inputs per step). Needs higher LR
     # to track the slowly-changing encoder representation.
@@ -953,6 +965,22 @@ def get_loss_weights(
         epoch, total_epochs, dir_ent_init, dir_ent_final,
         start_epoch=dir_ent_start, end_epoch=dir_ent_end
     )
+    
+    # =========================================================================
+    # V9.2.9: Direction margin loss — hinge on antisym logits for stuck pairs
+    # =========================================================================
+    dir_mgn_init = config.get("lambda_dir_margin_init", 0.0)
+    dir_mgn_final = config.get("lambda_dir_margin_final", 0.5)
+    dir_mgn_start = config.get("dir_margin_start_epoch", 15)
+    dir_mgn_warmup = config.get("dir_margin_warmup_epochs", 10)
+    dir_mgn_end = dir_mgn_start + dir_mgn_warmup
+    weights["lambda_dir_margin"] = get_scheduled_weight(
+        epoch, total_epochs, dir_mgn_init, dir_mgn_final,
+        start_epoch=dir_mgn_start, end_epoch=dir_mgn_end
+    )
+    # Pass through margin hyper-params so compute_loss can read them
+    weights["dir_margin_m"] = config.get("dir_margin_m", 0.5)
+    weights["dir_margin_eps"] = config.get("dir_margin_eps", 0.05)
     
     # =========================================================================
     # V8.22: Pass through causal/recon/inv weights (config overrides model defaults)
@@ -2760,11 +2788,14 @@ def train_epoch(
         )
     base_model.graph_learner.set_temperature(temperature)
     
-    # V9.2.8: Set tau_dir floor when entropy is active
+    # V9.2.8/V9.2.9: Set tau_dir floor when entropy or margin is active
     # Prevents sigmoid saturation from making entropy a hard-argmax too early
     dir_ent_start_epoch = config.get("dir_entropy_start_epoch", 15)
+    dir_mgn_start_epoch = config.get("dir_margin_start_epoch", 15)
     tau_dir_floor = config.get("tau_dir_entropy_floor", 1.0)
-    if epoch >= dir_ent_start_epoch and config.get("lambda_dir_entropy_final", 0.0) > 0:
+    entropy_active = epoch >= dir_ent_start_epoch and config.get("lambda_dir_entropy_final", 0.0) > 0
+    margin_active = epoch >= dir_mgn_start_epoch and config.get("lambda_dir_margin_final", 0.0) > 0
+    if entropy_active or margin_active:
         base_model.graph_learner._tau_dir_floor = tau_dir_floor
     else:
         base_model.graph_learner._tau_dir_floor = None
@@ -4622,17 +4653,26 @@ def train(
                     print(f" | V8.24: L_icp={L_icp_val:.4f}→{weighted_icp:.4f} | "
                           f"L_anticorr={L_anticorr_val:.4f}→{weighted_anticorr:.4f}")
                 
-                # V9.1/V9.2/V9.2.8: Show lead-lag direction + entropy diagnostics
+                # V9.1/V9.2/V9.2.9: Show lead-lag direction + entropy + margin diagnostics
                 L_dir_ll = train_metrics.get("L_dir_leadlag", 0)
                 L_dir_ent = train_metrics.get("L_dir_entropy", 0)
+                L_dir_mgn = train_metrics.get("L_dir_margin", 0)
                 lambda_ll = train_metrics.get("lambda_dir_leadlag", 0)
                 lambda_ent = train_metrics.get("lambda_dir_entropy", 0)
+                lambda_mgn = train_metrics.get("lambda_dir_margin", 0)
                 ll_agree = train_metrics.get("leadlag_agreement", 0)
                 ll_signal = train_metrics.get("leadlag_signal_mean", 0)
-                if lambda_ll > 0 or lambda_ent > 0:
-                    print(f" | V9.2.8: L_ll={L_dir_ll:.4f}→{lambda_ll*L_dir_ll:.4f} | "
+                if lambda_ll > 0 or lambda_ent > 0 or lambda_mgn > 0:
+                    print(f" | V9.2 TTUR: L_ll={L_dir_ll:.4f}→{lambda_ll*L_dir_ll:.4f} | "
                           f"L_ent={L_dir_ent:.4f}→{lambda_ent*L_dir_ent:.4f} | "
                           f"ll_agree={ll_agree:.3f} ll_signal={ll_signal:.4f}")
+                    # V9.2.9: Log margin loss and stuck pairs
+                    if lambda_mgn > 0:
+                        stuck_n = train_metrics.get("stuck_pairs", 0)
+                        masked_n = train_metrics.get("masked_pairs", 0)
+                        min_abs_g = train_metrics.get("min_abs_g_masked", 0)
+                        print(f" | V9.2.9: L_margin={L_dir_mgn:.4f}→{lambda_mgn*L_dir_mgn:.4f} | "
+                              f"stuck={stuck_n}/{masked_n} min_|g|={min_abs_g:.4f}")
                 
                 # ===============================================================
                 # DIAGNOSTIC: Show transpose and skeleton F1 to detect direction issues
@@ -4958,6 +4998,17 @@ def train(
                 if is_main_process() and not sweep_mode:
                     print(f" | [V9.2] W_mag.requires_grad_(False) — skeleton magnitudes fully frozen")
                     print(f" | [V9.2] Direction scorer keeps learning via TTUR (detached z_signal + 20× LR)")
+                
+                # =============================================================
+                # V9.2.9: Freeze direction logits in REFINE to prevent drift.
+                # V9.2.8 showed streak_bad=110 in REFINE — low LR causes logits
+                # to drift back toward 0.5. Freezing preserves PRUNE directions.
+                # =============================================================
+                if cfg.get("refine_freeze_dir_logit", True):
+                    if hasattr(base_model.graph_learner, 'dir_edge_logit'):
+                        base_model.graph_learner.dir_edge_logit.requires_grad_(False)
+                        if is_main_process() and not sweep_mode:
+                            print(f" | [V9.2.9] dir_edge_logit.requires_grad_(False) — direction FROZEN in REFINE")
                 
                 # V9.0: LR boost for direction scorer in early REFINE
                 refine_lr_boost = cfg.get("refine_dir_lr_boost", 5.0)
@@ -5323,7 +5374,8 @@ def train(
                         print(f" |   E_frozen: {n_frozen} undirected edges")
                         print(f" |   Edge swaps: DISABLED")
                         print(f" |   Dir losses: MASKED to E_frozen only")
-                        print(f" |   W_dir: N/A (V9.0: direction from EdgeDirectionScorer)")
+                        dir_frozen_msg = "FROZEN" if cfg.get('refine_freeze_dir_logit', True) else "LEARNING"
+                        print(f" |   dir_edge_logit: {dir_frozen_msg} (V9.2.9)")
                         print(f" |   LR boost: ×{cfg.get('refine_dir_lr_boost', 5.0)} for {cfg.get('refine_dir_lr_boost_epochs', 10)} epochs (direction scorer)")
             patience_counter = 0  # fresh start for new stage
             prev_stage = cur_stage

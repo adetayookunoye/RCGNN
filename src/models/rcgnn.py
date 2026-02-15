@@ -997,9 +997,23 @@ class RCGNN(nn.Module):
       (d) Use proper binary entropy: H(p) = -p log(p+ε) - (1-p) log(1-p+ε)
       (e) Clamp tau_dir ≥ 1.0 during entropy to prevent hard-argmax instability
     - Lead-lag and TTUR stay OFF (V9.2.6/7 wins preserved).
+    
+    V9.2.9: Logit-margin loss for stuck pairs + REFINE scorer freeze.
+    - V9.2.8 result: TopK-F1=0.3333, Skel=0.5667, bidir=0.133, direction correct
+      95% of epochs. BUT: min_margin=0.0000 persists — some pairs never commit.
+      Root cause: entropy ∂H/∂g ∝ log((1-p)/p)·p(1-p)/τ. At p=0.5 (g=0),
+      log term=0 → ZERO gradient exactly where stuck pairs need it most.
+    - FIX A: Masked direction margin loss on antisymmetric logits:
+      L_margin = E[max(0, m - |g_ij|)] for pairs where |g_ij| < eps.
+      Hinge loss gives constant gradient=-sign(g) at g≈0 (vs entropy's zero).
+      Applied only to stuck pairs (|g|<eps) in magnitude-masked set.
+      Params: start_epoch=15, warmup=10, λ_max=0.5, m=0.5, eps=0.05.
+    - FIX B: Freeze dir_edge_logit in REFINE (requires_grad_(False)).
+      V9.2.8 showed streak_bad=110 in REFINE — low LR causes drift.
+    - Keep entropy as polish (λ=0.2). Lead-lag/TTUR stay OFF.
     """
     
-    VERSION = "9.2.8"
+    VERSION = "9.2.9"
     
     @staticmethod
     def to_causal_convention(A: torch.Tensor) -> torch.Tensor:
@@ -1497,6 +1511,77 @@ class RCGNN(nn.Module):
         
         return L_ent
     
+    def compute_direction_margin_loss(
+        self,
+        dir_probs: Optional[torch.Tensor] = None,
+        mag_mask_pairs: Optional[torch.Tensor] = None,
+        margin: float = 0.5,
+        eps_stuck: float = 0.05,
+    ) -> Tuple[torch.Tensor, Dict[str, float]]:
+        """
+        V9.2.9: Hinge margin loss on antisymmetric logits for stuck pairs.
+        
+        For pairs where |g_ij| < eps_stuck (i.e. direction uncommitted),
+        apply L = max(0, margin - |g_ij|).
+        
+        Key insight: Binary entropy has ZERO gradient at p=0.5 (g=0),
+        so it cannot break stuck pairs out of the symmetric equilibrium.
+        Hinge loss gives constant gradient = -sign(g) wherever |g| < margin,
+        providing the "kick" that entropy cannot.
+        
+        Applied only to magnitude-masked upper-triangle pairs to avoid
+        inventing directions on non-edges.
+        
+        Args:
+            dir_probs: [d, d] direction probabilities (unused directly,
+                       we compute g from dir_edge_logit)
+            mag_mask_pairs: [d, d] binary mask of selected pairs (i<j)
+            margin: Target logit separation (default 0.5)
+            eps_stuck: Threshold for "stuck" pairs (|g| < eps_stuck)
+        
+        Returns:
+            L_margin: Scalar margin loss
+            metrics: Dict with stuck_pairs count and margin stats
+        """
+        d = self.graph_learner.d
+        device = self.graph_learner.dir_edge_logit.device
+        eps = 1e-8
+        
+        # Antisymmetric logits: g_ij = logit_ij - logit_ji
+        g = self.graph_learner.dir_edge_logit - self.graph_learner.dir_edge_logit.T
+        
+        # Upper triangle only (i<j) to avoid double-counting
+        upper = torch.triu(torch.ones(d, d, device=device), diagonal=1)
+        
+        if mag_mask_pairs is not None:
+            mask = mag_mask_pairs.detach() * upper
+        else:
+            mask = upper
+        
+        # Identify stuck pairs: |g_ij| < eps_stuck within the masked set
+        abs_g = torch.abs(g)
+        stuck_mask = (abs_g < eps_stuck).float() * mask
+        
+        # Hinge margin: max(0, margin - |g_ij|) on stuck pairs only
+        hinge = torch.relu(margin - abs_g)
+        L_margin = (hinge * stuck_mask).sum() / (stuck_mask.sum() + eps)
+        
+        # Metrics
+        with torch.no_grad():
+            n_stuck = int(stuck_mask.sum().item())
+            n_masked = int(mask.sum().item())
+            avg_abs_g_stuck = (abs_g * stuck_mask).sum() / (stuck_mask.sum() + eps)
+            min_abs_g_masked = (abs_g * mask + (1 - mask) * 999).min()
+        
+        metrics = {
+            "stuck_pairs": n_stuck,
+            "masked_pairs": n_masked,
+            "avg_abs_g_stuck": avg_abs_g_stuck.item(),
+            "min_abs_g_masked": min_abs_g_masked.item() if n_masked > 0 else 0.0,
+        }
+        
+        return L_margin, metrics
+    
     def compute_loss(
         self,
         outputs: Dict[str, torch.Tensor],
@@ -1915,10 +2000,15 @@ class RCGNN(nn.Module):
         # =====================================================================
         lambda_dir_leadlag = loss_weights.get("lambda_dir_leadlag", 0.5) if loss_weights else 0.5
         lambda_dir_entropy = loss_weights.get("lambda_dir_entropy", 1.0) if loss_weights else 1.0
+        lambda_dir_margin = loss_weights.get("lambda_dir_margin", 0.0) if loss_weights else 0.0
+        dir_margin_m = loss_weights.get("dir_margin_m", 0.5) if loss_weights else 0.5
+        dir_margin_eps = loss_weights.get("dir_margin_eps", 0.05) if loss_weights else 0.05
         
         L_dir_leadlag = torch.tensor(0.0, device=device)
         L_dir_entropy = torch.tensor(0.0, device=device)
+        L_dir_margin = torch.tensor(0.0, device=device)
         leadlag_metrics = {}
+        margin_metrics = {}
         
         antisym_on = getattr(self.graph_learner, '_antisymmetric', False)
         if antisym_on and lambda_dir_leadlag > 0:
@@ -1978,6 +2068,29 @@ class RCGNN(nn.Module):
                 mag_mask_pairs=mag_mask,
             )
         
+        # V9.2.9: Logit-margin loss for stuck pairs
+        mag_mask_for_margin = None  # Track whether we have a mask
+        if antisym_on and lambda_dir_margin > 0:
+            # Reuse mag_mask from entropy if already built, else build fresh
+            if lambda_dir_entropy > 0 and 'mag_mask' in locals():
+                mag_mask_for_margin = mag_mask
+            else:
+                Wm_mgn = self.graph_learner._get_sym_mag()
+                mag_mgn = torch.sigmoid(Wm_mgn).detach()
+                upper_mask_mgn = torch.triu(torch.ones(self.d, self.d, device=device), diagonal=1)
+                m_pair_ut_mgn = (mag_mgn * upper_mask_mgn).flatten()
+                K_pairs_mgn = min(int(1.2 * target_k), int(upper_mask_mgn.sum().item()))
+                _, topk_pair_idx_mgn = torch.topk(m_pair_ut_mgn, K_pairs_mgn)
+                mag_mask_for_margin = torch.zeros(self.d * self.d, device=device)
+                mag_mask_for_margin[topk_pair_idx_mgn] = 1.0
+                mag_mask_for_margin = mag_mask_for_margin.view(self.d, self.d)
+            
+            L_dir_margin, margin_metrics = self.compute_direction_margin_loss(
+                mag_mask_pairs=mag_mask_for_margin,
+                margin=dir_margin_m,
+                eps_stuck=dir_margin_eps,
+            )
+        
         loss = (
             lambda_recon * L_recon
             + lambda_miss * L_miss
@@ -1998,6 +2111,7 @@ class RCGNN(nn.Module):
             + lambda_anticorr * L_anticorr # V8.24: Anti-correlation penalty
             + lambda_dir_leadlag * L_dir_leadlag # V9.1: Lead-lag direction pseudo-labels
             + lambda_dir_entropy * L_dir_entropy # V9.1: Direction entropy (push off 0.5)
+            + lambda_dir_margin * L_dir_margin # V9.2.9: Logit-margin for stuck pairs
         )
         
         # Metrics with full guardrail tracking
@@ -2058,8 +2172,10 @@ class RCGNN(nn.Module):
             # V9.1: Direction losses
             "L_dir_leadlag": L_dir_leadlag.item() if isinstance(L_dir_leadlag, torch.Tensor) else L_dir_leadlag,
             "L_dir_entropy": L_dir_entropy.item() if isinstance(L_dir_entropy, torch.Tensor) else L_dir_entropy,
+            "L_dir_margin": L_dir_margin.item() if isinstance(L_dir_margin, torch.Tensor) else L_dir_margin,
             "lambda_dir_leadlag": lambda_dir_leadlag,
             "lambda_dir_entropy": lambda_dir_entropy,
+            "lambda_dir_margin": lambda_dir_margin,
         }
         
         # Add variance component metrics if available
@@ -2072,6 +2188,7 @@ class RCGNN(nn.Module):
         
         metrics.update(causal_metrics)
         metrics.update(leadlag_metrics)
+        metrics.update(margin_metrics)
         
         return loss, metrics
     
