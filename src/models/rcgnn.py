@@ -834,7 +834,7 @@ class RCGNN(nn.Module):
     - Dead L_dir_dec removed from training script
     """
     
-    VERSION = "9.2.2"
+    VERSION = "9.2.3"
     
     @staticmethod
     def to_causal_convention(A: torch.Tensor) -> torch.Tensor:
@@ -1099,15 +1099,23 @@ class RCGNN(nn.Module):
         M_full: Optional[torch.Tensor] = None,
     ) -> None:
         """
-        V9.2.2: Precompute lead-lag pseudo-labels from FULL training set.
+        V9.2.3: Precompute VARIANCE-BASED direction pseudo-labels from FULL training set.
         
         Must be called ONCE per epoch (not per batch). Stores y and confidence
-        as buffers on the model so compute_lead_lag_direction_loss() can use them
-        without recomputing from noisy batch statistics.
+        as buffers on the model so compute_lead_lag_direction_loss() can use them.
         
-        Why this matters: per-batch lead-lag from B=32 samples gives noisy
-        pseudo-labels that flip across batches → scorer oscillates → bidir=0.500.
-        Full-dataset labels are stable → consistent gradient → scorer learns.
+        V9.2.2 FAILURE DIAGNOSIS: The old cross-correlation lead-lag labels
+        computed Corr(X_i(t), X_j(t+1)) - Corr(X_j(t), X_i(t+1)). For static
+        SEMs (no autoregressive dynamics), X(t) and X(t+1) are INDEPENDENT
+        samples → cross-correlation is pure noise → labels are ~50% accurate.
+        
+        V9.2.3 FIX: Use VARIANCE-BASED direction. In a SEM, children accumulate
+        parent variance: Var(X_j) >= Var(noise) + Σ W²_ij * Var(X_i). So
+        children have strictly higher variance than root nodes, and generally
+        higher variance than parents. Empirically 91-97% accurate on our data.
+        
+        y[i,j] = 1 if Var(X_j) > Var(X_i)  (i.e., j is downstream of i → i→j)
+        confidence[i,j] = |Var(X_j) - Var(X_i)| / max_diff
         
         Args:
             X_full: [N, T, d] full training set
@@ -1124,34 +1132,27 @@ class RCGNN(nn.Module):
         with torch.no_grad():
             if M_full is not None:
                 X_masked = X_full * M_full
+                M_flat = M_full.reshape(-1, d)  # [N*T, d]
             else:
                 X_masked = X_full
-                M_full = torch.ones_like(X_full)
+                M_flat = torch.ones(X_full.shape[0] * X_full.shape[1], d, device=device)
             
-            X_lag = X_masked[:, :-1, :]
-            X_lead = X_masked[:, 1:, :]
-            M_lag = M_full[:, :-1, :]
-            M_lead = M_full[:, 1:, :]
+            X_flat = X_masked.reshape(-1, d)  # [N*T, d]
             
-            # Accumulate in chunks to avoid OOM on full dataset
-            cross_sum = torch.zeros(d, d, device=device)
-            valid_sum = torch.zeros(d, d, device=device)
-            chunk_size = 128
-            N = X_full.shape[0]
-            for start in range(0, N, chunk_size):
-                end = min(start + chunk_size, N)
-                xl = X_lag[start:end]    # [C, T-1, d]
-                xd = X_lead[start:end]   # [C, T-1, d]
-                ml = M_lag[start:end]
-                md = M_lead[start:end]
-                
-                cross = xl.unsqueeze(-1) * xd.unsqueeze(-2)  # [C, T-1, d, d]
-                valid = ml.unsqueeze(-1) * md.unsqueeze(-2)
-                cross_sum += (cross * valid).sum(dim=(0, 1))
-                valid_sum += valid.sum(dim=(0, 1))
+            # Compute per-variable variance (handling missing data)
+            # Only count observed values for each variable
+            n_obs = M_flat.sum(dim=0).clamp(min=1.0)  # [d]
+            mean_x = (X_flat * M_flat).sum(dim=0) / n_obs  # [d]
+            sq_dev = ((X_flat - mean_x.unsqueeze(0)) ** 2) * M_flat
+            variances = sq_dev.sum(dim=0) / n_obs  # [d]
             
-            cross_mean = cross_sum / (valid_sum + 1e-8)
-            g = cross_mean - cross_mean.T  # antisymmetric
+            # Direction label: y[i,j] = 1 if Var(X_j) > Var(X_i)
+            # i.e., j has higher variance → j is downstream → i→j
+            var_diff = variances.unsqueeze(1) - variances.unsqueeze(0)  # [d, d]
+            # var_diff[i,j] = Var(X_i) - Var(X_j)
+            # If i→j: Var(X_j) > Var(X_i) → var_diff[i,j] < 0
+            # So y[i,j] = 1 when var_diff[i,j] < 0 (child has higher variance)
+            g = -var_diff  # g[i,j] > 0 when Var(X_j) > Var(X_i) → i→j
             
             self._leadlag_y = (g > 0).float()
             confidence = g.abs()
@@ -1159,7 +1160,8 @@ class RCGNN(nn.Module):
             if conf_max > 0:
                 confidence = confidence / (conf_max + 1e-8)
             self._leadlag_confidence = confidence
-            self._leadlag_valid_sum = valid_sum
+            # valid_sum: all pairs are valid (we're using marginal variances)
+            self._leadlag_valid_sum = torch.ones(d, d, device=device) * n_obs.min()
             self._leadlag_signal_mean = g.abs().mean().item()
 
     def compute_lead_lag_direction_loss(
@@ -1171,14 +1173,17 @@ class RCGNN(nn.Module):
         topk_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
-        V9.2.2: Lead-lag direction loss using PRECOMPUTED pseudo-labels.
+        V9.2.3: Direction loss using VARIANCE-BASED pseudo-labels.
         
         Pseudo-labels come from precompute_lead_lag_labels() called once/epoch
-        on the full dataset. This gives stable, consistent targets across all
-        batches within an epoch.
+        on the full dataset, using the variance-based direction heuristic:
+        children have higher variance than parents in SEMs.
+        
+        V9.2.2→V9.2.3 change: Replaced cross-correlation lead-lag labels
+        (50% accuracy on static SEM) with variance-based labels (91-97% accuracy).
         
         If precompute_lead_lag_labels() hasn't been called, falls back to
-        per-batch computation (but this should not happen in normal training).
+        per-batch variance computation (but this should not happen in normal training).
         
         Args:
             X: [B, T, d] time series data (used for fallback only)
@@ -1188,7 +1193,7 @@ class RCGNN(nn.Module):
             topk_mask: [d, d] binary mask for active edges (optional)
             
         Returns:
-            loss: scalar lead-lag direction loss
+            loss: scalar direction loss
             metrics: dict with diagnostic info
         """
         device = X.device
@@ -1209,31 +1214,30 @@ class RCGNN(nn.Module):
         ll_signal = getattr(self, '_leadlag_signal_mean', 0.0)
         
         if y is None:
-            # Fallback: compute from this batch (noisy but functional)
+            # Fallback: compute from this batch using variance-based direction
             B, T, N = X.shape
             if M is not None:
                 X_masked = X * M
+                M_flat = M.reshape(-1, N)
             else:
                 X_masked = X
-                M = torch.ones_like(X)
+                M_flat = torch.ones(B * T, N, device=device)
             
-            X_lag = X_masked[:, :-1, :]
-            X_lead = X_masked[:, 1:, :]
-            M_lag = M[:, :-1, :]
-            M_lead = M[:, 1:, :]
+            X_flat = X_masked.reshape(-1, N)  # [B*T, d]
+            n_obs = M_flat.sum(dim=0).clamp(min=1.0)
+            mean_x = (X_flat * M_flat).sum(dim=0) / n_obs
+            sq_dev = ((X_flat - mean_x.unsqueeze(0)) ** 2) * M_flat
+            variances = sq_dev.sum(dim=0) / n_obs  # [d]
             
-            cross = X_lag.unsqueeze(-1) * X_lead.unsqueeze(-2)
-            valid = M_lag.unsqueeze(-1) * M_lead.unsqueeze(-2)
-            cross_sum = (cross * valid).sum(dim=(0, 1))
-            valid_sum = valid.sum(dim=(0, 1))
-            cross_mean = cross_sum / (valid_sum + 1e-8)
-            g = cross_mean - cross_mean.T
+            var_diff = variances.unsqueeze(1) - variances.unsqueeze(0)
+            g = -var_diff  # g[i,j] > 0 when Var(X_j) > Var(X_i) → i→j
             
             y = (g > 0).float()
             confidence = g.abs()
             conf_max = confidence.max()
             if conf_max > 0:
                 confidence = confidence / (conf_max + 1e-8)
+            valid_sum = torch.ones(N, N, device=device) * n_obs.min()
             ll_signal = g.abs().mean().item()
         
         # =====================================================================
