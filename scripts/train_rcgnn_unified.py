@@ -400,6 +400,11 @@ DEFAULT_CONFIG = {
     "lambda_dir_entropy_final": 2.0, # Increase as training proceeds
     "dir_entropy_start_epoch": 1, # From the very start
     
+    # V9.2: TTUR — Two-Time-Scale Update Rule for scorer
+    # Scorer sees detached z_signal (stable inputs per step). Needs higher LR
+    # to track the slowly-changing encoder representation.
+    "scorer_inner_steps": 3, # Extra scorer-only optimizer steps per batch
+    
     # V8.27: Correlation-initialized logits + restore best DISC checkpoint
     "corr_init_enabled": True, # Initialize W_adj from |corr(X_i,X_j)| for warm start
     "corr_init_scale": 1.0, # Std dev of initialized logits (higher = stronger bias)
@@ -3160,25 +3165,12 @@ def train_epoch(
             bidir_rate = 1.0 - len(undir_pred_set) / max(len(dir_pred_set), 1)
             batch_metrics["bidir_rate"] = bidir_rate
         
-        # V8.32: Direction decisiveness penalty — V8.36: masked to dir_mask
-        if lambda_dir_dec > 0 and epoch >= dir_dec_start:
-            antisym_on = getattr(base_model.graph_learner, '_antisymmetric', False)
-            if antisym_on:
-                dir_map = base_model.graph_learner.get_direction_map()  # [d,d]
-                d_dir = dir_map.shape[0]
-                # dir*(1-dir) is maximized at 0.5 (=0.25), zero at 0 or 1
-                dir_entropy = dir_map * (1 - dir_map)
-                mask_upper = torch.triu(torch.ones(d_dir, d_dir, device=dir_map.device), diagonal=1)
-                # V8.36: Intersect with dir_mask — only penalize on believed edges
-                if dir_mask is not None:
-                    mask_upper = mask_upper * dir_mask
-                n_masked = mask_upper.sum() + 1e-8
-                L_dir_dec = (dir_entropy * mask_upper).sum() / n_masked
-                loss = loss + lambda_dir_dec * L_dir_dec
-                batch_metrics["L_dir_dec"] = L_dir_dec.item()
-                # Also log avg|dir-0.5| as decisiveness measure (on masked edges)
-                dir_upper = dir_map[mask_upper.bool()]
-                batch_metrics["dir_decisiveness"] = (dir_upper - 0.5).abs().mean().item() if dir_upper.numel() > 0 else 0.0
+        # V9.2: L_dir_dec REMOVED — it used get_direction_map() which returns
+        # _cached_dir_probs (DETACHED). Zero gradient to scorer. λ=10.0 polluted
+        # the loss value and monitoring. Direction now comes entirely from:
+        #   - L_dir_leadlag (lead-lag pseudo-labels) in compute_loss()
+        #   - L_dir_entropy (push away from 0.5) in compute_loss()
+        # Both use _live_dir_probs which has grad to scorer params.
         
         # =====================================================================
         # V8.29 FIX B: Ranking Margin Loss
@@ -3469,6 +3461,50 @@ def train_epoch(
         
         optimizer.step()
         base_model.graph_learner.increment_step()
+        
+        # =================================================================
+        # V9.2: SCORER INNER LOOP (TTUR)
+        # After the main optimizer step, do k extra forward+backward passes
+        # updating ONLY the direction scorer parameters.
+        # WHY: z_signal is detached before the scorer, so the scorer sees
+        # "frozen" encoder features within each batch. Extra inner steps
+        # let the scorer converge on the current representation before the
+        # encoder moves again.
+        # =================================================================
+        scorer_inner_steps = config.get("scorer_inner_steps", 3)
+        if scorer_inner_steps > 0:
+            antisym_inner = getattr(base_model.graph_learner, '_antisymmetric', False)
+            if antisym_inner:
+                # Temporarily freeze all params except scorer
+                scorer_params_set = set(base_model.graph_learner.direction_scorer.parameters())
+                frozen_params = []
+                for p in model.parameters():
+                    if p not in scorer_params_set and p.requires_grad:
+                        p.requires_grad_(False)
+                        frozen_params.append(p)
+                
+                for _inner in range(scorer_inner_steps):
+                    optimizer.zero_grad()
+                    # Re-forward with same batch data (z_signal re-computed but detached)
+                    outputs_inner = model(X, M, regime=e)
+                    # Full loss computation — but only scorer params have requires_grad=True,
+                    # so autograd only computes gradients for the scorer MLP.
+                    loss_inner, _ = base_model.compute_loss(
+                        outputs_inner, X, M, regime=e,
+                        epoch=epoch,
+                        total_epochs=total_epochs,
+                        loss_weights=loss_weights,
+                    )
+                    loss_inner.backward()
+                    torch.nn.utils.clip_grad_norm_(
+                        base_model.graph_learner.direction_scorer.parameters(),
+                        max_norm=config["grad_clip"]
+                    )
+                    optimizer.step()
+                
+                # Unfreeze all params
+                for p in frozen_params:
+                    p.requires_grad_(True)
         
         # Track metrics
         total_loss += loss.item()
@@ -3890,11 +3926,12 @@ def train(
     if cfg.get("antisymmetric_adjacency", True):
         base_model.graph_learner.set_antisymmetric(True)
         if is_main_process() and not sweep_mode:
-            print(f"[V9.1] EDGE-LOCAL DIRECTION SCORING:")
+            print(f"[V9.2] EDGE-LOCAL DIRECTION SCORING + TTUR:")
             print(f"        Magnitude: σ(Wm) from symmetric W_mag parameter")
             print(f"        Direction: d_ij = σ(score(h_i,h_j) - score(h_j,h_i)) from EdgeDirectionScorer MLP")
-            print(f"        V9.1 FIX: Per-sample logit averaging (not embedding mean-pool)")
-            print(f"        V9.1 FIX: Lead-lag pseudo-labels give scorer DEDICATED gradient signal")
+            print(f"        V9.2 TTUR: z_signal DETACHED before scorer (stable inputs per step)")
+            print(f"        V9.2 TTUR: Scorer LR = {cfg.get('lr_dir_multiplier', 20.0)}× encoder LR")
+            print(f"        V9.2 TTUR: {cfg.get('scorer_inner_steps', 3)} inner scorer steps per batch")
             print(f"        A_ij = σ(Wm) * d_ij,  A_ji = σ(Wm) * (1-d_ij)")
             print(f"        GUARANTEE: d_ij + d_ji = 1 (by antisymmetric construction)")
             print(f"        Direction losses: L_dir_leadlag (λ={cfg.get('lambda_dir_leadlag_init', 0.5)}→{cfg.get('lambda_dir_leadlag_final', 2.0)}) "
@@ -3991,9 +4028,9 @@ def train(
             if is_main_process() and not sweep_mode:
                 n_pos = int((W_init > 0).sum())
                 topk_init = np.sort(W_init.flatten())[-target_edges_cfg:]
-                print(f"\n[V9.1] Corr-initialized W_mag: {n_pos}/{d*(d-1)} positive, "
+                print(f"\n[V9.2] Corr-initialized W_mag: {n_pos}/{d*(d-1)} positive, "
                       f"scale={corr_init_scale}, topk_mean={topk_init.mean():.3f}")
-                print(f"[V9.1] Direction from EdgeDirectionScorer (starts at 0.5, learns from embeddings).")
+                print(f"[V9.2] Direction from EdgeDirectionScorer (starts at 0.5, learns via TTUR).")
         
         # V8.25: Pre-cache cousin mask (expensive to recompute every epoch)
         if A_true is not None and cfg.get("use_cousin_penalty", True):
@@ -4006,7 +4043,7 @@ def train(
     # V9.0: Direction comes from EdgeDirectionScorer (MLP), not W_dir parameter.
     # Direction scorer params get a higher LR like the old W_dir did.
     # =========================================================================
-    lr_dir_mult = cfg.get("lr_dir_multiplier", 5.0)
+    lr_dir_mult = cfg.get("lr_dir_multiplier", 20.0)  # V9.2: 5→20 (TTUR)
     lr_base = cfg["lr"]
     lr_dir = lr_base * lr_dir_mult
     
@@ -4023,10 +4060,11 @@ def train(
         {"params": other_params, "lr": lr_base, "weight_decay": cfg["weight_decay"]},
     ])
     if is_main_process() and not sweep_mode:
-        print(f"[V9.1] Optimizer: lr_mag={lr_base:.1e}, lr_dir_scorer={lr_dir:.1e} ({lr_dir_mult}×), "
+        print(f"[V9.2] Optimizer: lr_mag={lr_base:.1e}, lr_dir_scorer={lr_dir:.1e} ({lr_dir_mult}× TTUR), "
               f"mag_params={sum(p.numel() for p in mag_params)}, "
               f"dir_scorer_params={sum(p.numel() for p in dir_params)}, "
-              f"other_params={sum(p.numel() for p in other_params)}")
+              f"other_params={sum(p.numel() for p in other_params)}, "
+              f"scorer_inner_steps={cfg.get('scorer_inner_steps', 3)}")
     scheduler = CosineAnnealingWarmRestarts(
         optimizer,
         T_0=cfg["restart_every"],
@@ -4141,23 +4179,22 @@ def train(
         
         # =====================================================================
         # V9.0: LR boost for direction scorer in early REFINE epochs
-        # Gives the direction MLP extra gradient step size to quickly learn
-        # invariance-aligned directions on the frozen skeleton.
+        # V9.2: Base LR already 20× via TTUR — additional REFINE boost still helps
         # =====================================================================
         if E_frozen_mask is not None and refine_start_epoch is not None:
             refine_epoch = epoch - refine_start_epoch
             boost_duration = cfg.get("refine_dir_lr_boost_epochs", 10)
-            base_lr_dir = cfg["lr"] * cfg.get("lr_dir_multiplier", 5.0) * 0.5  # 0.5 from Stage3 LR reduction
+            base_lr_dir = cfg["lr"] * cfg.get("lr_dir_multiplier", 20.0) * 0.5  # 0.5 from Stage3 LR reduction
             if refine_epoch >= 0 and refine_epoch < boost_duration:
                 boost_factor = cfg.get("refine_dir_lr_boost", 5.0)
                 boosted_lr = base_lr_dir * boost_factor
                 optimizer.param_groups[1]["lr"] = boosted_lr  # param_groups[1] = dir_scorer params
                 if refine_epoch == 0 and is_main_process() and not sweep_mode:
-                    print(f" | [V9.1] Direction scorer LR boosted: {base_lr_dir:.1e} → {boosted_lr:.1e} (×{boost_factor}) for {boost_duration} epochs")
+                    print(f" | [V9.2] Direction scorer LR boosted: {base_lr_dir:.1e} → {boosted_lr:.1e} (×{boost_factor}) for {boost_duration} epochs")
             elif refine_epoch == boost_duration:
                 optimizer.param_groups[1]["lr"] = base_lr_dir  # Restore normal
                 if is_main_process() and not sweep_mode:
-                    print(f" | [V9.1] Direction scorer LR boost ended, restored to {base_lr_dir:.1e}")
+                    print(f" | [V9.2] Direction scorer LR boost ended, restored to {base_lr_dir:.1e}")
         
         # Train epoch (with calibration parameters and skeleton mask for Stage D)
         train_metrics, dro_weights = train_epoch(
@@ -4473,7 +4510,7 @@ def train(
                     print(f" | V8.24: L_icp={L_icp_val:.4f}→{weighted_icp:.4f} | "
                           f"L_anticorr={L_anticorr_val:.4f}→{weighted_anticorr:.4f}")
                 
-                # V9.1: Show lead-lag direction + entropy diagnostics
+                # V9.1/V9.2: Show lead-lag direction + entropy diagnostics
                 L_dir_ll = train_metrics.get("L_dir_leadlag", 0)
                 L_dir_ent = train_metrics.get("L_dir_entropy", 0)
                 lambda_ll = train_metrics.get("lambda_dir_leadlag", 0)
@@ -4481,7 +4518,7 @@ def train(
                 ll_agree = train_metrics.get("leadlag_agreement", 0)
                 ll_signal = train_metrics.get("leadlag_signal_mean", 0)
                 if lambda_ll > 0 or lambda_ent > 0:
-                    print(f" | V9.1: L_ll={L_dir_ll:.4f}→{lambda_ll*L_dir_ll:.4f} | "
+                    print(f" | V9.2 TTUR: L_ll={L_dir_ll:.4f}→{lambda_ll*L_dir_ll:.4f} | "
                           f"L_ent={L_dir_ent:.4f}→{lambda_ent*L_dir_ent:.4f} | "
                           f"ll_agree={ll_agree:.3f} ll_signal={ll_signal:.4f}")
                 
@@ -4807,8 +4844,8 @@ def train(
                 # =============================================================
                 base_model.graph_learner.W_mag.requires_grad_(False)
                 if is_main_process() and not sweep_mode:
-                    print(f" | [V9.1] W_mag.requires_grad_(False) — skeleton magnitudes fully frozen")
-                    print(f" | [V9.1] Direction scorer keeps learning from embeddings (no reset needed)")
+                    print(f" | [V9.2] W_mag.requires_grad_(False) — skeleton magnitudes fully frozen")
+                    print(f" | [V9.2] Direction scorer keeps learning via TTUR (detached z_signal + 20× LR)")
                 
                 # V9.0: LR boost for direction scorer in early REFINE
                 refine_lr_boost = cfg.get("refine_dir_lr_boost", 5.0)
@@ -5226,7 +5263,7 @@ def train(
             final_edges_02 = int((A_final_np > 0.2).sum())
             
             print("\n" + "=" * 70)
-            print("TRAINING COMPLETE (V9.1 - Lead-lag direction + per-sample logit averaging)")
+            print("TRAINING COMPLETE (V9.2 - TTUR: detach z_signal + 20× scorer LR + inner steps)")
             print("=" * 70)
             print("CONVENTION INFO (for paper writeup):")
             print(" Model output: A[i,j] = 'i causes j' (causal convention)")

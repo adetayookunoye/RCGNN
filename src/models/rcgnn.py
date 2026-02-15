@@ -276,7 +276,7 @@ class EdgeDirectionScorer(nn.Module):
 
 class CausalGraphLearner(nn.Module):
     """
-    V9.0: Causal graph learner with EDGE-LOCAL direction scoring.
+    V9.2: Causal graph learner with EDGE-LOCAL direction scoring + TTUR.
     
     Two components:
     - W_mag [d,d]: symmetric parameter for edge MAGNITUDE (corr-initialized)
@@ -285,9 +285,10 @@ class CausalGraphLearner(nn.Module):
     A_ij = σ(W_mag_ij) * d_ij(z_signal)
     A_ji = σ(W_mag_ij) * (1 - d_ij(z_signal))
     
-    V9.0 key insight: Direction is computed from node embeddings (h_i, h_j),
-    NOT from global parameters. This gives direction a DIRECT gradient path
-    from the invariance loss through the encoder, fixing the dead REFINE problem.
+    V9.2 key change: z_signal is DETACHED before scorer input.
+    This fixes the moving-target problem where encoder updates changed
+    scorer inputs every step, preventing any learning (L_ll stuck at 0.6931).
+    Scorer trains with higher LR (10-20×) to track representation changes.
     
     W_dir is REMOVED. Direction comes entirely from the EdgeDirectionScorer.
     """
@@ -372,12 +373,18 @@ class CausalGraphLearner(nn.Module):
         antisym = getattr(self, '_antisymmetric', False)
         Wm = self._get_sym_mag()
         
-        # V9.0: Compute direction from embeddings if available
+        # V9.2: Detach z_signal before scorer (TTUR — two-time-scale)
+        # WHY: Without detach, encoder updates change scorer inputs every step,
+        # creating a moving-target problem. The scorer can't learn because its
+        # input representation is scrambled every optimizer.step().
+        # With detach, z_signal is STABLE within each step. Higher scorer LR
+        # (10-20×) lets it track the slowly-changing representation.
         if antisym and z_signal is not None:
-            dir_probs = self.direction_scorer(z_signal, tau=tau)
+            z_for_dir = z_signal.detach()  # CRITICAL: decouple encoder ↔ scorer
+            dir_probs = self.direction_scorer(z_for_dir, tau=tau)
             # Cache detached copy for eval / get_direction_map()
             self._cached_dir_probs = dir_probs.detach()
-            # Keep live (with grad) for get_mean_adjacency() during training
+            # Keep live (with grad TO SCORER ONLY) for loss computation
             self._live_dir_probs = dir_probs
         elif antisym:
             # No embeddings — use cached (e.g. during eval)
@@ -819,9 +826,15 @@ class RCGNN(nn.Module):
     4. Robust Decoder: Student-t likelihood with heteroscedastic variance
     5. CausalPriorLoss: intervention/orientation/necessity/mechanism
     6. V8.24 ICP + anti-correlation losses for causal edge identity
+    
+    V9.2: TTUR (Two-Time-Scale Update Rule) for direction scoring:
+    - z_signal is DETACHED before feeding to EdgeDirectionScorer
+    - This decouples encoder ↔ scorer optimization (no moving-target)
+    - Scorer LR = 10-20× encoder LR to track slow representation changes
+    - Dead L_dir_dec removed from training script
     """
     
-    VERSION = "9.1"
+    VERSION = "9.2"
     
     @staticmethod
     def to_causal_convention(A: torch.Tensor) -> torch.Tensor:
