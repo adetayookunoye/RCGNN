@@ -4173,6 +4173,17 @@ def train(
     for epoch in range(1, cfg["epochs"] + 1):
         t_start = time.time()
         
+        # =================================================================
+        # V9.2.2: Precompute lead-lag pseudo-labels from FULL training set
+        # This gives stable, consistent direction targets across all batches.
+        # Per-batch labels were too noisy (ll_signal≈0.04) → scorer oscillated.
+        # =================================================================
+        if hasattr(base_model, 'precompute_lead_lag_labels'):
+            with torch.no_grad():
+                base_model.precompute_lead_lag_labels(
+                    X_train.to(device), M_train.to(device)
+                )
+        
         # Set sampler epoch for DDP
         if ddp and hasattr(train_loader.sampler, "set_epoch"):
             train_loader.sampler.set_epoch(epoch)

@@ -834,7 +834,7 @@ class RCGNN(nn.Module):
     - Dead L_dir_dec removed from training script
     """
     
-    VERSION = "9.2.1"
+    VERSION = "9.2.2"
     
     @staticmethod
     def to_causal_convention(A: torch.Tensor) -> torch.Tensor:
@@ -1093,6 +1093,75 @@ class RCGNN(nn.Module):
         
         return decoder_fn
     
+    def precompute_lead_lag_labels(
+        self,
+        X_full: torch.Tensor,
+        M_full: Optional[torch.Tensor] = None,
+    ) -> None:
+        """
+        V9.2.2: Precompute lead-lag pseudo-labels from FULL training set.
+        
+        Must be called ONCE per epoch (not per batch). Stores y and confidence
+        as buffers on the model so compute_lead_lag_direction_loss() can use them
+        without recomputing from noisy batch statistics.
+        
+        Why this matters: per-batch lead-lag from B=32 samples gives noisy
+        pseudo-labels that flip across batches → scorer oscillates → bidir=0.500.
+        Full-dataset labels are stable → consistent gradient → scorer learns.
+        
+        Args:
+            X_full: [N, T, d] full training set
+            M_full: [N, T, d] observation mask (optional)
+        """
+        device = X_full.device
+        d = self.d
+        
+        if X_full.dim() < 3 or X_full.shape[1] < 2:
+            self._leadlag_y = None
+            self._leadlag_confidence = None
+            return
+        
+        with torch.no_grad():
+            if M_full is not None:
+                X_masked = X_full * M_full
+            else:
+                X_masked = X_full
+                M_full = torch.ones_like(X_full)
+            
+            X_lag = X_masked[:, :-1, :]
+            X_lead = X_masked[:, 1:, :]
+            M_lag = M_full[:, :-1, :]
+            M_lead = M_full[:, 1:, :]
+            
+            # Accumulate in chunks to avoid OOM on full dataset
+            cross_sum = torch.zeros(d, d, device=device)
+            valid_sum = torch.zeros(d, d, device=device)
+            chunk_size = 128
+            N = X_full.shape[0]
+            for start in range(0, N, chunk_size):
+                end = min(start + chunk_size, N)
+                xl = X_lag[start:end]    # [C, T-1, d]
+                xd = X_lead[start:end]   # [C, T-1, d]
+                ml = M_lag[start:end]
+                md = M_lead[start:end]
+                
+                cross = xl.unsqueeze(-1) * xd.unsqueeze(-2)  # [C, T-1, d, d]
+                valid = ml.unsqueeze(-1) * md.unsqueeze(-2)
+                cross_sum += (cross * valid).sum(dim=(0, 1))
+                valid_sum += valid.sum(dim=(0, 1))
+            
+            cross_mean = cross_sum / (valid_sum + 1e-8)
+            g = cross_mean - cross_mean.T  # antisymmetric
+            
+            self._leadlag_y = (g > 0).float()
+            confidence = g.abs()
+            conf_max = confidence.max()
+            if conf_max > 0:
+                confidence = confidence / (conf_max + 1e-8)
+            self._leadlag_confidence = confidence
+            self._leadlag_valid_sum = valid_sum
+            self._leadlag_signal_mean = g.abs().mean().item()
+
     def compute_lead_lag_direction_loss(
         self,
         X: torch.Tensor,
@@ -1102,21 +1171,18 @@ class RCGNN(nn.Module):
         topk_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
-        V9.1: Lead-lag pseudo-label loss for direction scoring.
+        V9.2.2: Lead-lag direction loss using PRECOMPUTED pseudo-labels.
         
-        Computes temporal cross-correlation asymmetry from data X:
-            g_ij = E[X_i(t-1) * X_j(t)] - E[X_j(t-1) * X_i(t)]
+        Pseudo-labels come from precompute_lead_lag_labels() called once/epoch
+        on the full dataset. This gives stable, consistent targets across all
+        batches within an epoch.
         
-        If g_ij > 0, node i "leads" node j → pseudo-label y_ij = 1.
-        Train direction scorer with BCE(d_ij, y_ij), weighted by
-        magnitude (stop-grad) and |g_ij| (confidence).
-        
-        This gives direction its OWN loss that ONLY the scorer can reduce.
-        No gradient cancellation from A_ij + A_ji invariance.
+        If precompute_lead_lag_labels() hasn't been called, falls back to
+        per-batch computation (but this should not happen in normal training).
         
         Args:
-            X: [B, T, d] time series data
-            M: [B, T, d] observation mask (optional)
+            X: [B, T, d] time series data (used for fallback only)
+            M: [B, T, d] observation mask
             dir_probs: [d, d] current direction probabilities (with grad)
             mag: [d, d] magnitude σ(W_mag) (stop-graded)
             topk_mask: [d, d] binary mask for active edges (optional)
@@ -1128,65 +1194,51 @@ class RCGNN(nn.Module):
         device = X.device
         d = self.d
         
-        # Need time dimension for lead-lag
         if X.dim() < 3 or X.shape[1] < 2:
             return torch.tensor(0.0, device=device), {"L_dir_leadlag": 0.0, "leadlag_coverage": 0.0}
         
         if dir_probs is None:
             dir_probs = self.graph_learner.get_direction_map()
         
-        B, T, N = X.shape
-        assert N == d, f"Expected d={d}, got N={N}"
+        # =====================================================================
+        # Get pseudo-labels: prefer precomputed (full-dataset), fallback to batch
+        # =====================================================================
+        y = getattr(self, '_leadlag_y', None)
+        confidence = getattr(self, '_leadlag_confidence', None)
+        valid_sum = getattr(self, '_leadlag_valid_sum', None)
+        ll_signal = getattr(self, '_leadlag_signal_mean', 0.0)
         
-        # Apply mask: zero out unobserved entries
-        if M is not None:
-            X_masked = X * M
-        else:
-            X_masked = X
-            M = torch.ones_like(X)
+        if y is None:
+            # Fallback: compute from this batch (noisy but functional)
+            B, T, N = X.shape
+            if M is not None:
+                X_masked = X * M
+            else:
+                X_masked = X
+                M = torch.ones_like(X)
+            
+            X_lag = X_masked[:, :-1, :]
+            X_lead = X_masked[:, 1:, :]
+            M_lag = M[:, :-1, :]
+            M_lead = M[:, 1:, :]
+            
+            cross = X_lag.unsqueeze(-1) * X_lead.unsqueeze(-2)
+            valid = M_lag.unsqueeze(-1) * M_lead.unsqueeze(-2)
+            cross_sum = (cross * valid).sum(dim=(0, 1))
+            valid_sum = valid.sum(dim=(0, 1))
+            cross_mean = cross_sum / (valid_sum + 1e-8)
+            g = cross_mean - cross_mean.T
+            
+            y = (g > 0).float()
+            confidence = g.abs()
+            conf_max = confidence.max()
+            if conf_max > 0:
+                confidence = confidence / (conf_max + 1e-8)
+            ll_signal = g.abs().mean().item()
         
         # =====================================================================
-        # Compute lead-lag cross-correlation: g_ij = E[X_i(t-1)*X_j(t)] - E[X_j(t-1)*X_i(t)]
+        # BCE loss on direction probabilities — UNIFORM weighting
         # =====================================================================
-        X_lag = X_masked[:, :-1, :]   # [B, T-1, d]  — time t-1
-        X_lead = X_masked[:, 1:, :]   # [B, T-1, d]  — time t
-        M_lag = M[:, :-1, :]
-        M_lead = M[:, 1:, :]
-        
-        # Valid pairs: both (i at t-1) and (j at t) observed
-        # cross_ij = mean( X_i(t-1) * X_j(t) )  over valid (b,t)
-        # Shape: [B, T-1, d, 1] * [B, T-1, 1, d] → [B, T-1, d, d]
-        cross = X_lag.unsqueeze(-1) * X_lead.unsqueeze(-2)  # [B, T-1, d, d]
-        valid = M_lag.unsqueeze(-1) * M_lead.unsqueeze(-2)   # [B, T-1, d, d]
-        
-        # Sum and normalize
-        cross_sum = (cross * valid).sum(dim=(0, 1))   # [d, d]
-        valid_sum = valid.sum(dim=(0, 1))               # [d, d]
-        cross_mean = cross_sum / (valid_sum + 1e-8)     # [d, d]  E[X_i(t-1)*X_j(t)]
-        
-        # g_ij = E[X_i(t-1)*X_j(t)] - E[X_j(t-1)*X_i(t)]
-        # = cross_mean[i,j] - cross_mean[j,i]
-        g = cross_mean - cross_mean.T  # [d, d] antisymmetric
-        
-        # =====================================================================
-        # Pseudo-labels and confidence
-        # =====================================================================
-        y = (g > 0).float()  # [d, d] — pseudo-label: 1 if i leads j
-        confidence = g.abs()  # [d, d] — how confident the lead-lag signal is
-        
-        # Normalize confidence to [0, 1] range for stable weighting
-        conf_max = confidence.max()
-        if conf_max > 0:
-            confidence = confidence / (conf_max + 1e-8)
-        
-        # =====================================================================
-        # Weighted BCE loss on direction probabilities
-        # =====================================================================
-        # V9.2.1: NO magnitude weighting — w_mag ≈ 0.22 attenuated gradients
-        # to ~1e-5, making the scorer take thousands of steps to move from 0.5.
-        # Use confidence-only weighting: edges with stronger lead-lag get more weight,
-        # but we DON'T gate by magnitude (which is uniform early in training).
-        w = confidence.detach()  # [d,d] — just lead-lag signal strength
         
         # Mask: only active edges (off-diagonal, optionally TopK)
         diag_mask = 1 - torch.eye(d, device=device)
@@ -1206,10 +1258,11 @@ class RCGNN(nn.Module):
         # BCE per edge
         bce = -y * torch.log(dp_clamped) - (1 - y) * torch.log(1 - dp_clamped)
         
-        # V9.2.1: SIMPLE MEAN over active edges (no magnitude gate)
-        # This gives uniform-strength gradient ≈ 1-2 per edge at d=0.5,
-        # vs ~0.01 with the old w_mag*confidence weighting.
-        L_dir_leadlag = (bce * w * edge_mask).sum() / (w * edge_mask).sum().clamp(min=1e-8)
+        # V9.2.2: UNIFORM MEAN over active edges — no weighting at all.
+        # At d_ij=0.5: BCE=0.693, grad_d=-1.0 per edge.
+        # With ~210 active edges: mean grad ≈ 1.0 — strong, clean signal.
+        n_active_edges = edge_mask.sum().clamp(min=1.0)
+        L_dir_leadlag = (bce * edge_mask).sum() / n_active_edges
         
         # =====================================================================
         # Diagnostics
@@ -1220,15 +1273,12 @@ class RCGNN(nn.Module):
             # Direction agreement with pseudo-labels
             pred_dir = (dir_probs > 0.5).float()
             agree = ((pred_dir == y) * edge_mask).sum() / (edge_mask.sum() + 1e-8)
-            # Lead-lag signal strength
-            g_active = g.abs()[edge_mask.bool()]
-            g_mean = g_active.mean().item() if g_active.numel() > 0 else 0.0
         
         metrics = {
             "L_dir_leadlag": L_dir_leadlag.item(),
             "leadlag_coverage": n_active,
             "leadlag_agreement": agree.item(),
-            "leadlag_signal_mean": g_mean,
+            "leadlag_signal_mean": ll_signal,
         }
         
         return L_dir_leadlag, metrics
