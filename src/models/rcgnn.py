@@ -521,9 +521,18 @@ class CausalGraphLearner(nn.Module):
         if antisym and dir_probs is not None:
             mag_batch = torch.sigmoid(Wm_batch)
             # Direction is shared across envs (from embedding average)
-            # V9.2.5: Allow reconstruction gradient through dir_probs (see
-            # _edge_local_adjacency comment for rationale)
-            dir_batch = dir_probs.unsqueeze(0).expand(B, -1, -1)
+            # V9.2.11: Apply selective detach for stuck pairs (same as
+            # _edge_local_adjacency — see docstring there for rationale)
+            eps_stuck = getattr(self, '_dir_detach_stuck_eps', None)
+            if eps_stuck is not None and eps_stuck > 0 and dir_probs.requires_grad:
+                g = self.dir_edge_logit - self.dir_edge_logit.T
+                abs_g = torch.abs(g)
+                stuck_mask = (abs_g < eps_stuck).float()
+                stuck_mask = stuck_mask * (1 - diag_mask)
+                dir_probs_for_A = dir_probs * (1 - stuck_mask) + dir_probs.detach() * stuck_mask
+            else:
+                dir_probs_for_A = dir_probs
+            dir_batch = dir_probs_for_A.unsqueeze(0).expand(B, -1, -1)
             A = mag_batch * dir_batch
             batch_diag = diag_mask.unsqueeze(0).expand(B, -1, -1)
             A = A * (1 - batch_diag)
@@ -549,10 +558,46 @@ class CausalGraphLearner(nn.Module):
         
         GUARANTEED: d_ij + d_ji = 1 (by antisymmetric construction in scorer)
         → A_ij + A_ji = mag_ij (direction cannot change edge mass)
+        
+        V9.2.11: Selective detach for stuck pairs.
+        When |g_ij| < eps, L_recon prefers bidirectional flow (dir_probs≈0.5)
+        because it maximizes information through A.T @ z_signal. This creates
+        an equilibrium that fights L_margin: L_recon pushes g→0 while margin
+        pushes |g|→m. Result: ~3 stuck pairs with min_|g|≈0.10 that never
+        commit direction.
+        
+        FIX: For stuck pairs (|g_ij| < eps), detach dir_probs so L_recon
+        gradient cannot flow back through direction logits. Only L_margin
+        drives those logits. Once |g| exceeds eps (pair commits), L_recon
+        gradient is re-enabled to fine-tune direction.
+        
+        dir_probs_for_A = dir_probs * (1 - stuck_mask) + dir_probs.detach() * stuck_mask
+        
+        This is per-element: non-stuck pairs retain full gradient, stuck pairs
+        have direction gradient blocked from L_recon only.
         """
         d = W_mag.shape[0]
         device = W_mag.device
         mag = torch.sigmoid(W_mag)
+        
+        # V9.2.11: Selective detach for stuck pairs
+        eps_stuck = getattr(self, '_dir_detach_stuck_eps', None)
+        if eps_stuck is not None and eps_stuck > 0 and dir_probs.requires_grad:
+            g = self.dir_edge_logit - self.dir_edge_logit.T
+            abs_g = torch.abs(g)
+            # stuck_mask: 1.0 where pair is stuck, 0.0 where committed
+            stuck_mask = (abs_g < eps_stuck).float()
+            # Zero diagonal (never detach self-loops)
+            stuck_mask = stuck_mask * (1 - torch.eye(d, device=device))
+            # Mixed dir_probs: live grad for committed, detached for stuck
+            dir_probs_for_A = dir_probs * (1 - stuck_mask) + dir_probs.detach() * stuck_mask
+            # Cache count for diagnostics
+            upper = torch.triu(torch.ones(d, d, device=device), diagonal=1)
+            self._n_detached_pairs = int((stuck_mask * upper).sum().item())
+        else:
+            dir_probs_for_A = dir_probs
+            self._n_detached_pairs = 0
+        
         # V9.2.5: Allow reconstruction gradient to flow through dir_probs.
         # With per-edge logits, there is NO gradient cancellation (each edge
         # has its own parameter). L_recon naturally learns correct direction
@@ -561,7 +606,11 @@ class CausalGraphLearner(nn.Module):
         # V9.2.4 FAILURE: detaching dir_probs prevented L_recon from correcting
         # wrong variance labels (~30% error rate on seed 0). Direction was
         # locked to noisy variance heuristic → F1(A.T)=0.40 > F1(A)=0.17.
-        A = mag * dir_probs
+        #
+        # V9.2.11: dir_probs_for_A = selective detach (stuck pairs blocked,
+        # committed pairs retain gradient). This breaks the L_recon vs L_margin
+        # equilibrium without losing reconstruction-driven direction correction.
+        A = mag * dir_probs_for_A
         A = A * (1 - torch.eye(d, device=device))
         return A
     
@@ -1024,9 +1073,30 @@ class RCGNN(nn.Module):
       Logits are frozen anyway — direction losses just waste gradient budget.
       Also disable tau_dir floor in REFINE (no direction losses to protect).
     - Freeze + zero-loss = perfectly clean REFINE: skeleton recon only.
+    
+    V9.2.11: Selective direction detach to break L_recon vs L_margin equilibrium.
+    - V9.2.10 result: Best composite score (0.398), bidir=0.100, AUROC=0.630.
+      BUT: ~3 stuck pairs persist through PRUNE end with min_|g|≈0.10.
+      DirConf peaks at 0.61 (never reaches 0.80 threshold), streak_bad=110.
+      Root cause: L_recon gradient through A = mag * dir_probs PREFERS
+      bidirectional flow (dir_probs≈0.5) because it maximizes information
+      transfer in A.T @ z_signal. This creates an equilibrium:
+        L_recon pushes g→0 (bidirectional = more info)
+        L_margin pushes |g|→m (committed = clear direction)
+      At |g|≈0.10, gradients balance and pairs are stuck forever.
+    - FIX: Selective detach of dir_probs for stuck pairs in A computation.
+      For pairs where |g_ij| < eps_stuck:
+        dir_probs_for_A = dir_probs.detach()  (L_recon can't fight L_margin)
+      For committed pairs (|g_ij| ≥ eps_stuck):
+        dir_probs_for_A = dir_probs  (L_recon retains gradient for fine-tuning)
+      Implementation: dir_probs_for_A = dir_probs*(1-stuck) + dir_probs.detach()*stuck
+      Applied in both _edge_local_adjacency and batched forward path.
+    - eps_stuck reuses dir_margin_eps (0.15) from config for consistency.
+    - Diagnostics: _n_detached_pairs logged each epoch.
+    - All other V9.2.10 changes preserved (REFINE freeze, margin OFF in REFINE).
     """
     
-    VERSION = "9.2.10"
+    VERSION = "9.2.11"
     
     @staticmethod
     def to_causal_convention(A: torch.Tensor) -> torch.Tensor:

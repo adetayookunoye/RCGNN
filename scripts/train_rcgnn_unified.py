@@ -419,6 +419,12 @@ DEFAULT_CONFIG = {
     # V9.2.9: Freeze direction logits in REFINE to prevent drift
     "refine_freeze_dir_logit": True, # requires_grad_(False) at PRUNE→REFINE
     
+    # V9.2.11: Selective detach for stuck direction pairs
+    # Detach dir_probs from A computation for pairs where |g_ij| < eps,
+    # breaking the L_recon vs L_margin equilibrium. L_recon can't fight
+    # L_margin on detached pairs. Re-enables once pair commits (|g| >= eps).
+    "dir_detach_stuck_eps": 0.15, # Same as dir_margin_eps for consistency
+    
     # V9.2: TTUR — Two-Time-Scale Update Rule for scorer
     # Scorer sees detached z_signal (stable inputs per step). Needs higher LR
     # to track the slowly-changing encoder representation.
@@ -2825,6 +2831,15 @@ def train_epoch(
     else:
         base_model.graph_learner._tau_dir_floor = None
     
+    # V9.2.11: Set selective detach eps for stuck direction pairs
+    # Active during DISC/PRUNE when margin is active. Disabled in REFINE
+    # (logits frozen → detach is moot, and no margin loss anyway).
+    dir_detach_eps = config.get("dir_detach_stuck_eps", 0.15)
+    if margin_active and not in_refine_tau and dir_detach_eps > 0:
+        base_model.graph_learner._dir_detach_stuck_eps = dir_detach_eps
+    else:
+        base_model.graph_learner._dir_detach_stuck_eps = None
+    
     # Get loss weights with collapse protection
     # V8.16: Pass frozen_lambda_budget to cap λb after convergence
     # V8.17: Pass peakiness to gate λs/λb ramp
@@ -4696,8 +4711,9 @@ def train(
                         stuck_n = train_metrics.get("stuck_pairs", 0)
                         masked_n = train_metrics.get("masked_pairs", 0)
                         min_abs_g = train_metrics.get("min_abs_g_masked", 0)
-                        print(f" | V9.2.10: L_margin={L_dir_mgn:.4f}→{lambda_mgn*L_dir_mgn:.4f} | "
-                              f"stuck={stuck_n}/{masked_n} min_|g|={min_abs_g:.4f}")
+                        n_detached = getattr(base_model.graph_learner, '_n_detached_pairs', 0)
+                        print(f" | V9.2.11: L_margin={L_dir_mgn:.4f}→{lambda_mgn*L_dir_mgn:.4f} | "
+                              f"stuck={stuck_n}/{masked_n} min_|g|={min_abs_g:.4f} detached={n_detached}")
                 elif stage == "3:REFINE":
                     print(f" | V9.2.10: margin+entropy OFF in REFINE (logits frozen)")
                 
