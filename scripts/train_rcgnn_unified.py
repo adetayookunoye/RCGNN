@@ -388,9 +388,10 @@ DEFAULT_CONFIG = {
     "anticorr_start_epoch": 5, # V8.27: 15→5, start early before edges lock in
     
     # V9.1: Lead-lag direction loss — gives EdgeDirectionScorer a DEDICATED signal
-    # V9.2.1: Bumped lambdas (old 0.5→2.0 was too weak with confidence weighting)
-    "lambda_dir_leadlag_init": 2.0, # V9.2.1: 0.5→2.0 (strong from start)
-    "lambda_dir_leadlag_final": 5.0, # V9.2.1: 2.0→5.0 (direction is critical)
+    # V9.2.6: Disabled — variance labels only ~70% accurate (seed 0).
+    # Variance init provides warm start; L_recon alone corrects direction.
+    "lambda_dir_leadlag_init": 0.0, # V9.2.6: 2.0→0 (variance labels too noisy)
+    "lambda_dir_leadlag_final": 0.0, # V9.2.6: 5.0→0 (L_recon drives direction)
     "dir_leadlag_start_epoch": 1, # From the very start
     
     # V9.1: Direction entropy regularizer — pushes d_ij away from 0.5
@@ -402,7 +403,7 @@ DEFAULT_CONFIG = {
     # V9.2: TTUR — Two-Time-Scale Update Rule for scorer
     # Scorer sees detached z_signal (stable inputs per step). Needs higher LR
     # to track the slowly-changing encoder representation.
-    "scorer_inner_steps": 1, # V9.2.5: 3→1 (L_recon provides stronger direction signal)
+    "scorer_inner_steps": 0, # V9.2.6: 1→0, TTUR disabled (variance labels too noisy, L_recon drives direction)
     
     # V8.27: Correlation-initialized logits + restore best DISC checkpoint
     "corr_init_enabled": True, # Initialize W_adj from |corr(X_i,X_j)| for warm start
@@ -3470,7 +3471,7 @@ def train_epoch(
         # let the scorer converge on the current representation before the
         # encoder moves again.
         # =================================================================
-        scorer_inner_steps = config.get("scorer_inner_steps", 3)
+        scorer_inner_steps = config.get("scorer_inner_steps", 0)  # V9.2.6: default 0 (disabled)
         if scorer_inner_steps > 0:
             antisym_inner = getattr(base_model.graph_learner, '_antisymmetric', False)
             use_per_edge = getattr(base_model.graph_learner, '_use_per_edge_dir', False)

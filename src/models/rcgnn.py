@@ -960,9 +960,20 @@ class RCGNN(nn.Module):
       decoder uses A.T @ z_signal (parents contribute to children's reconstruction).
     - TTUR inner loop KEPT for warm-up: variance labels provide initial direction
       signal, then L_recon refines it.
+    
+    V9.2.6: Disable variance-based direction loss entirely.
+    - V9.2.5 result: ll_agree stayed at 1.000, direction still flipped.
+      Root cause: TTUR inner loop (scorer_inner_steps=1) + lambda_dir_leadlag
+      (2.0→5.0) in main loss BOTH push logits toward wrong variance labels.
+      L_recon gradient through dir_probs is too diluted (flows through decoder,
+      A, dir_probs, logits) to overcome the direct BCE loss on logits.
+    - FIX: Set lambda_dir_leadlag=0 and scorer_inner_steps=0.
+      Variance initialization provides warm start (~70% correct).
+      Only L_recon drives direction correction for the remaining ~30%.
+      L_dir_entropy (push off 0.5) kept for decisiveness.
     """
     
-    VERSION = "9.2.5"
+    VERSION = "9.2.6"
     
     @staticmethod
     def to_causal_convention(A: torch.Tensor) -> torch.Tensor:
