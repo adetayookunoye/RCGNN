@@ -2945,19 +2945,17 @@ def train_epoch(
                         # NEW: Compute TopK-F1 before vs after swap. Accept if F1 improves.
                         # This makes structural improvement visible.
                         if A_true is not None:
-                            # Compute A from swapped W_mag
-                            W_dir_exp = base_model.graph_learner.W_dir
-                            tau_exp = base_model.graph_learner.temperature
+                            # V9.0: Compute A from swapped W_mag using cached direction
+                            dir_map = base_model.graph_learner.get_direction_map()
                             Wm_new = (W_mag_exp + W_mag_exp.T) / 2  # symmetric
-                            Wd_new = (W_dir_exp - W_dir_exp.T) / 2  # antisymmetric
-                            A_swap = torch.sigmoid(Wm_new) * torch.sigmoid(Wd_new / tau_exp)
+                            A_swap = torch.sigmoid(Wm_new) * dir_map
                             swap_metrics = compute_topk_f1(A_swap, A_true, k=target_edges)
                             swap_f1 = swap_metrics["topk_f1"]
                             
                             # Compute A from original W_mag
                             W_mag_exp.data.copy_(W_backup)
                             Wm_orig = (W_mag_exp + W_mag_exp.T) / 2
-                            A_orig = torch.sigmoid(Wm_orig) * torch.sigmoid(Wd_new / tau_exp)
+                            A_orig = torch.sigmoid(Wm_orig) * dir_map
                             orig_metrics = compute_topk_f1(A_orig, A_true, k=target_edges)
                             orig_f1 = orig_metrics["topk_f1"]
                             
@@ -3422,8 +3420,8 @@ def train_epoch(
         # Only learn DIRECTION for edges already in the frozen skeleton
         # =====================================================================
         if skeleton_mask is not None:
-            # V8.33: Zero W_mag gradients for non-skeleton edges.
-            # W_dir gradients are KEPT — direction still learns for all edges.
+            # V9.0: Zero W_mag gradients for non-skeleton edges.
+            # Direction scorer gradients are unaffected — direction learns from embeddings.
             W_mag = base_model.graph_learner.W_mag
             if W_mag.grad is not None:
                 skel_sym = skeleton_mask | skeleton_mask.T
@@ -3857,14 +3855,12 @@ def train(
     if cfg.get("antisymmetric_adjacency", True):
         base_model.graph_learner.set_antisymmetric(True)
         if is_main_process() and not sweep_mode:
-            print(f"[V8.34] DUAL-PARAMETER with STRUCTURAL PROJECTIONS + SYMMETRIC PRUNE:")
-            print(f"        Wm = (W_mag+W_mag.T)/2 [symmetric],  Wd = (W_dir-W_dir.T)/2 [antisymmetric]")
-            print(f"        A_ij = σ(Wm) * σ(Wd/τ),  A_ji = σ(Wm) * (1-σ(Wd/τ))")
-            print(f"        GUARANTEE: A_ij+A_ji = mag_ij → dL_budget/dW_dir = 0")
-            print(f"        V8.34 FIX: Hard prune selects from UPPER TRIANGLE (K undirected edges)")
-            print(f"        V8.34 FIX: τ floor={cfg.get('temperature_floor_unstable', 0.8)} ALWAYS enforced when direction unstable")
-            print(f"        V8.34 FIX: τ_final={cfg.get('temperature_final', 0.5)} (was 0.1, killed direction gradients)")
-            print(f"        L_dir_dec = {cfg.get('lambda_dir_decisive', 10.0)}×mean(p*(1-p)) → W_dir only")
+            print(f"[V9.0] EDGE-LOCAL DIRECTION SCORING:")
+            print(f"        Magnitude: σ(Wm) from symmetric W_mag parameter")
+            print(f"        Direction: d_ij = σ(score(h_i,h_j) - score(h_j,h_i)) from EdgeDirectionScorer MLP")
+            print(f"        A_ij = σ(Wm) * d_ij,  A_ji = σ(Wm) * (1-d_ij)")
+            print(f"        GUARANTEE: d_ij + d_ji = 1 (by antisymmetric construction)")
+            print(f"        Direction gradient: L_inv → z → A → d_ij → scorer → encoder (DIRECT path)")
             if cfg.get('dir_mask_enabled', True):
                 print(f"        V8.37 ADAPTIVE K_dir: K_min={cfg.get('dir_k_min_factor', 0.8)}×target, "
                       f"K_max={cfg.get('dir_k_max_factor', 2.5)}×target, "
@@ -3947,20 +3943,19 @@ def train(
             base_model.graph_learner.W_mag.data.copy_(W_init_t)
             
             # =============================================================
-            # V8.33: W_dir starts at zero (dir=0.5 initially).
-            # No symmetry-break noise needed! Direction losses (L_dir_dec)
-            # will push W_dir toward ±∞ independently of W_mag.
-            # The whole point of V8.33 is that direction and structure
-            # have SEPARATE parameters — no need for noise hacks.
+            # V9.0: Direction comes from EdgeDirectionScorer (MLP on embeddings).
+            # No W_dir parameter to initialize. Direction starts at 0.5 by
+            # construction (scorer outputs zeros → σ(0)=0.5).
             # =============================================================
+            # W_dir is now a frozen buffer — zero it for backward compat
             base_model.graph_learner.W_dir.data.zero_()
             
             if is_main_process() and not sweep_mode:
                 n_pos = int((W_init > 0).sum())
                 topk_init = np.sort(W_init.flatten())[-target_edges_cfg:]
-                print(f"\n[V8.33] Corr-initialized W_mag: {n_pos}/{d*(d-1)} positive, "
+                print(f"\n[V9.0] Corr-initialized W_mag: {n_pos}/{d*(d-1)} positive, "
                       f"scale={corr_init_scale}, topk_mean={topk_init.mean():.3f}")
-                print(f"[V8.33] W_dir initialized to 0 (all dir=0.5). Direction losses will learn direction.")
+                print(f"[V9.0] Direction from EdgeDirectionScorer (starts at 0.5, learns from embeddings).")
         
         # V8.25: Pre-cache cousin mask (expensive to recompute every epoch)
         if A_true is not None and cfg.get("use_cousin_penalty", True):
@@ -3970,7 +3965,8 @@ def train(
     # =========================================================================
     # V8.33: Separate optimizer param groups for W_mag (structure) vs W_dir (direction)
     # Direction typically needs larger LR since it starts at 0 and must reach
-    # large |Wd| values, while skeleton only needs small adjustments from corr init.
+    # V9.0: Direction comes from EdgeDirectionScorer (MLP), not W_dir parameter.
+    # Direction scorer params get a higher LR like the old W_dir did.
     # =========================================================================
     lr_dir_mult = cfg.get("lr_dir_multiplier", 5.0)
     lr_base = cfg["lr"]
@@ -3978,20 +3974,20 @@ def train(
     
     # Collect parameter groups
     mag_params = [base_model.graph_learner.W_mag]
-    dir_params = [base_model.graph_learner.W_dir]
+    dir_params = list(base_model.graph_learner.direction_scorer.parameters())
     other_params = [p for n, p in model.named_parameters()
                     if p is not base_model.graph_learner.W_mag
-                    and p is not base_model.graph_learner.W_dir]
+                    and not any(p is dp for dp in dir_params)]
     
     optimizer = torch.optim.AdamW([
         {"params": mag_params, "lr": lr_base, "weight_decay": cfg["weight_decay"]},
-        {"params": dir_params, "lr": lr_dir, "weight_decay": 0.0},  # No WD on direction
+        {"params": dir_params, "lr": lr_dir, "weight_decay": 0.0},  # No WD on direction scorer
         {"params": other_params, "lr": lr_base, "weight_decay": cfg["weight_decay"]},
     ])
     if is_main_process() and not sweep_mode:
-        print(f"[V8.33] Optimizer: lr_mag={lr_base:.1e}, lr_dir={lr_dir:.1e} ({lr_dir_mult}×), "
+        print(f"[V9.0] Optimizer: lr_mag={lr_base:.1e}, lr_dir_scorer={lr_dir:.1e} ({lr_dir_mult}×), "
               f"mag_params={sum(p.numel() for p in mag_params)}, "
-              f"dir_params={sum(p.numel() for p in dir_params)}, "
+              f"dir_scorer_params={sum(p.numel() for p in dir_params)}, "
               f"other_params={sum(p.numel() for p in other_params)}")
     scheduler = CosineAnnealingWarmRestarts(
         optimizer,
@@ -4106,9 +4102,9 @@ def train(
             train_loader.sampler.set_epoch(epoch)
         
         # =====================================================================
-        # V8.39: LR boost for W_dir in early REFINE epochs
-        # Gives direction parameters extra gradient step size to escape from
-        # the reset zero-init and quickly find invariance-aligned directions.
+        # V9.0: LR boost for direction scorer in early REFINE epochs
+        # Gives the direction MLP extra gradient step size to quickly learn
+        # invariance-aligned directions on the frozen skeleton.
         # =====================================================================
         if E_frozen_mask is not None and refine_start_epoch is not None:
             refine_epoch = epoch - refine_start_epoch
@@ -4117,13 +4113,13 @@ def train(
             if refine_epoch >= 0 and refine_epoch < boost_duration:
                 boost_factor = cfg.get("refine_dir_lr_boost", 5.0)
                 boosted_lr = base_lr_dir * boost_factor
-                optimizer.param_groups[1]["lr"] = boosted_lr  # param_groups[1] = dir_params
+                optimizer.param_groups[1]["lr"] = boosted_lr  # param_groups[1] = dir_scorer params
                 if refine_epoch == 0 and is_main_process() and not sweep_mode:
-                    print(f" | [V8.39] W_dir LR boosted: {base_lr_dir:.1e} → {boosted_lr:.1e} (×{boost_factor}) for {boost_duration} epochs")
+                    print(f" | [V9.0] Direction scorer LR boosted: {base_lr_dir:.1e} → {boosted_lr:.1e} (×{boost_factor}) for {boost_duration} epochs")
             elif refine_epoch == boost_duration:
                 optimizer.param_groups[1]["lr"] = base_lr_dir  # Restore normal
                 if is_main_process() and not sweep_mode:
-                    print(f" | [V8.39] W_dir LR boost ended, restored to {base_lr_dir:.1e}")
+                    print(f" | [V9.0] Direction scorer LR boost ended, restored to {base_lr_dir:.1e}")
         
         # Train epoch (with calibration parameters and skeleton mask for Stage D)
         train_metrics, dro_weights = train_epoch(
@@ -4754,27 +4750,19 @@ def train(
                 
                 # =============================================================
                 # V8.39: Reset W_dir at REFINE start (escape wrong-direction basin)
-                # The old W_dir committed to wrong directions during DISC/PRUNE
-                # under L_recon dominance. A fresh start with boosted LR gives
-                # invariance a fair shot on the frozen skeleton.
                 # =============================================================
-                # V8.40: Freeze W_mag gradient — prevents Adam momentum bleed
-                # into magnitude parameters during direction-only REFINE phase.
-                # Without this, stale Adam state can drift W_mag even though
-                # freeze_skeleton_parameters restores W_mag.data each step.
+                # V9.0: Direction comes from EdgeDirectionScorer (MLP on embeddings).
+                # No W_dir to reset. Instead, we freeze W_mag and let the
+                # direction scorer keep learning from invariance signal.
+                # =============================================================
                 base_model.graph_learner.W_mag.requires_grad_(False)
                 if is_main_process() and not sweep_mode:
-                    print(f" | [V8.40] W_mag.requires_grad_(False) — skeleton magnitudes fully frozen")
+                    print(f" | [V9.0] W_mag.requires_grad_(False) — skeleton magnitudes fully frozen")
+                    print(f" | [V9.0] Direction scorer keeps learning from embeddings (no reset needed)")
                 
-                if cfg.get("refine_reset_wdir", True):
-                    base_model.graph_learner.W_dir.data.zero_()
-                    if is_main_process() and not sweep_mode:
-                        print(f" | [V8.39] W_dir RESET to 0 (all dir=0.5). Fresh direction learning in REFINE.")
-                
-                # V8.39: LR boost for W_dir in early REFINE
+                # V9.0: LR boost for direction scorer in early REFINE
                 refine_lr_boost = cfg.get("refine_dir_lr_boost", 5.0)
                 for pg in optimizer.param_groups:
-                    # param_groups[1] is dir_params (W_dir) — set during optimizer creation
                     pass  # We'll apply per-epoch below
                 # Store refine start epoch for LR boost scheduling
                 refine_start_epoch = epoch
@@ -5136,8 +5124,8 @@ def train(
                         print(f" |   E_frozen: {n_frozen} undirected edges")
                         print(f" |   Edge swaps: DISABLED")
                         print(f" |   Dir losses: MASKED to E_frozen only")
-                        print(f" |   W_dir: {'RESET' if cfg.get('refine_reset_wdir', True) else 'kept'}")
-                        print(f" |   LR boost: ×{cfg.get('refine_dir_lr_boost', 5.0)} for {cfg.get('refine_dir_lr_boost_epochs', 10)} epochs")
+                        print(f" |   W_dir: N/A (V9.0: direction from EdgeDirectionScorer)")
+                        print(f" |   LR boost: ×{cfg.get('refine_dir_lr_boost', 5.0)} for {cfg.get('refine_dir_lr_boost_epochs', 10)} epochs (direction scorer)")
             patience_counter = 0  # fresh start for new stage
             prev_stage = cur_stage
         

@@ -173,29 +173,116 @@ class DisentangledEncoder(nn.Module):
 
 
 # =============================================================================
-# Causal Graph Learner with Per-Environment Deltas
+# Edge-Local Direction Scorer (V9.0)
+# =============================================================================
+
+class EdgeDirectionScorer(nn.Module):
+    """
+    V9.0: Edge-local direction scoring from node embeddings.
+    
+    Given node embeddings h_i, h_j ∈ R^L from the encoder, computes
+    a direction score for edge (i,j):
+    
+        score(h_i, h_j) = MLP(h_i || h_j)     (scalar)
+        d_ij = σ( score(h_i, h_j) - score(h_j, h_i) )
+    
+    ANTISYMMETRY BY CONSTRUCTION:
+        score(h_i, h_j) - score(h_j, h_i) = -(score(h_j, h_i) - score(h_i, h_j))
+        → d_ij + d_ji = 1    (guaranteed, not hoped-for)
+    
+    WHY THIS FIXES REFINE:
+        Old W_dir was a global [d,d] parameter — no data dependency.
+        Invariance gradient path: L_inv → z → A → W_dir was too long.
+        New: direction comes from node embeddings → gradient flows
+        L_inv → z → A → d_ij → score_MLP → h_i,h_j → encoder.
+        The direction scorer sees the SAME embeddings that the decoder
+        uses, so cross-environment differences directly inform direction.
+    """
+    
+    def __init__(self, latent_dim: int, hidden_dim: int = 32):
+        super().__init__()
+        self.latent_dim = latent_dim
+        
+        # MLP: concat(h_i, h_j) → scalar score
+        # Small network — direction is a simple ordering relation
+        self.scorer = nn.Sequential(
+            nn.Linear(latent_dim * 2, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1),
+        )
+    
+    def forward(
+        self, z_signal: torch.Tensor, tau: float = 1.0
+    ) -> torch.Tensor:
+        """
+        Compute direction probabilities from node embeddings.
+        
+        Args:
+            z_signal: [B, T, d, L] or [B, d, L] node embeddings
+            tau: temperature for sigmoid sharpening
+            
+        Returns:
+            dir_probs: [d, d] direction probabilities, d_ij + d_ji = 1
+        """
+        # Pool over batch and time to get per-node embeddings: [d, L]
+        if z_signal.dim() == 4:
+            h = z_signal.mean(dim=(0, 1))  # [d, L]
+        elif z_signal.dim() == 3:
+            h = z_signal.mean(dim=0)  # [d, L]
+        else:
+            h = z_signal  # already [d, L]
+        
+        d = h.shape[0]
+        L = h.shape[1]
+        
+        # Build all pairs: h_i || h_j for each (i,j)
+        h_i = h.unsqueeze(1).expand(d, d, L)  # [d, d, L]
+        h_j = h.unsqueeze(0).expand(d, d, L)  # [d, d, L]
+        h_pairs = torch.cat([h_i, h_j], dim=-1)  # [d, d, 2L]
+        
+        # Score each pair
+        scores = self.scorer(h_pairs).squeeze(-1)  # [d, d]
+        
+        # Antisymmetric logits: score(i,j) - score(j,i)
+        # This GUARANTEES d_ij + d_ji = 1
+        antisym_logits = scores - scores.T  # [d, d]
+        
+        # Direction probabilities with temperature
+        dir_probs = torch.sigmoid(antisym_logits / tau)
+        
+        # Zero diagonal
+        dir_probs = dir_probs * (1 - torch.eye(d, device=dir_probs.device))
+        
+        return dir_probs
+
+
+# =============================================================================
+# Causal Graph Learner with Edge-Local Direction (V9.0)
 # =============================================================================
 
 class CausalGraphLearner(nn.Module):
     """
-    Learns adjacency matrix A with per-environment deltas.
+    V9.0: Causal graph learner with EDGE-LOCAL direction scoring.
     
-    V8.33: DUAL-PARAMETER architecture.
-    - W_mag [d,d]: symmetric, controls edge EXISTENCE (corr-initialized)
-    - W_dir [d,d]: antisymmetric, controls edge DIRECTION (starts at 0)
+    Two components:
+    - W_mag [d,d]: symmetric parameter for edge MAGNITUDE (corr-initialized)
+    - EdgeDirectionScorer: MLP that computes direction from node embeddings
     
-    A_ij = σ(W_mag_ij) * σ(W_dir_ij / τ)
-    A_ji = σ(W_mag_ij) * (1 - σ(W_dir_ij / τ))
+    A_ij = σ(W_mag_ij) * d_ij(z_signal)
+    A_ji = σ(W_mag_ij) * (1 - d_ij(z_signal))
     
-    Key insight: Structure and direction have SEPARATE parameters → gradients
-    from reconstruction update W_mag without disturbing direction, and
-    direction losses (L_dir_dec, L_excl) update W_dir without disturbing structure.
+    V9.0 key insight: Direction is computed from node embeddings (h_i, h_j),
+    NOT from global parameters. This gives direction a DIRECT gradient path
+    from the invariance loss through the encoder, fixing the dead REFINE problem.
+    
+    W_dir is REMOVED. Direction comes entirely from the EdgeDirectionScorer.
     """
     
     def __init__(
         self,
         d: int,
         hidden_dim: int = 64,
+        latent_dim: int = 32,
         n_regimes: int = 1,
         init_scale: float = 0.01,
         temperature: float = 1.0,
@@ -205,11 +292,21 @@ class CausalGraphLearner(nn.Module):
         self.n_regimes = max(n_regimes, 1)
         self.temperature = temperature
         
-        # V8.33: Separate parameters for structure and direction
         # W_mag: symmetric edge-existence logits (corr-initialized later)
         self.W_mag = nn.Parameter(torch.randn(d, d) * init_scale)
-        # W_dir: antisymmetric direction logits (starts at 0 → dir=0.5)
-        self.W_dir = nn.Parameter(torch.zeros(d, d))
+        
+        # V9.0: Edge-local direction scorer (replaces global W_dir)
+        self.direction_scorer = EdgeDirectionScorer(
+            latent_dim=latent_dim,
+            hidden_dim=hidden_dim // 2,  # Small — direction is simple
+        )
+        
+        # V9.0: Backward-compat shim — W_dir kept as frozen buffer for
+        # code that reads it (edge swap, diagnostics). Never trained.
+        self.register_buffer("W_dir", torch.zeros(d, d))
+        
+        # V9.0: Cache last direction probs for get_mean_adjacency() / eval
+        self.register_buffer("_cached_dir_probs", 0.5 * torch.ones(d, d))
         
         # Per-environment deltas (applied to W_mag only — structure varies by env)
         if n_regimes > 1:
@@ -220,32 +317,38 @@ class CausalGraphLearner(nn.Module):
         # For temperature annealing
         self.register_buffer("current_temp", torch.tensor(temperature))
     
-    def _get_sym_antisym(self) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Project raw parameters to enforced symmetry/antisymmetry.
+    def _get_sym_mag(self) -> torch.Tensor:
+        """Project W_mag to enforced symmetry with zero diagonal.
         
         Returns:
             Wm: [d,d] symmetric magnitude logits, diag=0
-            Wd: [d,d] antisymmetric direction logits, diag=0
-        
-        Guarantees:
-            Wm[i,j] == Wm[j,i]  →  mag_ij == mag_ji
-            Wd[i,j] == -Wd[j,i] →  p_ij + p_ji == 1
-            →  A_ij + A_ji == mag_ij  (direction cannot change edge mass)
         """
         diag = torch.eye(self.d, device=self.W_mag.device)
         Wm = 0.5 * (self.W_mag + self.W_mag.T) * (1 - diag)
-        Wd = 0.5 * (self.W_dir - self.W_dir.T) * (1 - diag)
+        return Wm
+    
+    # Backward-compat alias used by training script
+    def _get_sym_antisym(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Backward-compat: returns (Wm, zeros).
+        V9.0: W_dir is dead. Direction comes from EdgeDirectionScorer.
+        """
+        Wm = self._get_sym_mag()
+        Wd = torch.zeros_like(Wm)
         return Wm, Wd
     
     def forward(
         self,
         env_idx: Optional[torch.Tensor] = None,
+        z_signal: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Get adjacency matrix.
+        V9.0: Get adjacency matrix with edge-local direction.
         
         Args:
             env_idx: [B] environment indices. If None, return base A.
+            z_signal: [B, T, d, L] node embeddings from encoder.
+                      If provided and antisymmetric mode is on, direction
+                      is computed from embeddings. If None, uses cached dir.
             
         Returns:
             A: [d, d] or [B, d, d] adjacency matrix
@@ -253,15 +356,29 @@ class CausalGraphLearner(nn.Module):
         """
         tau = self.current_temp
         antisym = getattr(self, '_antisymmetric', False)
-        Wm, Wd = self._get_sym_antisym()
+        Wm = self._get_sym_mag()
+        
+        # V9.0: Compute direction from embeddings if available
+        if antisym and z_signal is not None:
+            dir_probs = self.direction_scorer(z_signal, tau=tau)
+            # Cache detached copy for eval / get_direction_map()
+            self._cached_dir_probs = dir_probs.detach()
+            # Keep live (with grad) for get_mean_adjacency() during training
+            self._live_dir_probs = dir_probs
+        elif antisym:
+            # No embeddings — use cached (e.g. during eval)
+            dir_probs = self._cached_dir_probs
+            self._live_dir_probs = None
+        else:
+            dir_probs = None
         
         if env_idx is None or self.n_regimes == 1:
-            if antisym:
-                A = self._antisymmetric_adjacency(Wm, Wd, tau)
+            if antisym and dir_probs is not None:
+                A = self._edge_local_adjacency(Wm, dir_probs)
                 return A, Wm
             logits = Wm / tau
             A = torch.sigmoid(logits)
-            A = A * (1 - torch.eye(self.d, device=A.device)) # Zero diagonal
+            A = A * (1 - torch.eye(self.d, device=A.device))
             return A, Wm
         
         # Per-environment adjacency (deltas applied to Wm, then re-symmetrized)
@@ -275,15 +392,12 @@ class CausalGraphLearner(nn.Module):
             e = env_idx[b].item()
             if e < self.n_regimes:
                 Wm_e = Wm + self.env_deltas[e]
-                # Re-symmetrize after adding env delta
                 Wm_batch[b] = 0.5 * (Wm_e + Wm_e.transpose(-1, -2)) * (1 - diag_mask)
         
-        if antisym:
-            # V8.33: Batch dual-parameter antisymmetric
+        if antisym and dir_probs is not None:
             mag_batch = torch.sigmoid(Wm_batch)
-            # Wd is shared across envs (direction doesn't vary by env)
-            Wd_batch = Wd.unsqueeze(0).expand(B, -1, -1)
-            dir_batch = torch.sigmoid(Wd_batch / tau)
+            # Direction is shared across envs (from embedding average)
+            dir_batch = dir_probs.unsqueeze(0).expand(B, -1, -1)
             A = mag_batch * dir_batch
             batch_diag = diag_mask.unsqueeze(0).expand(B, -1, -1)
             A = A * (1 - batch_diag)
@@ -291,90 +405,70 @@ class CausalGraphLearner(nn.Module):
         
         logits = Wm_batch / tau
         A = torch.sigmoid(logits)
-        
-        # Zero diagonal
         batch_diag = diag_mask.unsqueeze(0).expand(B, -1, -1)
         A = A * (1 - batch_diag)
         
         return A, Wm_batch
     
+    def _edge_local_adjacency(
+        self, W_mag: torch.Tensor, dir_probs: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        V9.0: Edge-local direction adjacency.
+        
+        A_ij = σ(Wm_ij) * d_ij
+        
+        Where d_ij comes from EdgeDirectionScorer (data-dependent),
+        NOT from a global W_dir parameter.
+        
+        GUARANTEED: d_ij + d_ji = 1 (by antisymmetric construction in scorer)
+        → A_ij + A_ji = mag_ij (direction cannot change edge mass)
+        """
+        d = W_mag.shape[0]
+        device = W_mag.device
+        mag = torch.sigmoid(W_mag)
+        A = mag * dir_probs
+        A = A * (1 - torch.eye(d, device=device))
+        return A
+    
     def get_mean_adjacency(self) -> torch.Tensor:
-        """Get base adjacency (for evaluation)."""
-        tau = self.current_temp
+        """Get base adjacency. Uses live direction (with grad) if available, else cached."""
         antisym = getattr(self, '_antisymmetric', False)
-        Wm, Wd = self._get_sym_antisym()
+        Wm = self._get_sym_mag()
         if antisym:
-            return self._antisymmetric_adjacency(Wm, Wd, tau)
-        logits = Wm / tau
+            # Use live dir_probs (with grad) if we're in a forward pass
+            dir_probs = getattr(self, '_live_dir_probs', None)
+            if dir_probs is None:
+                dir_probs = self._cached_dir_probs
+            return self._edge_local_adjacency(Wm, dir_probs)
+        logits = Wm / self.current_temp
         A = torch.sigmoid(logits)
         A = A * (1 - torch.eye(self.d, device=A.device))
         return A
     
     def _antisymmetric_adjacency(self, W_mag: torch.Tensor, W_dir: torch.Tensor, tau: float) -> torch.Tensor:
-        """
-        V8.33: DUAL-PARAMETER antisymmetric adjacency.
-        
-        Two SEPARATE parameter tensors, PROJECTED before use:
-          Wm = (W_mag + W_mag.T)/2   # ENFORCED symmetric, diag=0
-          Wd = (W_dir - W_dir.T)/2   # ENFORCED antisymmetric, diag=0
-        
-          mag = sigmoid(Wm)            # edge gate: symmetric → mag_ij == mag_ji
-          p   = sigmoid(Wd / τ)        # direction: antisym → p_ij + p_ji == 1
-          A_ij = mag_ij * p_ij
-          A_ji = mag_ij * (1 - p_ij)   # by complement property
-        
-        GUARANTEED properties (by construction, not by loss):
-          - A_ij + A_ji = mag_ij       (direction cannot change edge mass!)
-          - A.sum() = mag.sum()         (L_budget gradient → W_mag only)
-          - p_ij + p_ji = 1            (exactly one direction wins per pair)
-          - dL_budget/dW_dir = 0        (decoupling is structural, not hoped-for)
-        
-        Key improvement over V8.30-V8.32:
-          - V8.30-V8.32: mag and dir derived from SAME W or unconstrained params.
-          - V8.33: Separate params WITH structural projections.
-            No interference possible, by linear algebra, not by loss tuning.
-        """
-        d = W_mag.shape[0]
-        device = W_mag.device
-        
-        # Edge magnitude from W_mag (symmetric — structure)
-        mag = torch.sigmoid(W_mag)
-        
-        # Direction from W_dir (antisymmetric — direction)
-        direction = torch.sigmoid(W_dir / tau)
-        
-        # A_ij = mag * dir, A_ji = mag * (1-dir)
-        A = mag * direction
-        
-        # Zero diagonal
-        A = A * (1 - torch.eye(d, device=device))
-        return A
+        """DEPRECATED V8.33 — kept for backward compat. Uses _edge_local_adjacency instead."""
+        return self._edge_local_adjacency(W_mag, self._cached_dir_probs)
     
     def set_antisymmetric(self, enabled: bool = True):
-        """Enable/disable V8.33 dual-parameter antisymmetric mode."""
+        """Enable/disable edge-local antisymmetric mode."""
         self._antisymmetric = enabled
     
     @property
     def W_adj(self) -> torch.Tensor:
-        """Backward-compat: returns symmetrized Wm for code that reads W_adj.
-        
-        V8.33: Returns (W_mag+W_mag.T)/2 with diag=0 — the projected
-        symmetric magnitude logits. Used by training script for
-        hard prune, edge swap, ranking margin, diagnostics.
-        """
-        Wm, _ = self._get_sym_antisym()
-        return Wm
+        """Backward-compat: returns symmetrized Wm for code that reads W_adj."""
+        return self._get_sym_mag()
     
     def get_direction_map(self) -> torch.Tensor:
-        """V8.33: Return p = σ(Wd/τ) for direction decisiveness penalty.
+        """V9.0: Return cached direction probabilities.
         
         Returns [d,d] tensor where p_ij ∈ (0,1). At 0.5 = undecided,
-        near 0 or 1 = decided. Uses projected antisymmetric Wd.
-        Guarantees p_ij + p_ji = 1.
+        near 0 or 1 = decided. Guarantees p_ij + p_ji = 1.
+        
+        NOTE: These are from the last forward pass. Call forward() with
+        z_signal first to get fresh values.
         """
-        tau = self.current_temp
-        _, Wd = self._get_sym_antisym()
-        return torch.sigmoid(Wd / tau)
+        return self._cached_dir_probs
     
     def get_temperature(self) -> float:
         return self.current_temp.item()
@@ -383,37 +477,23 @@ class CausalGraphLearner(nn.Module):
         self.current_temp.fill_(temp)
     
     def increment_step(self):
-        """Hook for temperature annealing schedules. Override in subclass if needed."""
+        """Hook for temperature annealing schedules."""
         pass
     
     def topk_project(self, k: int, use_logits: bool = True) -> torch.Tensor:
         """
         Hard Top-K projection: return binary mask with exactly K edges.
-        
-        V8.33: Uses W_mag for edge ranking (structure parameter only).
-        V8.34: Selects from upper triangle (W_mag is symmetric),
-               then mirrors to full matrix. Ensures K undirected edges
-               survive, not K/2.
-        
-        Args:
-            k: Number of edges to keep (typically target_edges = true_edges)
-            use_logits: If True (recommended), rank by W_mag magnitude.
-            
-        Returns:
-            A_proj: [d, d] binary adjacency with exactly 2K entries (K pairs)
+        Uses W_mag for edge ranking (structure parameter only).
+        Selects from upper triangle, then mirrors to full matrix.
         """
         device = self.W_mag.device
-        diag_mask = torch.eye(self.d, device=device)
         
         if use_logits:
-            # Rank edges by symmetrized Wm (structure parameter)
-            Wm, _ = self._get_sym_antisym()
+            Wm = self._get_sym_mag()
         else:
-            # Fallback: rank by symmetric magnitude of A
             A = self.get_mean_adjacency()
-            Wm = torch.maximum(A, A.T)  # symmetric strength
+            Wm = torch.maximum(A, A.T)
         
-        # V8.34: Select from UPPER TRIANGLE only (Wm is symmetric)
         W_upper = torch.triu(Wm, diagonal=1)
         flat = W_upper.flatten()
         n_upper = self.d * (self.d - 1) // 2
@@ -424,20 +504,16 @@ class CausalGraphLearner(nn.Module):
         
         _, topk_idx = torch.topk(flat, k)
         
-        # Create mask in upper triangle, then mirror
         mask_flat = torch.zeros_like(flat)
         mask_flat[topk_idx] = 1.0
         mask = mask_flat.reshape(self.d, self.d)
-        mask = (mask + mask.T).clamp(max=1.0)  # mirror to full matrix
+        mask = (mask + mask.T).clamp(max=1.0)
         
         return mask
     
     def get_logits(self) -> torch.Tensor:
-        """Get symmetrized Wm logits for sparsity penalty.
-        V8.33: Returns projected (W_mag+W_mag.T)/2 with diag=0.
-        """
-        Wm, _ = self._get_sym_antisym()
-        return Wm
+        """Get symmetrized Wm logits for sparsity penalty."""
+        return self._get_sym_mag()
 
 
 # =============================================================================
@@ -731,7 +807,7 @@ class RCGNN(nn.Module):
     6. V8.24 ICP + anti-correlation losses for causal edge identity
     """
     
-    VERSION = "8.27"
+    VERSION = "9.0"
     
     @staticmethod
     def to_causal_convention(A: torch.Tensor) -> torch.Tensor:
@@ -817,6 +893,7 @@ class RCGNN(nn.Module):
         self.graph_learner = CausalGraphLearner(
             d=d,
             hidden_dim=hidden_dim,
+            latent_dim=latent_dim,
             n_regimes=n_regimes,
         )
         
@@ -924,12 +1001,12 @@ class RCGNN(nn.Module):
         self._cached_z_signal = z_signal
         self._cached_z_corrupt = z_corrupt
         
-        # 2. Learn structure
+        # 2. Learn structure (V9.0: pass z_signal for edge-local direction)
         if regime is not None and self.n_regimes > 1:
-            A, W_adj = self.graph_learner(env_idx=regime)
+            A, W_adj = self.graph_learner(env_idx=regime, z_signal=z_signal)
             A_base = self.graph_learner.get_mean_adjacency()
         else:
-            A, W_adj = self.graph_learner()
+            A, W_adj = self.graph_learner(z_signal=z_signal)
             A_base = A
         
         # 3. Decode (single pass - no M_probs dependence per GUARDRAIL)
