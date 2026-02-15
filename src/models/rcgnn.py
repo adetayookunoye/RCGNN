@@ -832,9 +832,19 @@ class RCGNN(nn.Module):
     - This decouples encoder ↔ scorer optimization (no moving-target)
     - Scorer LR = 10-20× encoder LR to track slow representation changes
     - Dead L_dir_dec removed from training script
+    
+    V9.2.4: TTUR inner loop fix — scorer learns from direction losses ONLY.
+    - ROOT CAUSE of V9.2.3 stagnation (ll_agree=0.50 for 110 epochs):
+      Inner loop used compute_loss() → L_recon gradient overwhelmed L_dir_leadlag
+      through dir_probs → scorer path (A_ij = mag * dir_probs → decoder → L_recon).
+    - FIX: Inner loop computes only L_dir_leadlag + L_dir_entropy, not full loss.
+      Scorer learns variance-based direction labels without reconstruction interference.
+    - In V9.2.2 (noise labels): stalemate invisible because noise has zero expected
+      signal — reconstruction dominated and bidir dropped. In V9.2.3 (correct labels):
+      variance signal fought reconstruction to stalemate → ll_agree stuck at 0.50.
     """
     
-    VERSION = "9.2.3"
+    VERSION = "9.2.4"
     
     @staticmethod
     def to_causal_convention(A: torch.Tensor) -> torch.Tensor:

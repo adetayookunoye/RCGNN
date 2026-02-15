@@ -3487,14 +3487,73 @@ def train_epoch(
                     optimizer.zero_grad()
                     # Re-forward with same batch data (z_signal re-computed but detached)
                     outputs_inner = model(X, M, regime=e)
-                    # Full loss computation — but only scorer params have requires_grad=True,
-                    # so autograd only computes gradients for the scorer MLP.
-                    loss_inner, _ = base_model.compute_loss(
-                        outputs_inner, X, M, regime=e,
-                        epoch=epoch,
-                        total_epochs=total_epochs,
-                        loss_weights=loss_weights,
-                    )
+                    
+                    # V9.2.4 FIX: Compute ONLY direction losses for scorer inner loop.
+                    # 
+                    # ROOT CAUSE of V9.2.3 ll_agree=0.50 stagnation:
+                    # The old code used compute_loss() which includes L_recon, L_sparse,
+                    # L_budget, L_acyclic, etc. ALL of these flow gradients through
+                    # dir_probs → scorer (because A_ij = mag_ij * dir_probs_ij).
+                    # L_recon gradient OVERWHELMS L_dir_leadlag (~50:1), pushing the
+                    # scorer to match correlation structure instead of variance labels.
+                    # 
+                    # In V9.2.2 (noise labels), the stalemate wasn't visible because
+                    # noise labels have zero expected signal — reconstruction won and
+                    # bidir dropped. In V9.2.3 (correct labels), the variance signal
+                    # fights reconstruction to a stalemate → ll_agree stuck at 0.50.
+                    #
+                    # FIX: Compute only L_dir_leadlag + L_dir_entropy for the scorer.
+                    # The scorer should learn direction from variance labels ONLY,
+                    # without interference from reconstruction.
+                    
+                    # Get live dir_probs (with grad to scorer)
+                    dir_probs_inner = getattr(base_model.graph_learner, '_live_dir_probs', None)
+                    if dir_probs_inner is not None:
+                        # Get TopK mask from current adjacency (detached — mask is stop-grad)
+                        A_inner = outputs_inner["A_base"] if outputs_inner["A_base"].dim() == 2 else outputs_inner["A_base"].mean(0)
+                        A_inner = A_inner.detach()
+                        d_inner = A_inner.shape[0]
+                        A_flat_inner = (A_inner * (1 - torch.eye(d_inner, device=A_inner.device))).flatten()
+                        target_k_inner = base_model.target_edges
+                        if A_flat_inner.numel() > target_k_inner:
+                            _, topk_idx_inner = torch.topk(A_flat_inner, target_k_inner)
+                            topk_binary_inner = torch.zeros(d_inner, d_inner, device=A_inner.device)
+                            topk_binary_inner[topk_idx_inner // d_inner, topk_idx_inner % d_inner] = 1.0
+                            topk_sym_inner = torch.maximum(topk_binary_inner, topk_binary_inner.T)
+                        else:
+                            topk_sym_inner = 1 - torch.eye(d_inner, device=A_inner.device)
+                        
+                        # Magnitude (stop-graded) 
+                        Wm_inner = base_model.graph_learner._get_sym_mag()
+                        mag_inner = torch.sigmoid(Wm_inner).detach()
+                        
+                        # Direction loss: variance-based BCE
+                        L_ll_inner, _ = base_model.compute_lead_lag_direction_loss(
+                            X=X, M=M,
+                            dir_probs=dir_probs_inner,
+                            mag=mag_inner,
+                            topk_mask=topk_sym_inner,
+                        )
+                        
+                        # Direction entropy: push off 0.5
+                        L_ent_inner = base_model.compute_direction_entropy_loss(
+                            dir_probs=dir_probs_inner,
+                            topk_mask=topk_sym_inner,
+                        )
+                        
+                        # Scorer-only loss (no reconstruction interference)
+                        lam_ll = loss_weights.get("lambda_dir_leadlag", 0.5) if loss_weights else 0.5
+                        lam_ent = loss_weights.get("lambda_dir_entropy", 1.0) if loss_weights else 1.0
+                        loss_inner = lam_ll * L_ll_inner + lam_ent * L_ent_inner
+                    else:
+                        # Fallback: shouldn't happen if antisym is on
+                        loss_inner, _ = base_model.compute_loss(
+                            outputs_inner, X, M, regime=e,
+                            epoch=epoch,
+                            total_epochs=total_epochs,
+                            loss_weights=loss_weights,
+                        )
+                    
                     loss_inner.backward()
                     torch.nn.utils.clip_grad_norm_(
                         base_model.graph_learner.direction_scorer.parameters(),
