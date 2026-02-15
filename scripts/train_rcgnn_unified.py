@@ -3439,8 +3439,7 @@ def train_epoch(
             loss = weighted_loss
         
         # Backward
-        loss.backward()
-        
+        loss.backward()        
         # =====================================================================
         # V8.5: SKELETON FREEZE in Stage D
         # Zero out gradients for edges NOT in skeleton - prevents changing structure
@@ -3474,44 +3473,29 @@ def train_epoch(
         scorer_inner_steps = config.get("scorer_inner_steps", 3)
         if scorer_inner_steps > 0:
             antisym_inner = getattr(base_model.graph_learner, '_antisymmetric', False)
+            use_per_edge = getattr(base_model.graph_learner, '_use_per_edge_dir', False)
             if antisym_inner:
-                # Temporarily freeze all params except scorer
-                scorer_params_set = set(base_model.graph_learner.direction_scorer.parameters())
-                frozen_params = []
-                for p in model.parameters():
-                    if p not in scorer_params_set and p.requires_grad:
-                        p.requires_grad_(False)
-                        frozen_params.append(p)
-                
-                for _inner in range(scorer_inner_steps):
-                    optimizer.zero_grad()
-                    # Re-forward with same batch data (z_signal re-computed but detached)
-                    outputs_inner = model(X, M, regime=e)
+                # V9.2.4: Per-edge direction logits — no need to re-forward model.
+                # The dir_edge_logit parameter is updated directly.
+                if use_per_edge:
+                    # Freeze all params except dir_edge_logit
+                    dir_logit_param = base_model.graph_learner.dir_edge_logit
+                    frozen_params = []
+                    for p in model.parameters():
+                        if p is not dir_logit_param and p.requires_grad:
+                            p.requires_grad_(False)
+                            frozen_params.append(p)
                     
-                    # V9.2.4 FIX: Compute ONLY direction losses for scorer inner loop.
-                    # 
-                    # ROOT CAUSE of V9.2.3 ll_agree=0.50 stagnation:
-                    # The old code used compute_loss() which includes L_recon, L_sparse,
-                    # L_budget, L_acyclic, etc. ALL of these flow gradients through
-                    # dir_probs → scorer (because A_ij = mag_ij * dir_probs_ij).
-                    # L_recon gradient OVERWHELMS L_dir_leadlag (~50:1), pushing the
-                    # scorer to match correlation structure instead of variance labels.
-                    # 
-                    # In V9.2.2 (noise labels), the stalemate wasn't visible because
-                    # noise labels have zero expected signal — reconstruction won and
-                    # bidir dropped. In V9.2.3 (correct labels), the variance signal
-                    # fights reconstruction to a stalemate → ll_agree stuck at 0.50.
-                    #
-                    # FIX: Compute only L_dir_leadlag + L_dir_entropy for the scorer.
-                    # The scorer should learn direction from variance labels ONLY,
-                    # without interference from reconstruction.
-                    
-                    # Get live dir_probs (with grad to scorer)
-                    dir_probs_inner = getattr(base_model.graph_learner, '_live_dir_probs', None)
-                    if dir_probs_inner is not None:
-                        # Get TopK mask from current adjacency (detached — mask is stop-grad)
-                        A_inner = outputs_inner["A_base"] if outputs_inner["A_base"].dim() == 2 else outputs_inner["A_base"].mean(0)
-                        A_inner = A_inner.detach()
+                    for _inner in range(scorer_inner_steps):
+                        optimizer.zero_grad()
+                        
+                        # Compute dir_probs from per-edge logits (with grad)
+                        tau_inner = base_model.graph_learner.current_temp.item()
+                        dir_probs_inner = base_model.graph_learner._compute_per_edge_dir_probs(tau=tau_inner)
+                        
+                        # Get TopK mask from current adjacency (detached)
+                        A_base = outputs["A_base"] if outputs["A_base"].dim() == 2 else outputs["A_base"].mean(0)
+                        A_inner = A_base.detach()
                         d_inner = A_inner.shape[0]
                         A_flat_inner = (A_inner * (1 - torch.eye(d_inner, device=A_inner.device))).flatten()
                         target_k_inner = base_model.target_edges
@@ -3523,15 +3507,11 @@ def train_epoch(
                         else:
                             topk_sym_inner = 1 - torch.eye(d_inner, device=A_inner.device)
                         
-                        # Magnitude (stop-graded) 
-                        Wm_inner = base_model.graph_learner._get_sym_mag()
-                        mag_inner = torch.sigmoid(Wm_inner).detach()
-                        
                         # Direction loss: variance-based BCE
                         L_ll_inner, _ = base_model.compute_lead_lag_direction_loss(
                             X=X, M=M,
                             dir_probs=dir_probs_inner,
-                            mag=mag_inner,
+                            mag=None,
                             topk_mask=topk_sym_inner,
                         )
                         
@@ -3541,29 +3521,53 @@ def train_epoch(
                             topk_mask=topk_sym_inner,
                         )
                         
-                        # Scorer-only loss (no reconstruction interference)
                         lam_ll = loss_weights.get("lambda_dir_leadlag", 0.5) if loss_weights else 0.5
                         lam_ent = loss_weights.get("lambda_dir_entropy", 1.0) if loss_weights else 1.0
                         loss_inner = lam_ll * L_ll_inner + lam_ent * L_ent_inner
-                    else:
-                        # Fallback: shouldn't happen if antisym is on
+                        
+                        loss_inner.backward()
+                        
+                        # V9.2.4 DEBUG
+                        if _inner == 0 and batch_idx == 0 and epoch <= 3:
+                            dl_grad = dir_logit_param.grad
+                            if dl_grad is not None:
+                                print(f"  [V9.2.4 DEBUG] dir_logit grad_norm={dl_grad.norm().item():.6f} "
+                                      f"param_norm={dir_logit_param.norm().item():.4f} "
+                                      f"L_ll={L_ll_inner.item():.4f} L_ent={L_ent_inner.item():.4f}")
+                        
+                        torch.nn.utils.clip_grad_norm_([dir_logit_param], max_norm=config["grad_clip"])
+                        optimizer.step()
+                    
+                    # Unfreeze
+                    for p in frozen_params:
+                        p.requires_grad_(True)
+                else:
+                    # OLD: MLP scorer path (kept for backward compat)
+                    scorer_params_set = set(base_model.graph_learner.direction_scorer.parameters())
+                    frozen_params = []
+                    for p in model.parameters():
+                        if p not in scorer_params_set and p.requires_grad:
+                            p.requires_grad_(False)
+                            frozen_params.append(p)
+                    
+                    for _inner in range(scorer_inner_steps):
+                        optimizer.zero_grad()
+                        outputs_inner = model(X, M, regime=e)
                         loss_inner, _ = base_model.compute_loss(
                             outputs_inner, X, M, regime=e,
                             epoch=epoch,
                             total_epochs=total_epochs,
                             loss_weights=loss_weights,
                         )
+                        loss_inner.backward()
+                        torch.nn.utils.clip_grad_norm_(
+                            base_model.graph_learner.direction_scorer.parameters(),
+                            max_norm=config["grad_clip"]
+                        )
+                        optimizer.step()
                     
-                    loss_inner.backward()
-                    torch.nn.utils.clip_grad_norm_(
-                        base_model.graph_learner.direction_scorer.parameters(),
-                        max_norm=config["grad_clip"]
-                    )
-                    optimizer.step()
-                
-                # Unfreeze all params
-                for p in frozen_params:
-                    p.requires_grad_(True)
+                    for p in frozen_params:
+                        p.requires_grad_(True)
         
         # Track metrics
         total_loss += loss.item()
@@ -4084,6 +4088,19 @@ def train(
             # W_dir is now a frozen buffer — zero it for backward compat
             base_model.graph_learner.W_dir.data.zero_()
             
+            # V9.2.4: Initialize per-edge direction logits from variance ordering
+            X_init_tensor = torch.from_numpy(X_np).float() if isinstance(X_np, np.ndarray) else data["X"].float()
+            if X_init_tensor.dim() == 2:
+                # Need [N, T, d] shape
+                X_init_tensor = X_init_tensor.unsqueeze(0)
+            M_init_tensor = None
+            if "M" in data and data["M"] is not None:
+                M_init_np = data["M"]
+                M_init_tensor = torch.from_numpy(M_init_np).float() if isinstance(M_init_np, np.ndarray) else M_init_np.float()
+                if M_init_tensor.dim() == 2:
+                    M_init_tensor = M_init_tensor.unsqueeze(0)
+            base_model.graph_learner.init_direction_from_variance(X_init_tensor.to(device), M_init_tensor.to(device) if M_init_tensor is not None else None)
+            
             if is_main_process() and not sweep_mode:
                 n_pos = int((W_init > 0).sum())
                 topk_init = np.sort(W_init.flatten())[-target_edges_cfg:]
@@ -4109,8 +4126,11 @@ def train(
     # Collect parameter groups
     mag_params = [base_model.graph_learner.W_mag]
     dir_params = list(base_model.graph_learner.direction_scorer.parameters())
+    # V9.2.4: Include per-edge direction logits in direction param group
+    dir_params.append(base_model.graph_learner.dir_edge_logit)
     other_params = [p for n, p in model.named_parameters()
                     if p is not base_model.graph_learner.W_mag
+                    and p is not base_model.graph_learner.dir_edge_logit
                     and not any(p is dp for dp in dir_params)]
     
     optimizer = torch.optim.AdamW([

@@ -316,6 +316,16 @@ class CausalGraphLearner(nn.Module):
             hidden_dim=hidden_dim // 2,  # Small — direction is simple
         )
         
+        # V9.2.4: Per-edge direction logit — direct parameterization.
+        # WHY: The shared MLP scorer fails because detached z_signal produces
+        # nearly-identical embeddings across variables → antisymmetric gradient
+        # cancellation → scorer can't learn direction despite non-zero gradients.
+        # Per-edge logits have no cancellation: each edge gets its own gradient.
+        # Initialized from variance-based labels in init_direction_from_variance().
+        # dir_probs[i,j] = sigmoid((dir_edge_logit[i,j] - dir_edge_logit[j,i]) / tau)
+        self.dir_edge_logit = nn.Parameter(torch.zeros(d, d))
+        self._use_per_edge_dir = True  # Use per-edge logits instead of MLP
+        
         # V9.0: Backward-compat shim — W_dir kept as frozen buffer for
         # code that reads it (edge swap, diagnostics). Never trained.
         self.register_buffer("W_dir", torch.zeros(d, d))
@@ -331,6 +341,85 @@ class CausalGraphLearner(nn.Module):
         
         # For temperature annealing
         self.register_buffer("current_temp", torch.tensor(temperature))
+    
+    def init_direction_from_variance(self, X_full: torch.Tensor, M_full: Optional[torch.Tensor] = None):
+        """
+        V9.2.4: Initialize per-edge direction logits from variance ordering.
+        
+        Children have higher variance than parents in SEMs, so:
+        dir_edge_logit[i,j] > 0 when Var(X_j) > Var(X_i) → i→j
+        
+        Initialize with magnitude proportional to the variance gap,
+        scaled to produce initial dir_probs ≈ 0.6-0.9 for clear cases.
+        
+        Args:
+            X_full: [N, T, d] full training data
+            M_full: [N, T, d] observation mask (optional)
+        """
+        with torch.no_grad():
+            d = self.d
+            device = self.dir_edge_logit.device
+            
+            if M_full is not None:
+                X_masked = X_full * M_full
+                M_flat = M_full.reshape(-1, d)
+            else:
+                X_masked = X_full
+                M_flat = torch.ones(X_full.shape[0] * X_full.shape[1], d, device=X_full.device)
+            
+            X_flat = X_masked.reshape(-1, d)
+            n_obs = M_flat.sum(dim=0).clamp(min=1.0)
+            mean_x = (X_flat * M_flat).sum(dim=0) / n_obs
+            sq_dev = ((X_flat - mean_x.unsqueeze(0)) ** 2) * M_flat
+            variances = sq_dev.sum(dim=0) / n_obs  # [d]
+            
+            # var_diff[i,j] = Var(X_i) - Var(X_j)
+            var_diff = variances.unsqueeze(1) - variances.unsqueeze(0)
+            # g[i,j] > 0 when Var(X_j) > Var(X_i) → i→j
+            g = -var_diff
+            
+            # Initialize logits: scale so sigmoid(logit/tau) gives clear direction
+            # At tau=2.0 (initial), sigmoid(1.0/2.0) ≈ 0.62
+            # At tau=0.5 (final), sigmoid(1.0/0.5) ≈ 0.88
+            # Use init_scale = 1.0 for the sign, proportional to confidence
+            g_max = g.abs().max()
+            if g_max > 0:
+                g_normalized = g / (g_max + 1e-8)  # [-1, 1]
+            else:
+                g_normalized = g
+            
+            # Scale to reasonable logit range (±1.0 for strongest signals)
+            init_logit = g_normalized * 1.0
+            init_logit = init_logit * (1 - torch.eye(d, device=device))
+            
+            self.dir_edge_logit.data.copy_(init_logit.to(device))
+            
+            # Report initialization quality
+            n_true_pos = (g > 0).sum().item() - d  # subtract diagonal
+            n_total = d * (d - 1)
+            print(f"  [V9.2.4] Initialized dir_edge_logit from variance: "
+                  f"{n_true_pos}/{n_total} positive logits, "
+                  f"logit range [{init_logit.min().item():.3f}, {init_logit.max().item():.3f}], "
+                  f"var range [{variances.min().item():.4f}, {variances.max().item():.4f}]")
+    
+    def _compute_per_edge_dir_probs(self, tau: float) -> torch.Tensor:
+        """
+        V9.2.4: Compute direction probs from per-edge logits.
+        
+        Antisymmetric by construction:
+            antisym_logit[i,j] = dir_edge_logit[i,j] - dir_edge_logit[j,i]
+            dir_probs[i,j] = sigmoid(antisym_logit[i,j] / tau)
+            
+        GUARANTEED: dir_probs[i,j] + dir_probs[j,i] = 1
+        
+        Returns:
+            dir_probs: [d, d] direction probabilities with grad to dir_edge_logit
+        """
+        d = self.d
+        antisym = self.dir_edge_logit - self.dir_edge_logit.T
+        dir_probs = torch.sigmoid(antisym / tau)
+        dir_probs = dir_probs * (1 - torch.eye(d, device=dir_probs.device))
+        return dir_probs
     
     def _get_sym_mag(self) -> torch.Tensor:
         """Project W_mag to enforced symmetry with zero diagonal.
@@ -380,9 +469,15 @@ class CausalGraphLearner(nn.Module):
         # With detach, z_signal is STABLE within each step. Higher scorer LR
         # (10-20×) lets it track the slowly-changing representation.
         if antisym and z_signal is not None:
-            z_for_dir = z_signal.detach()  # CRITICAL: decouple encoder ↔ scorer
-            dir_probs = self.direction_scorer(z_for_dir, tau=tau)
+            # V9.2.4: Use per-edge direction logits (direct parameterization)
+            use_per_edge = getattr(self, '_use_per_edge_dir', False)
+            if use_per_edge:
+                dir_probs = self._compute_per_edge_dir_probs(tau=tau)
+            else:
+                z_for_dir = z_signal.detach()  # CRITICAL: decouple encoder ↔ scorer
+                dir_probs = self.direction_scorer(z_for_dir, tau=tau)
             # Cache detached copy for eval / get_direction_map()
+            self._cached_dir_probs = dir_probs.detach()
             self._cached_dir_probs = dir_probs.detach()
             # Keep live (with grad TO SCORER ONLY) for loss computation
             self._live_dir_probs = dir_probs
