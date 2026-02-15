@@ -965,15 +965,21 @@ class RCGNN(nn.Module):
     - V9.2.5 result: ll_agree stayed at 1.000, direction still flipped.
       Root cause: TTUR inner loop (scorer_inner_steps=1) + lambda_dir_leadlag
       (2.0→5.0) in main loss BOTH push logits toward wrong variance labels.
-      L_recon gradient through dir_probs is too diluted (flows through decoder,
-      A, dir_probs, logits) to overcome the direct BCE loss on logits.
+      L_recon gradient through dir_probs is too diluted to overcome direct BCE.
     - FIX: Set lambda_dir_leadlag=0 and scorer_inner_steps=0.
-      Variance initialization provides warm start (~70% correct).
-      Only L_recon drives direction correction for the remaining ~30%.
-      L_dir_entropy (push off 0.5) kept for decisiveness.
+    
+    V9.2.7: Also disable L_dir_entropy and reduce lr_dir_multiplier.
+    - V9.2.6 result: F1(A)=0.2333, direction still flipped through epoch 50.
+      Root cause: L_dir_entropy (2.0→5.0) pushes dir_probs toward 0/1, which
+      locks the variance initialization before L_recon can correct wrong edges.
+      Entropy is direction-agnostic but acts as an init-lock.
+    - FIX: Set lambda_dir_entropy=0 and lr_dir_multiplier=1.0.
+      ONLY L_recon drives direction correction. Variance init provides ~70%
+      correct warm start. L_recon's decoder (A.T @ z_signal) naturally learns
+      correct parent→child direction for reconstruction.
     """
     
-    VERSION = "9.2.6"
+    VERSION = "9.2.7"
     
     @staticmethod
     def to_causal_convention(A: torch.Tensor) -> torch.Tensor:

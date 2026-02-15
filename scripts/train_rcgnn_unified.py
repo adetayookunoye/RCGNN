@@ -395,9 +395,10 @@ DEFAULT_CONFIG = {
     "dir_leadlag_start_epoch": 1, # From the very start
     
     # V9.1: Direction entropy regularizer — pushes d_ij away from 0.5
-    # V9.2.1: Bumped to match lead-lag
-    "lambda_dir_entropy_init": 2.0, # V9.2.1: 0.5→2.0
-    "lambda_dir_entropy_final": 5.0, # V9.2.1: 2.0→5.0
+    # V9.2.7: Disabled — entropy locks variance init by pushing to 0/1 before
+    # L_recon can correct wrong edges. Let L_recon be sole direction signal.
+    "lambda_dir_entropy_init": 0.0, # V9.2.7: 2.0→0 (locks wrong variance init)
+    "lambda_dir_entropy_final": 0.0, # V9.2.7: 5.0→0
     "dir_entropy_start_epoch": 1, # From the very start
     
     # V9.2: TTUR — Two-Time-Scale Update Rule for scorer
@@ -492,7 +493,7 @@ DEFAULT_CONFIG = {
     "dir_decisive_start_epoch": 1, # V8.32: Start from epoch 1
     # V8.33: Separate LR for direction parameter
     # V9.2: Bumped 5→20 (TTUR — scorer needs faster LR to track detached z_signal)
-    "lr_dir_multiplier": 5.0, # V9.2.5: 20→5 (L_recon now flows through dir_probs)
+    "lr_dir_multiplier": 1.0, # V9.2.7: 5→1 (no dedicated dir losses, same LR as rest)
     
     # System
     "device": "auto",
@@ -4120,7 +4121,7 @@ def train(
     # V9.0: Direction comes from EdgeDirectionScorer (MLP), not W_dir parameter.
     # Direction scorer params get a higher LR like the old W_dir did.
     # =========================================================================
-    lr_dir_mult = cfg.get("lr_dir_multiplier", 5.0)  # V9.2.5: 20→5 (L_recon now flows through dir_probs)
+    lr_dir_mult = cfg.get("lr_dir_multiplier", 1.0)  # V9.2.7: 5→1 (no dedicated dir losses)
     lr_base = cfg["lr"]
     lr_dir = lr_base * lr_dir_mult
     
