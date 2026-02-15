@@ -4180,8 +4180,11 @@ def train(
         # =================================================================
         if hasattr(base_model, 'precompute_lead_lag_labels'):
             with torch.no_grad():
+                # train_loader.dataset is TensorDataset(X_train, M_train, e_train)
+                _X_full = train_loader.dataset.tensors[0]  # X_train
+                _M_full = train_loader.dataset.tensors[1]  # M_train
                 base_model.precompute_lead_lag_labels(
-                    X_train.to(device), M_train.to(device)
+                    _X_full.to(device), _M_full.to(device)
                 )
         
         # Set sampler epoch for DDP
