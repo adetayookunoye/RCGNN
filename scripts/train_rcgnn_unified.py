@@ -397,9 +397,14 @@ DEFAULT_CONFIG = {
     # V9.1: Direction entropy regularizer — pushes d_ij away from 0.5
     # V9.2.7: Disabled — entropy locks variance init by pushing to 0/1 before
     # L_recon can correct wrong edges. Let L_recon be sole direction signal.
-    "lambda_dir_entropy_init": 0.0, # V9.2.7: 2.0→0 (locks wrong variance init)
-    "lambda_dir_entropy_final": 0.0, # V9.2.7: 5.0→0
-    "dir_entropy_start_epoch": 1, # From the very start
+    # V9.2.8: RE-ENABLED as delayed masked entropy. Start at E15 (after E1-9
+    # wrong-init phase corrected), ramp over 15 epochs. Applied ONLY to top-K
+    # pairs by undirected magnitude. Proper binary entropy H(p). tau_dir >= 1.0.
+    "lambda_dir_entropy_init": 0.0, # V9.2.8: OFF before start_epoch
+    "lambda_dir_entropy_final": 0.2, # V9.2.8: 0→0.2 (gentle, magnitude-masked)
+    "dir_entropy_start_epoch": 15, # V9.2.8: After direction corrects (E10)
+    "dir_entropy_warmup_epochs": 15, # V9.2.8: Ramp E15→E30 (fully on by PRUNE)
+    "tau_dir_entropy_floor": 1.0, # V9.2.8: Clamp tau_dir >= 1.0 during entropy
     
     # V9.2: TTUR — Two-Time-Scale Update Rule for scorer
     # Scorer sees detached z_signal (stable inputs per step). Needs higher LR
@@ -936,14 +941,17 @@ def get_loss_weights(
     )
     
     # =========================================================================
-    # V9.1: Direction entropy regularizer — push d_ij away from 0.5
+    # V9.1/V9.2.8: Direction entropy regularizer — push d_ij away from 0.5
+    # V9.2.8: Delayed start + warmup ramp. Fully on by start + warmup.
     # =========================================================================
-    dir_ent_init = config.get("lambda_dir_entropy_init", 0.5)
-    dir_ent_final = config.get("lambda_dir_entropy_final", 2.0)
-    dir_ent_start = config.get("dir_entropy_start_epoch", 1)
+    dir_ent_init = config.get("lambda_dir_entropy_init", 0.0)
+    dir_ent_final = config.get("lambda_dir_entropy_final", 0.2)
+    dir_ent_start = config.get("dir_entropy_start_epoch", 15)
+    dir_ent_warmup = config.get("dir_entropy_warmup_epochs", 15)
+    dir_ent_end = dir_ent_start + dir_ent_warmup  # Fully on at start + warmup
     weights["lambda_dir_entropy"] = get_scheduled_weight(
         epoch, total_epochs, dir_ent_init, dir_ent_final,
-        start_epoch=dir_ent_start, end_epoch=total_epochs  # Active throughout
+        start_epoch=dir_ent_start, end_epoch=dir_ent_end
     )
     
     # =========================================================================
@@ -2751,6 +2759,15 @@ def train_epoch(
             peakiness=peakiness, # V8.17: Data-adaptive
         )
     base_model.graph_learner.set_temperature(temperature)
+    
+    # V9.2.8: Set tau_dir floor when entropy is active
+    # Prevents sigmoid saturation from making entropy a hard-argmax too early
+    dir_ent_start_epoch = config.get("dir_entropy_start_epoch", 15)
+    tau_dir_floor = config.get("tau_dir_entropy_floor", 1.0)
+    if epoch >= dir_ent_start_epoch and config.get("lambda_dir_entropy_final", 0.0) > 0:
+        base_model.graph_learner._tau_dir_floor = tau_dir_floor
+    else:
+        base_model.graph_learner._tau_dir_floor = None
     
     # Get loss weights with collapse protection
     # V8.16: Pass frozen_lambda_budget to cap λb after convergence
@@ -4605,7 +4622,7 @@ def train(
                     print(f" | V8.24: L_icp={L_icp_val:.4f}→{weighted_icp:.4f} | "
                           f"L_anticorr={L_anticorr_val:.4f}→{weighted_anticorr:.4f}")
                 
-                # V9.1/V9.2: Show lead-lag direction + entropy diagnostics
+                # V9.1/V9.2/V9.2.8: Show lead-lag direction + entropy diagnostics
                 L_dir_ll = train_metrics.get("L_dir_leadlag", 0)
                 L_dir_ent = train_metrics.get("L_dir_entropy", 0)
                 lambda_ll = train_metrics.get("lambda_dir_leadlag", 0)
@@ -4613,7 +4630,7 @@ def train(
                 ll_agree = train_metrics.get("leadlag_agreement", 0)
                 ll_signal = train_metrics.get("leadlag_signal_mean", 0)
                 if lambda_ll > 0 or lambda_ent > 0:
-                    print(f" | V9.2 TTUR: L_ll={L_dir_ll:.4f}→{lambda_ll*L_dir_ll:.4f} | "
+                    print(f" | V9.2.8: L_ll={L_dir_ll:.4f}→{lambda_ll*L_dir_ll:.4f} | "
                           f"L_ent={L_dir_ent:.4f}→{lambda_ent*L_dir_ent:.4f} | "
                           f"ll_agree={ll_agree:.3f} ll_signal={ll_signal:.4f}")
                 

@@ -408,7 +408,11 @@ class CausalGraphLearner(nn.Module):
         
         Antisymmetric by construction:
             antisym_logit[i,j] = dir_edge_logit[i,j] - dir_edge_logit[j,i]
-            dir_probs[i,j] = sigmoid(antisym_logit[i,j] / tau)
+            dir_probs[i,j] = sigmoid(antisym_logit[i,j] / tau_dir)
+            
+        V9.2.8: tau_dir = max(tau, tau_dir_floor) when entropy is active.
+        This prevents sigmoid saturation from making entropy a hard-argmax
+        too early, which could destabilize direction learning.
             
         GUARANTEED: dir_probs[i,j] + dir_probs[j,i] = 1
         
@@ -416,8 +420,11 @@ class CausalGraphLearner(nn.Module):
             dir_probs: [d, d] direction probabilities with grad to dir_edge_logit
         """
         d = self.d
+        # V9.2.8: Clamp tau_dir to floor when entropy is active
+        tau_dir_floor = getattr(self, '_tau_dir_floor', None)
+        tau_dir = max(tau, tau_dir_floor) if tau_dir_floor is not None else tau
         antisym = self.dir_edge_logit - self.dir_edge_logit.T
-        dir_probs = torch.sigmoid(antisym / tau)
+        dir_probs = torch.sigmoid(antisym / tau_dir)
         dir_probs = dir_probs * (1 - torch.eye(d, device=dir_probs.device))
         return dir_probs
     
@@ -977,9 +984,22 @@ class RCGNN(nn.Module):
       ONLY L_recon drives direction correction. Variance init provides ~70%
       correct warm start. L_recon's decoder (A.T @ z_signal) naturally learns
       correct parent→child direction for reconstruction.
+    
+    V9.2.8: Delayed masked entropy — commit direction after L_recon has corrected.
+    - V9.2.7 result: Direction CORRECT E10–72 (100%), but bidir=0.167 frozen
+      from E50 (5 ambiguous pairs never commit). Direction degrades E78+ when
+      REFINE reduces LR → logits drift back toward 0.5.
+    - FIX: Re-enable entropy as DELAYED MASKED loss:
+      (a) Start at epoch 15 (after E1–9 wrong-init phase is corrected)
+      (b) Ramp λ over 15 epochs (fully on by E30, before PRUNE at E34)
+      (c) Apply ONLY to top-K pairs by undirected magnitude (not A),
+          so entropy doesn't invent directions on non-edges
+      (d) Use proper binary entropy: H(p) = -p log(p+ε) - (1-p) log(1-p+ε)
+      (e) Clamp tau_dir ≥ 1.0 during entropy to prevent hard-argmax instability
+    - Lead-lag and TTUR stay OFF (V9.2.6/7 wins preserved).
     """
     
-    VERSION = "9.2.7"
+    VERSION = "9.2.8"
     
     @staticmethod
     def to_causal_convention(A: torch.Tensor) -> torch.Tensor:
@@ -1435,35 +1455,45 @@ class RCGNN(nn.Module):
     def compute_direction_entropy_loss(
         self,
         dir_probs: Optional[torch.Tensor] = None,
-        topk_mask: Optional[torch.Tensor] = None,
+        mag_mask_pairs: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
-        V9.1: Entropy regularizer to push direction away from 0.5.
+        V9.2.8: Masked binary entropy to push direction probs toward 0 or 1.
         
-        L_ent = E[d_ij * (1 - d_ij)] over active edges.
-        Minimized when d_ij ∈ {0, 1}, maximized at d_ij = 0.5.
+        Proper binary entropy (not quadratic approximation):
+            H(p) = -p log(p+ε) - (1-p) log(1-p+ε)
+        Minimized at p ∈ {0, 1}, maximized at p = 0.5.
         
-        This is SECONDARY to lead-lag loss — prevents lazy equilibrium
-        but doesn't choose direction.
+        Applied ONLY to top-K pairs by undirected magnitude (detached mask),
+        so entropy doesn't invent directions on non-edges.
+        Only upper-triangle pairs (i<j) to avoid double-counting.
+        
+        Args:
+            dir_probs: [d, d] direction probabilities (live, with grad)
+            mag_mask_pairs: [d, d] binary mask of selected pairs (i<j only,
+                           upper triangle). Detached from magnitude computation.
         """
         if dir_probs is None:
             dir_probs = self.graph_learner.get_direction_map()
         
         d = dir_probs.shape[0]
         device = dir_probs.device
-        diag_mask = 1 - torch.eye(d, device=device)
+        eps = 1e-8
         
-        if topk_mask is not None:
-            mask = diag_mask * topk_mask.detach()
-        else:
-            mask = diag_mask
-        
-        # Only upper triangle (d_ij and d_ji are redundant)
+        # Upper triangle only (i<j) — d_ij and d_ji are redundant
         upper = torch.triu(torch.ones(d, d, device=device), diagonal=1)
-        mask = mask * upper
         
-        entropy = dir_probs * (1 - dir_probs)
-        L_ent = (entropy * mask).sum() / (mask.sum() + 1e-8)
+        if mag_mask_pairs is not None:
+            mask = mag_mask_pairs.detach() * upper
+        else:
+            # Fallback: all off-diagonal upper pairs
+            mask = upper
+        
+        # Proper binary entropy: H(p) = -p log(p+ε) - (1-p) log(1-p+ε)
+        p = dir_probs
+        H = -(p * torch.log(p + eps) + (1 - p) * torch.log(1 - p + eps))
+        
+        L_ent = (H * mask).sum() / (mask.sum() + eps)
         
         return L_ent
     
@@ -1924,18 +1954,28 @@ class RCGNN(nn.Module):
             if dir_probs_ent is None:
                 dir_probs_ent = self.graph_learner._cached_dir_probs
             
-            topk_binary_ent = torch.zeros(self.d, self.d, device=device)
-            if A_flat.numel() > target_k:
-                topk_r_e = topk_idx // self.d
-                topk_c_e = topk_idx % self.d
-                topk_binary_ent[topk_r_e, topk_c_e] = 1.0
-                topk_sym_ent = torch.maximum(topk_binary_ent, topk_binary_ent.T)
-            else:
-                topk_sym_ent = None
+            # V9.2.8: Select top-K PAIRS by undirected magnitude (not from A).
+            # This ensures entropy only touches pairs the model believes are edges
+            # by magnitude alone, avoiding direction-on-non-edges artifacts.
+            Wm_ent = self.graph_learner._get_sym_mag()
+            mag_ent = torch.sigmoid(Wm_ent).detach()  # [d,d] symmetric, detach mask
+            # Undirected pair magnitude: max(m_ij, m_ji) — symmetric so same
+            m_pair = mag_ent  # Already symmetric from _get_sym_mag
+            # Extract upper triangle values for pair selection
+            upper_mask = torch.triu(torch.ones(self.d, self.d, device=device), diagonal=1)
+            m_pair_ut = (m_pair * upper_mask).flatten()
+            # Select top K_pairs = 1.2 * target_k pairs by magnitude
+            K_pairs = int(1.2 * target_k)
+            K_pairs = min(K_pairs, int(upper_mask.sum().item()))
+            _, topk_pair_idx = torch.topk(m_pair_ut, K_pairs)
+            # Build binary mask [d,d] with 1s at selected (i<j) positions
+            mag_mask = torch.zeros(self.d * self.d, device=device)
+            mag_mask[topk_pair_idx] = 1.0
+            mag_mask = mag_mask.view(self.d, self.d)  # Upper triangle only
             
             L_dir_entropy = self.compute_direction_entropy_loss(
                 dir_probs=dir_probs_ent,
-                topk_mask=topk_sym_ent,
+                mag_mask_pairs=mag_mask,
             )
         
         loss = (
