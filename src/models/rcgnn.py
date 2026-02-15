@@ -1011,9 +1011,22 @@ class RCGNN(nn.Module):
     - FIX B: Freeze dir_edge_logit in REFINE (requires_grad_(False)).
       V9.2.8 showed streak_bad=110 in REFINE — low LR causes drift.
     - Keep entropy as polish (λ=0.2). Lead-lag/TTUR stay OFF.
+    
+    V9.2.10: Aggressive pre-REFINE margin + disable direction losses in REFINE.
+    - V9.2.9 result: Margin worked during DISC/PRUNE (stuck=2.7→0.0) but 1 pair
+      re-stuck by PRUNE end. In REFINE, logits frozen → margin can't fix it →
+      L_margin=0.4999 every epoch (wasted gradient), streak_bad=110.
+    - FIX A: Stronger margin pre-REFINE to clear all pairs before freeze:
+      m=0.5→1.0 (needs |g|≥1.0 for sigmoid(1/τ)≈0.73, clear asymmetry),
+      eps=0.05→0.15 (wider stuck definition catches near-stuck pairs early),
+      λ_max=0.5→1.0 (stronger gradient signal).
+    - FIX B: Disable margin AND entropy in REFINE (lambda=0 when stage=REFINE).
+      Logits are frozen anyway — direction losses just waste gradient budget.
+      Also disable tau_dir floor in REFINE (no direction losses to protect).
+    - Freeze + zero-loss = perfectly clean REFINE: skeleton recon only.
     """
     
-    VERSION = "9.2.9"
+    VERSION = "9.2.10"
     
     @staticmethod
     def to_causal_convention(A: torch.Tensor) -> torch.Tensor:
@@ -2001,8 +2014,8 @@ class RCGNN(nn.Module):
         lambda_dir_leadlag = loss_weights.get("lambda_dir_leadlag", 0.5) if loss_weights else 0.5
         lambda_dir_entropy = loss_weights.get("lambda_dir_entropy", 1.0) if loss_weights else 1.0
         lambda_dir_margin = loss_weights.get("lambda_dir_margin", 0.0) if loss_weights else 0.0
-        dir_margin_m = loss_weights.get("dir_margin_m", 0.5) if loss_weights else 0.5
-        dir_margin_eps = loss_weights.get("dir_margin_eps", 0.05) if loss_weights else 0.05
+        dir_margin_m = loss_weights.get("dir_margin_m", 1.0) if loss_weights else 1.0  # V9.2.10: 0.5→1.0
+        dir_margin_eps = loss_weights.get("dir_margin_eps", 0.15) if loss_weights else 0.15  # V9.2.10: 0.05→0.15
         
         L_dir_leadlag = torch.tensor(0.0, device=device)
         L_dir_entropy = torch.tensor(0.0, device=device)

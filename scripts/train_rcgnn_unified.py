@@ -408,12 +408,13 @@ DEFAULT_CONFIG = {
     
     # V9.2.9: Logit-margin loss for stuck pairs (|g_ij| < eps → zero entropy grad)
     # Hinge loss max(0, m - |g_ij|) gives constant gradient at g≈0.
+    # V9.2.10: Stronger pre-REFINE margin to clear ALL stuck pairs before freeze.
     "lambda_dir_margin_init": 0.0, # OFF before start_epoch
-    "lambda_dir_margin_final": 0.5, # 0→0.5 (stronger than entropy for stuck pairs)
+    "lambda_dir_margin_final": 1.0, # V9.2.10: 0.5→1.0 (aggressive clearing)
     "dir_margin_start_epoch": 15, # After direction corrects (E10)
     "dir_margin_warmup_epochs": 10, # Ramp E15→E25
-    "dir_margin_m": 0.5, # Target logit separation |g_ij| >= m
-    "dir_margin_eps": 0.05, # Stuck pair threshold: |g_ij| < eps
+    "dir_margin_m": 1.0, # V9.2.10: 0.5→1.0 (|g|≥1.0 → sig(1/τ)≈0.73)
+    "dir_margin_eps": 0.15, # V9.2.10: 0.05→0.15 (wider stuck detection)
     
     # V9.2.9: Freeze direction logits in REFINE to prevent drift
     "refine_freeze_dir_logit": True, # requires_grad_(False) at PRUNE→REFINE
@@ -955,32 +956,48 @@ def get_loss_weights(
     # =========================================================================
     # V9.1/V9.2.8: Direction entropy regularizer — push d_ij away from 0.5
     # V9.2.8: Delayed start + warmup ramp. Fully on by start + warmup.
+    # V9.2.10: Disabled in REFINE (logits frozen, wasted gradient).
     # =========================================================================
     dir_ent_init = config.get("lambda_dir_entropy_init", 0.0)
     dir_ent_final = config.get("lambda_dir_entropy_final", 0.2)
     dir_ent_start = config.get("dir_entropy_start_epoch", 15)
     dir_ent_warmup = config.get("dir_entropy_warmup_epochs", 15)
     dir_ent_end = dir_ent_start + dir_ent_warmup  # Fully on at start + warmup
-    weights["lambda_dir_entropy"] = get_scheduled_weight(
-        epoch, total_epochs, dir_ent_init, dir_ent_final,
-        start_epoch=dir_ent_start, end_epoch=dir_ent_end
-    )
+    
+    # V9.2.10: Compute REFINE boundary to kill direction losses
+    stage2_end_frac = config.get("stage2_end", 0.70)
+    refine_start_ep = int(stage2_end_frac * total_epochs) + 1  # First REFINE epoch
+    in_refine = epoch >= refine_start_ep
+    
+    if in_refine and config.get("refine_freeze_dir_logit", True):
+        # V9.2.10: Logits frozen in REFINE → direction losses produce zero useful grad
+        weights["lambda_dir_entropy"] = 0.0
+    else:
+        weights["lambda_dir_entropy"] = get_scheduled_weight(
+            epoch, total_epochs, dir_ent_init, dir_ent_final,
+            start_epoch=dir_ent_start, end_epoch=dir_ent_end
+        )
     
     # =========================================================================
     # V9.2.9: Direction margin loss — hinge on antisym logits for stuck pairs
+    # V9.2.10: Disabled in REFINE (logits frozen, margin can't fix stuck pairs).
     # =========================================================================
     dir_mgn_init = config.get("lambda_dir_margin_init", 0.0)
-    dir_mgn_final = config.get("lambda_dir_margin_final", 0.5)
+    dir_mgn_final = config.get("lambda_dir_margin_final", 1.0)
     dir_mgn_start = config.get("dir_margin_start_epoch", 15)
     dir_mgn_warmup = config.get("dir_margin_warmup_epochs", 10)
     dir_mgn_end = dir_mgn_start + dir_mgn_warmup
-    weights["lambda_dir_margin"] = get_scheduled_weight(
-        epoch, total_epochs, dir_mgn_init, dir_mgn_final,
-        start_epoch=dir_mgn_start, end_epoch=dir_mgn_end
-    )
+    if in_refine and config.get("refine_freeze_dir_logit", True):
+        # V9.2.10: Logits frozen → margin loss = wasted gradient
+        weights["lambda_dir_margin"] = 0.0
+    else:
+        weights["lambda_dir_margin"] = get_scheduled_weight(
+            epoch, total_epochs, dir_mgn_init, dir_mgn_final,
+            start_epoch=dir_mgn_start, end_epoch=dir_mgn_end
+        )
     # Pass through margin hyper-params so compute_loss can read them
-    weights["dir_margin_m"] = config.get("dir_margin_m", 0.5)
-    weights["dir_margin_eps"] = config.get("dir_margin_eps", 0.05)
+    weights["dir_margin_m"] = config.get("dir_margin_m", 1.0)  # V9.2.10: 0.5→1.0
+    weights["dir_margin_eps"] = config.get("dir_margin_eps", 0.15)  # V9.2.10: 0.05→0.15
     
     # =========================================================================
     # V8.22: Pass through causal/recon/inv weights (config overrides model defaults)
@@ -2788,14 +2805,22 @@ def train_epoch(
         )
     base_model.graph_learner.set_temperature(temperature)
     
-    # V9.2.8/V9.2.9: Set tau_dir floor when entropy or margin is active
+    # V9.2.8/V9.2.9/V9.2.10: Set tau_dir floor when entropy or margin is active
     # Prevents sigmoid saturation from making entropy a hard-argmax too early
+    # V9.2.10: Disabled in REFINE (no direction losses → no need for floor)
     dir_ent_start_epoch = config.get("dir_entropy_start_epoch", 15)
     dir_mgn_start_epoch = config.get("dir_margin_start_epoch", 15)
     tau_dir_floor = config.get("tau_dir_entropy_floor", 1.0)
+    
+    # V9.2.10: Compute REFINE boundary
+    stage2_end_frac_tau = config.get("stage2_end", 0.70)
+    refine_start_ep_tau = int(stage2_end_frac_tau * total_epochs) + 1
+    in_refine_tau = epoch >= refine_start_ep_tau
+    
     entropy_active = epoch >= dir_ent_start_epoch and config.get("lambda_dir_entropy_final", 0.0) > 0
     margin_active = epoch >= dir_mgn_start_epoch and config.get("lambda_dir_margin_final", 0.0) > 0
-    if entropy_active or margin_active:
+    if (entropy_active or margin_active) and not in_refine_tau:
+        # V9.2.10: Only set floor outside REFINE
         base_model.graph_learner._tau_dir_floor = tau_dir_floor
     else:
         base_model.graph_learner._tau_dir_floor = None
@@ -4663,16 +4688,18 @@ def train(
                 ll_agree = train_metrics.get("leadlag_agreement", 0)
                 ll_signal = train_metrics.get("leadlag_signal_mean", 0)
                 if lambda_ll > 0 or lambda_ent > 0 or lambda_mgn > 0:
-                    print(f" | V9.2 TTUR: L_ll={L_dir_ll:.4f}→{lambda_ll*L_dir_ll:.4f} | "
+                    print(f" | V9.2.10 TTUR: L_ll={L_dir_ll:.4f}→{lambda_ll*L_dir_ll:.4f} | "
                           f"L_ent={L_dir_ent:.4f}→{lambda_ent*L_dir_ent:.4f} | "
                           f"ll_agree={ll_agree:.3f} ll_signal={ll_signal:.4f}")
-                    # V9.2.9: Log margin loss and stuck pairs
+                    # V9.2.9/V9.2.10: Log margin loss and stuck pairs
                     if lambda_mgn > 0:
                         stuck_n = train_metrics.get("stuck_pairs", 0)
                         masked_n = train_metrics.get("masked_pairs", 0)
                         min_abs_g = train_metrics.get("min_abs_g_masked", 0)
-                        print(f" | V9.2.9: L_margin={L_dir_mgn:.4f}→{lambda_mgn*L_dir_mgn:.4f} | "
+                        print(f" | V9.2.10: L_margin={L_dir_mgn:.4f}→{lambda_mgn*L_dir_mgn:.4f} | "
                               f"stuck={stuck_n}/{masked_n} min_|g|={min_abs_g:.4f}")
+                elif stage == "3:REFINE":
+                    print(f" | V9.2.10: margin+entropy OFF in REFINE (logits frozen)")
                 
                 # ===============================================================
                 # DIAGNOSTIC: Show transpose and skeleton F1 to detect direction issues
@@ -5008,7 +5035,8 @@ def train(
                     if hasattr(base_model.graph_learner, 'dir_edge_logit'):
                         base_model.graph_learner.dir_edge_logit.requires_grad_(False)
                         if is_main_process() and not sweep_mode:
-                            print(f" | [V9.2.9] dir_edge_logit.requires_grad_(False) — direction FROZEN in REFINE")
+                            print(f" | [V9.2.10] dir_edge_logit.requires_grad_(False) — direction FROZEN in REFINE")
+                            print(f" | [V9.2.10] entropy+margin losses DISABLED in REFINE (logits frozen)")
                 
                 # V9.0: LR boost for direction scorer in early REFINE
                 refine_lr_boost = cfg.get("refine_dir_lr_boost", 5.0)
@@ -5375,7 +5403,9 @@ def train(
                         print(f" |   Edge swaps: DISABLED")
                         print(f" |   Dir losses: MASKED to E_frozen only")
                         dir_frozen_msg = "FROZEN" if cfg.get('refine_freeze_dir_logit', True) else "LEARNING"
-                        print(f" |   dir_edge_logit: {dir_frozen_msg} (V9.2.9)")
+                        print(f" |   dir_edge_logit: {dir_frozen_msg} (V9.2.10)")
+                        if dir_frozen_msg == "FROZEN":
+                            print(f" |   entropy+margin: OFF (V9.2.10 — no wasted gradient)")
                         print(f" |   LR boost: ×{cfg.get('refine_dir_lr_boost', 5.0)} for {cfg.get('refine_dir_lr_boost_epochs', 10)} epochs (direction scorer)")
             patience_counter = 0  # fresh start for new stage
             prev_stage = cur_stage
