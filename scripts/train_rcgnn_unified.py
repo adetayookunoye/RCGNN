@@ -3907,6 +3907,12 @@ def train(
     n_regimes = len(torch.unique(data["e"]))
     A_true = data.get("A_true", None)
     
+    # A10 ablation: force single regime (ignore per-env structure deltas)
+    if cfg.get("force_single_regime", False):
+        n_regimes = 1
+        if is_main_process() and not sweep_mode:
+            print("[ABLATION A10] Forcing n_regimes=1 (single shared adjacency, no env deltas)")
+    
     # Adjust target edges if A_true available
     if A_true is not None and cfg["target_edges"] == 13:
         cfg["target_edges"] = int(A_true.sum())
@@ -5641,6 +5647,38 @@ def parse_args():
     parser.add_argument("--oracle_direction_supervision", action="store_true",
                         help="Allow using ground truth graph for direction supervision (ORACLE ONLY)")
 
+    # =========================================================================
+    # Ablation toggles (disable specific components for ablation study)
+    # Each flag sets the corresponding config key to False/0/disabled.
+    # These map to ablations A1–A10 in eval/ablations.md.
+    # =========================================================================
+    # A1: 3-stage schedule (DISC→PRUNE→REFINE)
+    parser.add_argument("--no_two_stage", action="store_true",
+                        help="A1: Disable 2-stage skeleton→direction training (flat schedule)")
+    # A2/A3/A4: Encoder disabling (signal/noise/bias handled via config overrides)
+    # These set use_presence_loss, use_coverage_loss etc. to False to simplify
+    parser.add_argument("--no_presence_loss", action="store_true",
+                        help="Disable presence loss (BCE on edge presence)")
+    parser.add_argument("--no_cousin_penalty", action="store_true",
+                        help="Disable cousin penalty (anti-confounding)")
+    parser.add_argument("--no_coverage_loss", action="store_true",
+                        help="Disable coverage loss (prevent hub collapse)")
+    parser.add_argument("--no_exclusivity_loss", action="store_true",
+                        help="Disable exclusivity loss (A_ij * A_ji penalty)")
+    # A5: Direction learning phase
+    parser.add_argument("--no_direction", action="store_true",
+                        help="A5: Disable direction learning (skeleton only, no REFINE)")
+    # A7: DAG penalty (lambda_sparse controls sparsity; this is separate)
+    parser.add_argument("--no_nontopk_suppression", action="store_true",
+                        help="Disable non-TopK suppression loss")
+    parser.add_argument("--no_direction_margin", action="store_true",
+                        help="Disable direction margin loss")
+    parser.add_argument("--no_asymmetry_loss", action="store_true",
+                        help="Disable asymmetry loss")
+    # A10: Multi-regime — force single regime (ignore environment deltas)
+    parser.add_argument("--force_single_regime", action="store_true",
+                        help="A10: Force n_regimes=1 (no per-environment structure)")
+
     # System
     parser.add_argument("--device", type=str, default="auto",
                         choices=["auto", "cpu", "cuda", "cuda:0", "cuda:1"])
@@ -5660,11 +5698,43 @@ def main():
     
     # Build config from args
     config = {k: v for k, v in vars(args).items() 
-              if k not in ["data_dir", "output_dir", "ddp", "use_groupdro", "sweep_mode"]}
+              if k not in ["data_dir", "output_dir", "ddp", "use_groupdro", "sweep_mode",
+                           "no_two_stage", "no_presence_loss", "no_cousin_penalty",
+                           "no_coverage_loss", "no_exclusivity_loss", "no_direction",
+                           "no_nontopk_suppression", "no_direction_margin",
+                           "no_asymmetry_loss", "force_single_regime"]}
     
     # Map lambda_sparse to lambda_sparse_final for the new schedule
     if "lambda_sparse" in config:
         config["lambda_sparse_final"] = config["lambda_sparse"]
+    
+    # =========================================================================
+    # Apply ablation toggles (CLI flags → config overrides)
+    # =========================================================================
+    if args.no_two_stage:
+        config["two_stage_training"] = False
+        config["stage1_end"] = 0.0
+        config["stage2_end"] = 1.0  # No REFINE phase
+    if args.no_presence_loss:
+        config["use_presence_loss"] = False
+    if args.no_cousin_penalty:
+        config["use_cousin_penalty"] = False
+    if args.no_coverage_loss:
+        config["use_coverage_loss"] = False
+    if args.no_exclusivity_loss:
+        config["use_exclusivity_loss"] = False
+    if args.no_direction:
+        config["stage2_end"] = 1.0  # Skip REFINE entirely
+        config["use_direction_margin"] = False
+        config["use_asymmetry_loss"] = False
+    if args.no_nontopk_suppression:
+        config["use_nontopk_suppression"] = False
+    if args.no_direction_margin:
+        config["use_direction_margin"] = False
+    if args.no_asymmetry_loss:
+        config["use_asymmetry_loss"] = False
+    if args.force_single_regime:
+        config["force_single_regime"] = True
     
     # Train
     results = train(

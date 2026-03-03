@@ -86,16 +86,21 @@ coverage.xml
 
 # Directories to exclude from version control
 paper/
-artifacts_old/
-artifacts_previous/
-artifacts_using/
-docs/
 reports/
+artifacts/
+artifacts_old/
+artifacts_using/
+artifacts_using_2/
+artifacts_using_3/
+artiiiifacts___/
 logs/
 
 # Large artifact files
-artifacts/unified_v8*/
-artifacts/*.log
-artifacts/*.png
-artifacts/*.csv
+*.pt
+*.pth
+*.npy
+*.log
+*.png
+*.csv
+*.json.gz
 artifacts/*.txt

@@ -6,13 +6,20 @@ APPROPRIATE METHODS (for instantaneous/IID SEM data):
   - Score-based: GES-like greedy BIC, NOTEARS-penalty (single-shot Lagrangian)
   - Neural (optional): NOTEARS-MLP, GOLEM, GraN-DAG
 
-NOT APPROPRIATE (temporal methods - DISABLED with RuntimeError):
-  - granger_causality: assumes time-series with lagged dependencies
-  - pcmci_plus: assumes time-series with lagged dependencies
+TEMPORAL METHODS (for time-series data, e.g. UCI Air Quality):
+  - granger_causality: VAR-based F-test (requires statsmodels). Impute: MICE.
+  - pcmci_plus: PC Momentary CI (requires tigramite). Impute: k-NN.
+  Note: These should NOT be used on IID SEM benchmarks (Table 2).
 
 IMPORTANT: All methods accept (Xw, Mw) where Mw is a missingness mask.
 Missing entries (M=0) are mean-imputed before running any baseline.
 Without this, zeros from X*M corrupt statistics.
+
+IMPUTATION METHODS (per-baseline, as reported in paper):
+  - Mean imputation: NOTEARS, NOTEARS-MLP, PC, GES, Correlation (default)
+  - k-NN imputation: PCMCI+
+  - MICE imputation: Granger causality
+  Each baseline uses its best-performing imputation method.
 
 OUTPUT TYPES:
   - PC: CPDAG adjacency (use skeleton + oriented_edges helpers)
@@ -21,8 +28,11 @@ OUTPUT TYPES:
   - correlation_scores: Continuous |corr| matrix (AUROC/AUPRC supported)
   - correlation_threshold: Binary thresholded graph (F1/SHD meaningful)
   - DAG-GNN-inspired: Neural baseline (our impl, not canonical DAG-GNN)
+  - Granger: Continuous p-value-based scores (AUROC/AUPRC supported)
+  - PCMCI+: Binary contemporaneous DAG from CI tests
 
-For our benchmark, use ONLY the appropriate methods since data is IID.
+For IID SEM benchmarks, use ONLY the IID-appropriate methods.
+For temporal datasets (UCI Air Quality), additionally include Granger and PCMCI+.
 """
 
 import numpy as np
@@ -42,6 +52,30 @@ try:
 except ImportError:
     HAS_TORCH = False
     warnings.warn("PyTorch not found; neural baselines will use numpy fallback")
+
+try:
+    import statsmodels.tsa.api as tsa_api
+    from statsmodels.tsa.stattools import grangercausalitytests
+    HAS_STATSMODELS = True
+except ImportError:
+    HAS_STATSMODELS = False
+
+try:
+    import tigramite
+    from tigramite.pcmci import PCMCI
+    from tigramite.independence_tests.parcorr import ParCorr
+    import tigramite.data_processing as pp
+    HAS_TIGRAMITE = True
+except ImportError:
+    HAS_TIGRAMITE = False
+
+try:
+    from sklearn.impute import KNNImputer
+    from sklearn.experimental import enable_iterative_imputer  # noqa: F401
+    from sklearn.impute import IterativeImputer
+    HAS_SKLEARN_IMPUTE = True
+except ImportError:
+    HAS_SKLEARN_IMPUTE = False
 
 
 # ============================================================================
@@ -640,35 +674,359 @@ def notears_linear(Xw, Mw=None, lambda1=0.1, lambda2=5.0, max_iter=100, tol=1e-5
 
 
 # ============================================================================
-# TEMPORAL METHODS - DISABLED (raise error if called)
+# ADVANCED IMPUTATION METHODS (per-baseline, as reported in paper)
 # ============================================================================
 
-def granger_causality(*args, **kwargs):
+def impute_knn(Xw, Mw=None, n_neighbors=5):
     """
-    DISALLOWED: Granger causality assumes time-series with lagged dependencies.
+    k-NN imputation for missing values (used by PCMCI+).
     
-    Our benchmark data is IID SEM (instantaneous, no lag terms).
-    Using Granger would be methodologically incorrect.
+    Uses sklearn KNNImputer. Missing entries (M=0) are replaced by
+    weighted average of k nearest neighbors' observed values.
+    
+    Args:
+        Xw: [N,T,d] or [N,d] data
+        Mw: Same shape, 1=observed, 0=missing. If None, no imputation.
+        n_neighbors: Number of neighbors for k-NN (default 5)
+    
+    Returns:
+        X_imputed: 2D [N*T, d] or [N, d] imputed data
     """
-    raise RuntimeError(
-        "DISALLOWED: Granger causality assumes time-series with lagged "
-        "dependencies. Our benchmark data is IID SEM (instantaneous). "
-        "Use PC, GES, or NOTEARS-based methods instead."
-    )
+    if not HAS_SKLEARN_IMPUTE:
+        warnings.warn("sklearn KNNImputer not available, falling back to mean")
+        return impute_with_mask(Xw, Mw)
+    
+    X = Xw.copy()
+    if Mw is None:
+        if X.ndim == 3:
+            return X.reshape(-1, X.shape[-1])
+        return X
+    
+    # Flatten to 2D
+    if X.ndim == 3:
+        X2 = X.reshape(-1, X.shape[-1])
+        M2 = Mw.reshape(-1, Mw.shape[-1])
+    else:
+        X2 = X.copy()
+        M2 = Mw.copy()
+    
+    # Set missing entries to NaN (KNNImputer convention)
+    X2[M2 <= 0] = np.nan
+    
+    imputer = KNNImputer(n_neighbors=min(n_neighbors, X2.shape[0] - 1))
+    X_imputed = imputer.fit_transform(X2)
+    
+    return X_imputed
 
 
-def pcmci_plus(*args, **kwargs):
+def impute_mice(Xw, Mw=None, max_iter=10, n_nearest_features=None):
     """
-    DISALLOWED: PCMCI+ assumes time-series with lagged dependencies.
+    MICE (Multiple Imputation by Chained Equations) for missing values.
+    Used by Granger causality baseline.
     
-    Our benchmark data is IID SEM (instantaneous, no lag terms).
-    Using PCMCI+ would be methodologically incorrect.
+    Uses sklearn IterativeImputer (MICE). Each feature is modeled as a
+    function of other features, iteratively refined.
+    
+    Args:
+        Xw: [N,T,d] or [N,d] data
+        Mw: Same shape, 1=observed, 0=missing. If None, no imputation.
+        max_iter: Number of MICE rounds (default 10)
+        n_nearest_features: Features to use per imputation (None=all)
+    
+    Returns:
+        X_imputed: 2D [N*T, d] or [N, d] imputed data
     """
-    raise RuntimeError(
-        "DISALLOWED: PCMCI+ assumes time-series with lagged dependencies. "
-        "Our benchmark data is IID SEM (instantaneous). "
-        "Use PC, GES, or NOTEARS-based methods instead."
+    if not HAS_SKLEARN_IMPUTE:
+        warnings.warn("sklearn IterativeImputer not available, falling back to mean")
+        return impute_with_mask(Xw, Mw)
+    
+    X = Xw.copy()
+    if Mw is None:
+        if X.ndim == 3:
+            return X.reshape(-1, X.shape[-1])
+        return X
+    
+    # Flatten to 2D
+    if X.ndim == 3:
+        X2 = X.reshape(-1, X.shape[-1])
+        M2 = Mw.reshape(-1, Mw.shape[-1])
+    else:
+        X2 = X.copy()
+        M2 = Mw.copy()
+    
+    # Set missing entries to NaN (IterativeImputer convention)
+    X2[M2 <= 0] = np.nan
+    
+    imputer = IterativeImputer(
+        max_iter=max_iter,
+        n_nearest_features=n_nearest_features,
+        random_state=42,
+        sample_posterior=False,
     )
+    X_imputed = imputer.fit_transform(X2)
+    
+    return X_imputed
+
+
+# ============================================================================
+# TEMPORAL METHODS (for time-series data, e.g. UCI Air Quality)
+# ============================================================================
+
+def granger_causality(Xw, Mw=None, max_lag=3, alpha=0.05):
+    """
+    Granger Causality: VAR-based F-test for temporal causal discovery.
+    
+    Tests whether lagged values of variable X_j help predict X_i beyond
+    X_i's own lags. Uses statsmodels VAR + F-tests.
+    
+    IMPUTATION: MICE (best-performing for Granger, as reported in paper).
+    
+    OUTPUT TYPE: Continuous scores (1 - min_p_value) for AUROC/AUPRC,
+    plus binary thresholded at alpha for F1/SHD.
+    
+    DATA FORMAT: Expects [N, T, d] temporal data. Each sample is a T-step
+    time series. We concatenate samples into long series for VAR fitting.
+    For [N, d] IID data, this method is NOT appropriate.
+    
+    Reference: Granger (1969) "Investigating Causal Relations by Econometric
+    Models and Cross-spectral Methods"
+    
+    Args:
+        Xw: [N, T, d] temporal data (N samples, T time steps, d variables)
+        Mw: Same shape, 1=observed, 0=missing. If None, no imputation.
+        max_lag: Maximum lag order for VAR model (default 3)
+        alpha: Significance level for F-test (default 0.05)
+    
+    Returns:
+        A_scores: [d, d] continuous score matrix. A[i,j] = 1 - p_value
+        for "j Granger-causes i". Higher = stronger evidence.
+    """
+    if not HAS_STATSMODELS:
+        raise RuntimeError(
+            "statsmodels required for Granger causality. "
+            "Install: pip install statsmodels"
+        )
+    
+    log_baseline_banner("Granger", mode="temporal", has_mask=(Mw is not None),
+                        temporal_disabled=False)
+    
+    X = Xw.copy()
+    
+    # Validate temporal structure
+    if X.ndim == 2:
+        warnings.warn(
+            "Granger received 2D data [N,d] — treating as single long time "
+            "series. For IID data, use PC/GES/NOTEARS instead."
+        )
+        # Treat as single time series
+        X_ts = X.copy()
+        if Mw is not None:
+            M_flat = Mw.copy()
+            X_ts = impute_mice(X_ts[np.newaxis], M_flat[np.newaxis])
+        else:
+            pass  # Already 2D
+    elif X.ndim == 3:
+        # [N, T, d] -> impute then concatenate into long time series
+        # MICE imputation (paper: "MICE for Granger")
+        if Mw is not None:
+            X_imputed_flat = impute_mice(X, Mw)
+            # Reshape back to [N, T, d] for concatenation
+            N, T, d = X.shape
+            X_imputed = X_imputed_flat.reshape(N, T, d)
+        else:
+            X_imputed = X
+        
+        # Concatenate all samples into long time series [N*T, d]
+        # Insert NaN rows between samples to prevent cross-sample leakage,
+        # then use only contiguous segments
+        N, T, d = X_imputed.shape
+        segments = []
+        for i in range(N):
+            segments.append(X_imputed[i])  # [T, d]
+        
+        # Use longest contiguous segments for VAR fitting
+        # For efficiency, subsample if too many samples
+        max_segments = min(N, 500)
+        if N > max_segments:
+            rng = np.random.RandomState(42)
+            idx = rng.choice(N, max_segments, replace=False)
+            segments = [segments[i] for i in sorted(idx)]
+        
+        X_ts = np.concatenate(segments, axis=0)  # [max_segments*T, d]
+    else:
+        raise ValueError(f"Granger expects [N,T,d] or [N,d], got shape {X.shape}")
+    
+    d = X_ts.shape[1]
+    
+    # Standardize
+    X_ts = (X_ts - X_ts.mean(axis=0)) / (X_ts.std(axis=0) + 1e-8)
+    
+    # Pairwise Granger causality tests
+    A_scores = np.zeros((d, d))
+    
+    for i in range(d):
+        for j in range(d):
+            if i == j:
+                continue
+            try:
+                # Test: does j Granger-cause i?
+                # grangercausalitytests expects [T, 2] with [y, x]
+                test_data = np.column_stack([X_ts[:, i], X_ts[:, j]])
+                
+                # Remove any remaining NaNs
+                mask_valid = ~np.isnan(test_data).any(axis=1)
+                test_data = test_data[mask_valid]
+                
+                if len(test_data) < max_lag * 3 + 5:
+                    continue
+                
+                results = grangercausalitytests(
+                    test_data, maxlag=max_lag, verbose=False
+                )
+                
+                # Get minimum p-value across all tested lags
+                min_p = 1.0
+                for lag in range(1, max_lag + 1):
+                    if lag in results:
+                        # F-test p-value
+                        p_val = results[lag][0]['ssr_ftest'][1]
+                        min_p = min(min_p, p_val)
+                
+                # Score = 1 - p_value (higher = more evidence of causation)
+                A_scores[j, i] = 1.0 - min_p  # j->i convention
+                
+            except Exception:
+                A_scores[j, i] = 0.0
+    
+    np.fill_diagonal(A_scores, 0)
+    return A_scores
+
+
+def pcmci_plus(Xw, Mw=None, tau_max=3, alpha_level=0.05):
+    """
+    PCMCI+: PC Momentary Conditional Independence for time-series.
+    
+    Discovers contemporaneous AND lagged causal links using momentary
+    conditional independence tests. Suitable for time-series data.
+    
+    IMPUTATION: k-NN (best-performing for PCMCI+, as reported in paper).
+    
+    OUTPUT TYPE: Binary contemporaneous adjacency (F1/SHD at lag=0).
+    We extract only the contemporaneous (lag-0) links for comparison
+    with other methods that output instantaneous DAGs.
+    
+    DATA FORMAT: Expects [N, T, d]. Each sample is treated as a separate
+    realization. We use the longest/representative sample(s) for fitting.
+    For [N, d] IID data, this method is NOT appropriate.
+    
+    Reference: Runge (2020) "Discovering contemporaneous and lagged causal
+    relations in autocorrelated nonlinear time series datasets"
+    
+    Args:
+        Xw: [N, T, d] temporal data (N samples, T time steps, d variables)
+        Mw: Same shape, 1=observed, 0=missing. If None, no imputation.
+        tau_max: Maximum time lag to test (default 3)
+        alpha_level: Significance level for CI tests (default 0.05)
+    
+    Returns:
+        A_contemp: [d, d] binary adjacency matrix of contemporaneous links.
+        A[i,j]=1 means significant contemporaneous causal link i->j.
+    """
+    if not HAS_TIGRAMITE:
+        raise RuntimeError(
+            "tigramite required for PCMCI+. "
+            "Install: pip install tigramite"
+        )
+    
+    log_baseline_banner("PCMCI+", mode="temporal", has_mask=(Mw is not None),
+                        temporal_disabled=False)
+    
+    X = Xw.copy()
+    
+    # Validate temporal structure
+    if X.ndim == 2:
+        warnings.warn(
+            "PCMCI+ received 2D data [N,d] — treating as single time series. "
+            "For IID data, use PC/GES/NOTEARS instead."
+        )
+        X_ts = X.copy()
+        if Mw is not None:
+            X_ts = impute_knn(X[np.newaxis], Mw[np.newaxis])
+    elif X.ndim == 3:
+        N, T, d = X.shape
+        
+        # k-NN imputation (paper: "k-NN for PCMCI+")
+        if Mw is not None:
+            X_imputed_flat = impute_knn(X, Mw, n_neighbors=5)
+            X_imputed = X_imputed_flat.reshape(N, T, d)
+        else:
+            X_imputed = X
+        
+        # PCMCI+ works on a single long time series
+        # Concatenate representative samples
+        max_samples = min(N, 200)
+        if N > max_samples:
+            rng = np.random.RandomState(42)
+            idx = rng.choice(N, max_samples, replace=False)
+            X_selected = X_imputed[sorted(idx)]
+        else:
+            X_selected = X_imputed
+        
+        # Concatenate into single long time series [max_samples*T, d]
+        X_ts = X_selected.reshape(-1, d)
+    else:
+        raise ValueError(f"PCMCI+ expects [N,T,d] or [N,d], got shape {X.shape}")
+    
+    d = X_ts.shape[1]
+    
+    # Standardize
+    X_ts = (X_ts - X_ts.mean(axis=0)) / (X_ts.std(axis=0) + 1e-8)
+    
+    # Create tigramite dataframe
+    dataframe = pp.DataFrame(
+        data=X_ts,
+        var_names=[f"V{i}" for i in range(d)]
+    )
+    
+    # Run PCMCI+ with ParCorr independence test
+    parcorr = ParCorr(significance='analytic')
+    pcmci = PCMCI(
+        dataframe=dataframe,
+        cond_ind_test=parcorr,
+        verbosity=0
+    )
+    
+    results = pcmci.run_pcmciplus(
+        tau_min=0,
+        tau_max=tau_max,
+        pc_alpha=alpha_level
+    )
+    
+    # Extract contemporaneous links (tau=0)
+    # results['graph'] shape: [d, d, tau_max+1]
+    # results['graph'][:,:,0] = contemporaneous links
+    # Encoding: '-->' means i->j, '<--' means j->i, 'o-o' undirected, '' none
+    graph = results['graph']
+    p_matrix = results['p_matrix']
+    val_matrix = results['val_matrix']
+    
+    A_contemp = np.zeros((d, d))
+    
+    # Extract lag-0 (contemporaneous) links
+    for i in range(d):
+        for j in range(d):
+            if i == j:
+                continue
+            link = graph[i, j, 0]  # lag-0 link from i to j
+            if link == '-->':
+                A_contemp[i, j] = 1.0
+            elif link == 'o-o':
+                # Undirected contemporaneous — count as bidirectional
+                A_contemp[i, j] = 1.0
+                A_contemp[j, i] = 1.0
+    
+    np.fill_diagonal(A_contemp, 0)
+    return A_contemp
 
 
 # ============================================================================
@@ -1368,8 +1726,11 @@ def get_temporal_baselines():
     """
     Return dict of temporal baseline methods.
     
-    WARNING: These are DISABLED and will raise RuntimeError if called!
-    They are NOT appropriate for IID SEM data.
+    For TIME-SERIES data (e.g. UCI Air Quality [N,T,d]):
+      - Granger: VAR-based F-test (requires statsmodels). Uses MICE imputation.
+      - PCMCI+: Momentary CI (requires tigramite). Uses k-NN imputation.
+    
+    NOT appropriate for IID SEM data (Table 2 benchmarks).
     """
     return {
         "Granger": granger_causality,

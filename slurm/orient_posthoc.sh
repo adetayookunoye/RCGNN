@@ -11,8 +11,12 @@
 # Post-hoc skeleton orientation for V9.2.11 RC-GNN output
 # Decouples skeleton learning (what RC-GNN does well) from orientation
 
+set -eo pipefail
 cd /scratch/aoo29179/rcgnn
-source activate rcgnn 2>/dev/null || conda activate rcgnn
+mkdir -p logs
+
+module load PyTorch/2.1.2-foss-2023a-CUDA-12.1.1
+source ~/.bashrc 2>/dev/null || true
 
 echo "=== Post-hoc Orientation Pipeline ==="
 echo "Job:  $SLURM_JOB_ID"

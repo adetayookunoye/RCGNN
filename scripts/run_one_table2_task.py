@@ -262,14 +262,20 @@ def main():
         # Stage 2: Training
         # ====================================================================
         if not args.skip_train:
-            print("\n[STAGE 2/3] Training RC-GNN...")
-            rc = train_rcgnn(args.seed, data_dir, art_dir)
-            if rc != 0:
-                run_meta["status"] = "failed_training"
-                run_meta["error"] = f"Training failed (rc={rc})"
-                meta_path.write_text(json.dumps(run_meta, indent=2))
-                raise SystemExit(f"[FAIL] Training failed (rc={rc})")
-            print("[OK] Training complete")
+            # Check if already trained
+            history_file = art_dir / "training_history.json"
+            if history_file.exists():
+                print(f"\n[STAGE 2/3] Training already complete: {history_file}")
+                print("[SKIP] Found existing training_history.json")
+            else:
+                print("\n[STAGE 2/3] Training RC-GNN...")
+                rc = train_rcgnn(args.seed, data_dir, art_dir)
+                if rc != 0:
+                    run_meta["status"] = "failed_training"
+                    run_meta["error"] = f"Training failed (rc={rc})"
+                    meta_path.write_text(json.dumps(run_meta, indent=2))
+                    raise SystemExit(f"[FAIL] Training failed (rc={rc})")
+                print("[OK] Training complete")
         else:
             print("\n[STAGE 2/3] Skipping training (--skip_train)")
 
@@ -277,13 +283,19 @@ def main():
         # Stage 3: Evaluation
         # ====================================================================
         if not args.skip_eval:
-            print("\n[STAGE 3/3] Running evaluation...")
-            rc = eval_all(data_dir, art_dir)
-            if rc != 0:
-                print(f"[WARN] Evaluation returned rc={rc} (check logs)")
-                run_meta["eval_warning"] = f"Evaluation returned rc={rc}"
+            # Check if evaluation already exists
+            eval_file = art_dir / "evaluation.json"
+            if eval_file.exists():
+                print(f"\n[STAGE 3/3] Evaluation already complete: {eval_file}")
+                print("[SKIP] Found existing evaluation.json")
             else:
-                print("[OK] Evaluation complete")
+                print("\n[STAGE 3/3] Running evaluation...")
+                rc = eval_all(data_dir, art_dir)
+                if rc != 0:
+                    print(f"[WARN] Evaluation returned rc={rc} (check logs)")
+                    run_meta["eval_warning"] = f"Evaluation returned rc={rc}"
+                else:
+                    print("[OK] Evaluation complete")
         else:
             print("\n[STAGE 3/3] Skipping evaluation (--skip_eval)")
 

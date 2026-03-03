@@ -64,7 +64,6 @@ import path_helper # noqa: F401
 
 # Import NEW SPIE-review-proof baselines with mask handling
 # All methods accept (Xw, Mw) where Mw is missingness mask
-# NO TEMPORAL METHODS (granger, pcmci+) - inappropriate for IID data
 from src.training.baselines import (
     pc_algorithm,
     ges_algorithm,
@@ -78,6 +77,9 @@ from src.training.baselines import (
     impute_with_mask,
     cpdag_to_skeleton,       # PC output helper: undirected skeleton
     cpdag_oriented_edges,    # PC output helper: only oriented edges
+    # Temporal baselines (for time-series data, e.g. UCI Air Quality)
+    granger_causality,       # VAR F-test (uses MICE imputation internally)
+    pcmci_plus,              # PCMCI+ CI test (uses k-NN imputation internally)
 )
 
 # ============================================================================
@@ -106,7 +108,7 @@ BINARY_BASELINES = {"GES"}
 #   - Correlation: |correlation| matrix (use TopK at eval)
 #   - NOTEARS/GOLEM: continuous optimization
 #   - Neural: DAG-GNN-inspired, GraN-DAG, NOTEARS-MLP (PyTorch-only)
-SCORE_BASELINES = {"RC-GNN", "Correlation", "NOTEARS", "NOTEARS-MLP", "GOLEM", "DAG-GNN", "GraN-DAG"}
+SCORE_BASELINES = {"RC-GNN", "Correlation", "NOTEARS", "NOTEARS-MLP", "GOLEM", "DAG-GNN", "GraN-DAG", "Granger"}
 
 # PC outputs CPDAG (not pure DAG) - need special handling for metrics:
 #   - Skeleton metrics: use cpdag_to_skeleton(A)
@@ -1250,7 +1252,8 @@ def load_artifact(artifact_dir, data_root=None):
 # SINGLE-RUN EVALUATION (Table 2 Pipeline)
 # ============================================================================
 
-def evaluate_single_run(artifact_dir: Path, data_dir: Path, output_file: str):
+def evaluate_single_run(artifact_dir: Path, data_dir: Path, output_file: str,
+                       temporal: bool = False):
     """
     Evaluate a single RC-GNN run (Table 2 pipeline).
     
@@ -1259,6 +1262,7 @@ def evaluate_single_run(artifact_dir: Path, data_dir: Path, output_file: str):
     - data_dir contains: X.npy, M.npy, A_true.npy, e.npy
     
     Computes comprehensive metrics and saves to output_file.
+    If temporal=True, also runs Granger and PCMCI+ (for time-series data).
     """
     print(f"\n{'='*80}")
     print(f"SINGLE-RUN EVALUATION (Table 2 Pipeline)")
@@ -1308,12 +1312,17 @@ def evaluate_single_run(artifact_dir: Path, data_dir: Path, output_file: str):
             break
     
     if X is not None:
-        # Reshape if needed: [N, T, d] -> [N*T, d]
+        # Keep original shape for temporal baselines (Granger, PCMCI+)
+        X_raw = X.copy()
+        M_raw = M.copy() if M is not None else None
+        is_temporal = (X.ndim == 3 and X.shape[1] > 1)  # [N, T, d] with T > 1
+        # Reshape if needed: [N, T, d] -> [N*T, d] for IID baselines
         if X.ndim == 3:
             X = X.reshape(-1, X.shape[-1])
         if M is not None and M.ndim == 3:
             M = M.reshape(-1, M.shape[-1])
-        print(f"Data: X shape={X.shape}" + (f", M shape={M.shape}" if M is not None else ""))
+        print(f"Data: X shape={X.shape}" + (f", M shape={M.shape}" if M is not None else "")
+              + (f" [TEMPORAL: {X_raw.shape}]" if is_temporal else " [IID]"))
     
     # ========================================================================
     # METRICS COMPUTATION
@@ -1475,6 +1484,68 @@ def evaluate_single_run(artifact_dir: Path, data_dir: Path, output_file: str):
             except Exception as e:
                 print(f"  {name:12s}: FAILED ({e})")
                 results["baselines"][name] = {"error": str(e)}
+        
+        # ====================================================================
+        # TEMPORAL BASELINES (Granger, PCMCI+)
+        # Only run if data has temporal structure [N, T, d] with T > 1
+        # AND --temporal flag is set (or auto-detected as UCI Air Quality)
+        # These methods handle their own imputation internally:
+        #   - Granger: MICE imputation (best for VAR)
+        #   - PCMCI+: k-NN imputation (best for CI tests)
+        # ====================================================================
+        if is_temporal and temporal:
+            sep = '─' * 60
+            print(f"\n{sep}")
+            print("Temporal Baselines (time-series methods)")
+            print(f"  Data shape: {X_raw.shape} — T={X_raw.shape[1]} time steps")
+            print(sep)
+            
+            temporal_baselines = [
+                ("Granger", granger_causality),
+                ("PCMCI+", pcmci_plus),
+            ]
+            
+            for name, baseline_fn in temporal_baselines:
+                try:
+                    # Pass ORIGINAL 3D data — temporal methods need [N,T,d]
+                    # Each method handles its own imputation internally
+                    A_baseline = baseline_fn(X_raw, M_raw)
+                    
+                    # Granger outputs continuous scores → use TopK
+                    if name == "Granger":
+                        metrics = compute_metrics_topk(
+                            A_baseline, A_true, k=n_true_edges
+                        )
+                        # K-robustness for Granger
+                        bl_k_rob = {}
+                        for ratio in [0.5, 0.8, 1.0, 1.2, 1.5]:
+                            k_test = max(1, int(round(n_true_edges * ratio)))
+                            k_test = min(k_test, d * (d - 1))
+                            m = compute_metrics_topk(
+                                A_baseline, A_true, k=k_test
+                            )
+                            bl_k_rob[f"K_{ratio:.1f}"] = {
+                                "K": k_test, "ratio": ratio,
+                                "Skeleton_F1": m["Skeleton_F1"],
+                                "Directed_F1": m["Directed_F1"],
+                                "SHD": m["SHD"],
+                            }
+                        metrics["k_robustness"] = bl_k_rob
+                    else:
+                        # PCMCI+ outputs binary → use binary metrics
+                        metrics = compute_metrics_binary(A_baseline, A_true)
+                    
+                    results["baselines"][name] = metrics
+                    f1_val = metrics.get('Directed_F1', metrics.get('f1', 0))
+                    shd_val = metrics.get('SHD', metrics.get('shd', 'N/A'))
+                    imp_method = "MICE" if name == "Granger" else "k-NN"
+                    print(f"  {name:12s}: F1={f1_val:.4f}, SHD={shd_val} (impute={imp_method})")
+                except Exception as e:
+                    print(f"  {name:12s}: FAILED ({e})")
+                    results["baselines"][name] = {"error": str(e)}
+        elif is_temporal and not temporal:
+            print(f"\n  [INFO] Temporal data detected (T={X_raw.shape[1]}) but --temporal not set.")
+            print(f"         Use --temporal to include Granger + PCMCI+ baselines.")
     
     # ========================================================================
     # SAVE RESULTS
@@ -1499,6 +1570,9 @@ def main():
     parser.add_argument("--output", default="artifacts/evaluation_report.json", help="Output file")
     parser.add_argument("--single-run", action="store_true", 
                         help="Single-run mode: artifacts-dir is directly the run output (Table 2 pipeline)")
+    parser.add_argument("--temporal", action="store_true",
+                        help="Include temporal baselines (Granger, PCMCI+) for time-series data. "
+                             "Requires statsmodels and tigramite. Only for UCI Air Quality, NOT SEM.")
     args = parser.parse_args()
     
     artifacts_dir = Path(args.artifacts_dir)
@@ -1520,7 +1594,8 @@ def main():
         # ====================================================================
         # SINGLE-RUN MODE (Table 2 pipeline)
         # ====================================================================
-        return evaluate_single_run(artifacts_dir, data_dir, args.output)
+        return evaluate_single_run(artifacts_dir, data_dir, args.output,
+                                   temporal=args.temporal)
     
     # ========================================================================
     # MULTI-CORRUPTION MODE (original unified_v9/v8 pipeline)
@@ -1875,6 +1950,10 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
                 n_edges = metrics.get('Edges', metrics.get('Edges_skeleton', 0))  # CPDAG uses Edges_skeleton
                 edges_oriented = metrics.get('Edges_oriented', None)  # Only for CPDAG
                 
+                # Retrieve AUROC/AUPRC (NaN for binary/CPDAG baselines)
+                auroc = metrics.get('AUROC', float('nan'))
+                auprc = metrics.get('AUPRC', float('nan'))
+                
                 result_row = {
                     'Corruption': corruption,
                     'Method': method,
@@ -1885,6 +1964,8 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
                     'Directed_F1': dir_f1,
                     'Directed_Precision': dir_p,
                     'Directed_Recall': dir_r,
+                    'AUROC': auroc,
+                    'AUPRC': auprc,
                     'Edges': n_edges,
                     'K_used': k_used,
                     'Output_Type': output_type
@@ -1897,7 +1978,8 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
                 
                 # Mark method types for clarity: (C)=CPDAG, (B)=binary DAG, (S)=scores
                 type_marker = "(C)" if method in CPDAG_BASELINES else ("(B)" if method in BINARY_BASELINES else "(S)")
-                print(f"{method:20s} {type_marker} | SHD={shd:3d} | Skel-F1={skel_f1:.3f} | Dir-F1={dir_f1:.3f} | Prec={dir_p:.3f} | Rec={dir_r:.3f}")
+                auroc_str = f"{auroc:.3f}" if not (auroc != auroc) else "N/A"  # NaN check
+                print(f"{method:20s} {type_marker} | SHD={shd:3d} | Skel-F1={skel_f1:.3f} | Dir-F1={dir_f1:.3f} | AUROC={auroc_str:>5s} | Prec={dir_p:.3f} | Rec={dir_r:.3f}")
             except Exception as e:
                 # FIX #8: Record failed baselines with NaN metrics (don't silently skip)
                 print(f"{method:20s} | ERROR: {str(e)[:60]}")
@@ -1911,6 +1993,8 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
                     'Directed_F1': float('nan'),
                     'Directed_Precision': float('nan'),
                     'Directed_Recall': float('nan'),
+                    'AUROC': float('nan'),
+                    'AUPRC': float('nan'),
                     'Edges': float('nan'),
                     'K_used': 'FAILED',
                     'Output_Type': 'error',
@@ -1950,7 +2034,8 @@ EVALUATION METHODOLOGY & SPARSIFICATION PROTOCOL:
             if row.get('Output_Type') == 'error':
                 error_reason = row.get('Error', 'unknown error')[:30]
                 for key in ['SHD', 'Skeleton_F1', 'Skeleton_Precision', 'Skeleton_Recall',
-                            'Directed_F1', 'Directed_Precision', 'Directed_Recall', 'Edges']:
+                            'Directed_F1', 'Directed_Precision', 'Directed_Recall',
+                            'AUROC', 'AUPRC', 'Edges']:
                     if key in new_row and (pd.isna(new_row[key]) or new_row[key] != new_row[key]):  # isnan check
                         new_row[key] = f"FAILED ({error_reason})"
             sanitized.append(new_row)
